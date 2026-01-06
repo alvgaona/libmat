@@ -8,9 +8,9 @@ void mat_print(Mat *mat) {
   assert(mat != NULL);
   assert(mat->data != NULL);
 
-  printf("[\n");
+  printf("[");
   for (size_t i = 0; i < mat->rows; i++) {
-    printf(" ");
+    if (i > 0) printf(" ");
     for (size_t j = 0; j < mat->cols; j++) {
       printf("%g", mat->data[i * mat->cols + j]);
       if (j < mat->cols - 1) {
@@ -18,9 +18,8 @@ void mat_print(Mat *mat) {
       }
     }
     if (i < mat->rows - 1) {
-      printf(";");
+      printf(";\n");
     }
-    printf("\n");
   }
   printf("]\n");
 }
