@@ -8,10 +8,10 @@ int main() {
   size_t values[2][2] = {{1, 0}, {0, 1}};
 
   Mat *m1 = create_mat(2, 2);
-  init_mat(m1, (size_t *)values);
+  init_mat(m1, (mat_elem_t *)values);
 
   Mat *m2 = create_mat(2, 2);
-  init_mat(m2, (size_t *)values);
+  init_mat(m2, (mat_elem_t *)values);
 
   Mat *result = sub_mat_mat(m1, m2);
 
