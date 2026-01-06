@@ -3,6 +3,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <stdbool.h>
 
 #ifdef MAT_STRIP_PREFIX
 #define empty mat_empty
@@ -15,37 +16,42 @@
 #define reshape mat_reshape
 #define rreshape mat_rreshape
 #define diag mat_diag
-#define diag_to_mat mat_diag_to_mat
+#define diag_from mat_diag_from
+#define vec mat_vec
+#define vec_from mat_vec_from
+#define free_mat mat_free_mat
 
 /* DO NOT strip. May cause collisions */
 // #define init mat_init
-// #define index mat_index
 // #define size mat_size
+// #define from mat_from
+// #define at mat_at
+// #define equals mat_equals
+// #define equals_tol mat_equals_tol
 
-/* Core operations are not stripped for readability  */
+/* Core operations are not stripped for readability */
 // mat_add
 // mat_radd
-// mat_add_many
 // mat_sub
 // mat_rsub
 // mat_mul
-// mat_rmul
-
-#define free_mat mat_free_mat
-#endif
+#endif // MAT_STRIP_PREFIX
 
 #ifdef MAT_DOUBLE_PRECISION
   typedef double mat_elem_t;
 #else
   typedef float mat_elem_t;
-#endif
+#endif // MAT_DOUBLE_PRECISION
 
 #define identity eye
 
 #define assert_mat(m) do { assert((m) != NULL); assert((m)->data != NULL); assert((m)->rows > 0 && (m)->cols > 0); } while(0)
 #define assert_mat_dim(rows, cols) do { assert((rows) > 0); assert((cols) > 0); } while(0)
 #define assert_mat_square(m) do { assert_mat(m); assert((m)->rows == (m)->cols); } while(0)
-#define assert_diag(d) do { assert((d) != NULL); assert((d)->data != NULL); assert((d)->dim > 0); } while(0)
+
+#ifndef MAT_DEFAULT_EPSILON
+  #define MAT_DEFAULT_EPSILON 1e-6f
+#endif
 
 #ifndef MAT_LOG_LEVEL
   #define MAT_LOG_LEVEL 0
@@ -61,7 +67,7 @@
   #endif
 #endif
 
-/* ERROR outputs to stderr, WARN and INFO output to stdout */
+// ERROR outputs to stderr, WARN and INFO output to stdout
 #if MAT_LOG_LEVEL >= 1
   #define MAT_LOG_ERROR(msg) MAT_LOG_OUTPUT_ERR("[ERROR] " msg)
 #else
@@ -87,18 +93,23 @@ typedef struct {
 } Mat;
 
 typedef struct {
-  size_t dim;
-  mat_elem_t *data;
-} Diag;
-
-typedef struct {
   size_t x;
   size_t y;
 } MatSize;
 
+typedef Mat Vec;
+
 Mat *mat_empty(size_t rows, size_t cols);
 
 Mat *mat_mat(size_t rows, size_t cols);
+
+Vec *mat_vec(size_t dim);
+
+Vec *mat_vec_from(size_t dim, mat_elem_t *values);
+
+Mat *mat_from(size_t rows, size_t cols, mat_elem_t *values);
+
+void mat_init(Mat *out, mat_elem_t *values);
 
 void mat_free_mat(Mat *m);
 
@@ -108,9 +119,7 @@ Mat *mat_ones(size_t rows, size_t cols);
 
 Mat *mat_eye(size_t dim);
 
-void mat_init(Mat *out, mat_elem_t *values);
-
-mat_elem_t mat_index(Mat *mat, size_t row, size_t col);
+mat_elem_t mat_at(Mat *mat, size_t row, size_t col);
 
 MatSize mat_size(Mat *m);
 
@@ -122,11 +131,9 @@ void mat_reshape(Mat *m, size_t rows, size_t cols);
 
 Mat *mat_rreshape(Mat *m, size_t rows, size_t cols);
 
-Diag *mat_diag(Mat *m);
+Vec *mat_diag(Mat *m);
 
-Mat *mat_diag_to_mat(Diag *diag);
-
-void mat_add_diag(Mat *out, Mat *m, Diag *d);
+Mat *mat_diag_from(size_t dim, mat_elem_t *values);
 
 void mat_add(Mat *out, Mat *m1, Mat *m2);
 
@@ -137,6 +144,16 @@ Mat *mat_rsub(Mat *m1, Mat *m2);
 void mat_sub(Mat *out, Mat *m1, Mat *m2);
 
 // TODO: implement
+Mat *mat_add_many(size_t count, ...);
+
+// TODO: implement
 Mat *mat_mul(Mat *m1, Mat *m2);
+
+// TODO: implement
+Mat *mat_rmul(Mat *m1, Mat *m2);
+
+bool mat_equals_tol(Mat *m1, Mat *m2, mat_elem_t epsilon);
+
+bool mat_equals(Mat *m1, Mat *m2);
 
 #endif
