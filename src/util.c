@@ -12,7 +12,7 @@ void print_mat(Mat *mat) {
   for (size_t i = 0; i < mat->rows; i++) {
     printf(" ");
     for (size_t j = 0; j < mat->cols; j++) {
-      printf("%zu", mat->data[i * mat->cols + j]);
+      printf("%g", mat->data[i * mat->cols + j]);
       if (j < mat->cols - 1) {
         printf(" ");
       }

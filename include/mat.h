@@ -4,16 +4,23 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#ifdef MAT_DOUBLE_PRECISION
+  typedef double mat_elem_t;
+#else
+  typedef float mat_elem_t;
+#endif
+
+
 typedef struct {
   size_t rows;
   size_t cols;
-  size_t *data;
+  mat_elem_t *data;
 } Mat;
 
 typedef struct {
   size_t rows;
   size_t cols;
-  size_t *data;
+  mat_elem_t *data;
 } Diag;
 
 Mat *empty_mat(size_t rows, size_t cols);
@@ -26,9 +33,9 @@ Mat *ones(size_t rows, size_t cols);
 
 Mat *identity(size_t dim);
 
-void init_mat(Mat *out, size_t *values);
+void init_mat(Mat *out, mat_elem_t *values);
 
-size_t index_mat(Mat *mat, size_t row, size_t col);
+mat_elem_t index_mat(Mat *mat, size_t row, size_t col);
 
 // TODO: implement
 Mat *transpose(Mat *m);

@@ -17,7 +17,7 @@ Mat *empty_mat(size_t rows, size_t cols) {
 
 Mat* create_mat(size_t rows, size_t cols) {
   Mat *mat = empty_mat(rows, cols);
-  mat->data = calloc(rows * cols, sizeof(size_t));
+  mat->data = calloc(rows * cols, sizeof(mat_elem_t));
 
   return mat;
 }
@@ -48,7 +48,7 @@ Mat *identity(size_t dim) {
   return mat;
 }
 
-void init_mat(Mat *out, size_t *values) {
+void init_mat(Mat *out, mat_elem_t *values) {
   assert(out != NULL);
   assert(out->data != NULL);
   assert(values != NULL);
@@ -60,7 +60,7 @@ void init_mat(Mat *out, size_t *values) {
   }
 }
 
-size_t index_mat(Mat* mat, size_t row, size_t col) {
+mat_elem_t index_mat(Mat* mat, size_t row, size_t col) {
   return mat->data[row * mat->cols + col];
 }
 
@@ -68,16 +68,13 @@ Mat *add_mat_mat(Mat *m1, Mat *m2) {
   assert(m1 != NULL);
   assert(m2 != NULL);
   assert(m1->rows == m2->rows);
-  assert(m2->cols == m2->cols);
+  assert(m1->cols == m2->cols);
 
   size_t rows = m1->rows;
   size_t cols = m1->cols;
 
-  Mat *out = malloc(sizeof(Mat));
-  out->rows = rows;
-  out->cols = cols;
-  out->data = calloc(rows * cols, sizeof(size_t));
-
+  Mat *out = create_mat(rows, cols);
+  
   for (size_t i = 0; i < rows; i++) {
     for (size_t j = 0; j < cols; j++) {
       out->data[i * cols + j] = index_mat(m1, i, j) + index_mat(m2, i, j);
@@ -91,16 +88,13 @@ Mat *sub_mat_mat(Mat *m1, Mat *m2) {
   assert(m1 != NULL);
   assert(m2 != NULL);
   assert(m1->rows == m2->rows);
-  assert(m2->cols == m2->cols);
+  assert(m1->cols == m2->cols);
 
   size_t rows = m1->rows;
   size_t cols = m1->cols;
 
-  Mat *out = malloc(sizeof(Mat));
-  out->rows = rows;
-  out->cols = cols;
-  out->data = calloc(rows * cols, sizeof(size_t));
-
+  Mat *out = create_mat(rows, cols);
+  
   for (size_t i = 0; i < rows; i++) {
     for (size_t j = 0; j < cols; j++) {
       out->data[i * cols + j] = index_mat(m1, i, j) - index_mat(m2, i, j);
