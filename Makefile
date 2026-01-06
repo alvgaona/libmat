@@ -1,15 +1,15 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -Iinclude
+CFLAGS = -Wall -Wextra
 
 all: build/libmat.a build/main
 
-build/%.o: src/%.c | build
+build/%.o: %.c | build
 	$(CC) $(CFLAGS) -c $< -o $@
 
 build/libmat.a: build/mat.o build/util.o
 	ar rcs $@ $^
 
-build/main: src/main.c build/libmat.a
+build/main: main.c build/libmat.a
 	$(CC) $(CFLAGS) $< -Lbuild -lmat -o $@
 
 build:

@@ -4,7 +4,7 @@
 
 #include "mat.h"
 
-void print_mat(Mat *mat) {
+void mat_print(Mat *mat) {
   assert(mat != NULL);
   assert(mat->data != NULL);
 
