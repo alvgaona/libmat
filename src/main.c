@@ -5,7 +5,7 @@
 #include "util.h"
 
 int main() {
-  size_t values[2][2] = {{1, 0}, {0, 1}};
+  float values[2][2] = {{1, -1}, {1, -1}};
 
   Mat *m1 = create_mat(2, 2);
   init_mat(m1, (mat_elem_t *)values);
@@ -13,7 +13,7 @@ int main() {
   Mat *m2 = create_mat(2, 2);
   init_mat(m2, (mat_elem_t *)values);
 
-  Mat *result = sub_mat_mat(m1, m2);
+  Mat *result = rsub_mat_mat(m1, m2);
 
   print_mat(result);
 
@@ -26,12 +26,17 @@ int main() {
   Mat *m5 = identity(4);
 
   print_mat(m5);
+
+  Mat *mt1 = create_mat(2, 2);
+  mat_t(mt1, m1);
+
+  print_mat(mt1);
   
-  free(m1);
-  free(m2);
-  free(m3);
-  free(m4);
-  free(m5);
+  free_mat(m1);
+  free_mat(m2);
+  free_mat(m3);
+  free_mat(m4);
+  free_mat(m5);
   free(result);
   
   return 0;
