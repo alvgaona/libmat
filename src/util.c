@@ -25,18 +25,3 @@ void print_mat(Mat *mat) {
   printf("]\n");
 }
 
-size_t *flatten_mat(size_t *in, size_t rows, size_t cols) {
-  assert(in != NULL);
-  assert(rows > 0);
-  assert(cols > 0);
-  
-  size_t *out = calloc(rows * cols, sizeof(size_t));
-
-  for (size_t i = 0; i < rows; i++) {
-    for (size_t j = 0; j < cols; j++) {
-      out[i * cols + j] = in[i * cols + j];
-    }
-  }
-
-  return out;
-}
