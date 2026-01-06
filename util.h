@@ -3,6 +3,6 @@
 
 #include "mat.h"
 
-void print_mat(Mat *m);
+void mat_print(Mat *m);
 
 #endif
