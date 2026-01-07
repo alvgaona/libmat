@@ -1,6 +1,6 @@
 #include <stdio.h>
 
-#include "mat_util.h"
+#define MAT_IMPLEMENTATION
 #include "mat.h"
 
 int main() {

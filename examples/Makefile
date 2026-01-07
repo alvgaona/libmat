@@ -1,67 +1,67 @@
 CC = gcc
 CFLAGS = -I..
 
-add_mat: add_mat.c ../mat.c ../mat_util.c
+add_mat: add_mat.c
 	$(CC) $(CFLAGS) -o $@ $^
 
-sub_mat: sub_mat.c ../mat.c ../mat_util.c
+sub_mat: sub_mat.c
 	$(CC) $(CFLAGS) -o $@ $^
 
-transpose_mat: transpose_mat.c ../mat.c ../mat_util.c
+transpose_mat: transpose_mat.c
 	$(CC) $(CFLAGS) -o $@ $^
 
-reshape_mat: reshape_mat.c ../mat.c ../mat_util.c
+reshape_mat: reshape_mat.c
 	$(CC) $(CFLAGS) -o $@ $^
 
-mat_log: mat_log.c ../mat.c ../mat_util.c
+mat_log: mat_log.c
 	$(CC) $(CFLAGS) -o $@ $^
 
-eye_mat: eye_mat.c ../mat.c ../mat_util.c
+eye_mat: eye_mat.c
 	$(CC) $(CFLAGS) -o $@ $^
 
-ones_mat: ones_mat.c ../mat.c ../mat_util.c
+ones_mat: ones_mat.c
 	$(CC) $(CFLAGS) -o $@ $^
 
-zeros_mat: zeros_mat.c ../mat.c ../mat_util.c
+zeros_mat: zeros_mat.c
 	$(CC) $(CFLAGS) -o $@ $^
 
-diag_mat: diag_mat.c ../mat.c ../mat_util.c
+diag_mat: diag_mat.c
 	$(CC) $(CFLAGS) -o $@ $^
 
-vec_mat: vec_mat.c ../mat.c ../mat_util.c
+vec_mat: vec_mat.c
 	$(CC) $(CFLAGS) -o $@ $^
 
-from_mat: from_mat.c ../mat.c ../mat_util.c
+from_mat: from_mat.c
 	$(CC) $(CFLAGS) -o $@ $^
 
-at_mat: at_mat.c ../mat.c ../mat_util.c
+at_mat: at_mat.c
 	$(CC) $(CFLAGS) -o $@ $^
 
-size_mat: size_mat.c ../mat.c ../mat_util.c
+size_mat: size_mat.c
 	$(CC) $(CFLAGS) -o $@ $^
 
-get_diag_mat: get_diag_mat.c ../mat.c ../mat_util.c
+get_diag_mat: get_diag_mat.c
 	$(CC) $(CFLAGS) -o $@ $^
 
-t_mat: t_mat.c ../mat.c ../mat_util.c
+t_mat: t_mat.c
 	$(CC) $(CFLAGS) -o $@ $^
 
-add_inplace_mat: add_inplace_mat.c ../mat.c ../mat_util.c
+add_inplace_mat: add_inplace_mat.c
 	$(CC) $(CFLAGS) -o $@ $^
 
-sub_inplace_mat: sub_inplace_mat.c ../mat.c ../mat_util.c
+sub_inplace_mat: sub_inplace_mat.c
 	$(CC) $(CFLAGS) -o $@ $^
 
-rreshape_mat: rreshape_mat.c ../mat.c ../mat_util.c
+rreshape_mat: rreshape_mat.c
 	$(CC) $(CFLAGS) -o $@ $^
 
-add_diag_mat: add_diag_mat.c ../mat.c ../mat_util.c
+add_diag_mat: add_diag_mat.c
 	$(CC) $(CFLAGS) -o $@ $^
 
-add_vec_mat: add_vec_mat.c ../mat.c ../mat_util.c
+add_vec_mat: add_vec_mat.c
 	$(CC) $(CFLAGS) -o $@ $^
 
-equals_mat: equals_mat.c ../mat.c ../mat_util.c
+equals_mat: equals_mat.c
 	$(CC) $(CFLAGS) -o $@ $^
 
 clean:
