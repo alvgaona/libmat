@@ -139,6 +139,10 @@
   } while(0)
 #endif
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct {
   size_t rows;
   size_t cols;
@@ -249,6 +253,10 @@ mat_elem_t mat_norm_max(const Mat *m);
 // TODO: implement
 mat_elem_t mat_norm_f(const Mat *m);
 
+#ifdef __cplusplus
+}
+#endif
+
 #endif // MAT_H_
 
 #ifdef MAT_IMPLEMENTATION
@@ -263,7 +271,7 @@ mat_elem_t mat_norm_f(const Mat *m);
 MATDEF Mat *mat_empty(size_t rows, size_t cols) {
   MAT_ASSERT_DIM(rows, cols);
 
-  Mat *mat = MAT_MALLOC(sizeof(Mat));
+  Mat *mat = (Mat *)MAT_MALLOC(sizeof(Mat));
   mat->rows = rows;
   mat->cols = cols;
   mat->data = NULL;
@@ -273,7 +281,7 @@ MATDEF Mat *mat_empty(size_t rows, size_t cols) {
 
 MATDEF Mat* mat_mat(size_t rows, size_t cols) {
   Mat *mat = mat_empty(rows, cols);
-  mat->data = MAT_CALLOC(rows * cols, sizeof(mat_elem_t));
+  mat->data = (mat_elem_t *)MAT_CALLOC(rows * cols, sizeof(mat_elem_t));
 
   return mat;
 }
