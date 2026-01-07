@@ -205,29 +205,29 @@ MATDEF void mat_scale(Mat *m, mat_elem_t k);
 
 MATDEF Mat *mat_rscale(const Mat *m, mat_elem_t k);
 
-MATDEF void mat_add(Mat *out, const Mat *m1, const Mat *m2);
+MATDEF void mat_add(Mat *out, const Mat *a, const Mat *b);
 
-MATDEF Mat *mat_radd(const Mat *m1, const Mat *m2);
+MATDEF Mat *mat_radd(const Mat *a, const Mat *b);
 
-MATDEF void mat_sub(Mat *out, const Mat *m1, const Mat *m2);
+MATDEF void mat_sub(Mat *out, const Mat *a, const Mat *b);
 
-MATDEF Mat *mat_rsub(const Mat *m1, const Mat *m2);
+MATDEF Mat *mat_rsub(const Mat *a, const Mat *b);
 
 MATDEF void mat_add_many(Mat *out, size_t count, ...);
 
 MATDEF Mat *mat_radd_many(size_t count, ...);
 
-MATDEF void mat_mul(Mat *out, const Mat *m1, const Mat *m2);
+MATDEF void mat_mul(Mat *out, const Mat *a, const Mat *b);
 
-MATDEF Mat *mat_rmul(const Mat *m1, const Mat *m2);
+MATDEF Mat *mat_rmul(const Mat *a, const Mat *b);
 
-MATDEF void mat_hadamard(Mat *out, const Mat *m1, const Mat *m2);
+MATDEF void mat_hadamard(Mat *out, const Mat *a, const Mat *b);
 
-MATDEF Mat *mat_rhadamard(const Mat *m1, const Mat *m2);
+MATDEF Mat *mat_rhadamard(const Mat *a, const Mat *b);
 
-MATDEF bool mat_equals_tol(const Mat *m1, const Mat *m2, mat_elem_t epsilon);
+MATDEF bool mat_equals_tol(const Mat *a, const Mat *b, mat_elem_t epsilon);
 
-MATDEF bool mat_equals(const Mat *m1, const Mat *m2);
+MATDEF bool mat_equals(const Mat *a, const Mat *b);
 
 MATDEF mat_elem_t mat_dot(const Vec *v1, const Vec *v2);
 
@@ -279,7 +279,7 @@ MATDEF Mat* mat_mat(size_t rows, size_t cols) {
 }
 
 MATDEF Vec *mat_vec(size_t dim) {
-  Vec *vec = mat_empty(dim, 1);
+  Vec *vec = mat_mat(dim, 1);
   return vec;
 }
 
@@ -492,69 +492,69 @@ MATDEF Mat *mat_radd_scalar(const Mat *m, mat_elem_t k) {
   return result;
 }
 
-MATDEF void mat_add(Mat *out, const Mat *m1, const Mat *m2) {
+MATDEF void mat_add(Mat *out, const Mat *a, const Mat *b) {
   MAT_ASSERT_MAT(out);
-  MAT_ASSERT_MAT(m1);
-  MAT_ASSERT_MAT(m2);
-  MAT_ASSERT(m1->rows == m2->rows);
-  MAT_ASSERT(m1->cols == m2->cols);
+  MAT_ASSERT_MAT(a);
+  MAT_ASSERT_MAT(b);
+  MAT_ASSERT(a->rows == b->rows);
+  MAT_ASSERT(a->cols == b->cols);
 
-  size_t rows = m1->rows;
-  size_t cols = m1->cols;
- 
+  size_t rows = a->rows;
+  size_t cols = a->cols;
+
   for (size_t i = 0; i < rows; i++) {
     for (size_t j = 0; j < cols; j++) {
-      out->data[i * cols + j] = mat_at(m1, i, j) + mat_at(m2, i, j);
+      out->data[i * cols + j] = mat_at(a, i, j) + mat_at(b, i, j);
     }
   }
 }
 
-MATDEF Mat *mat_radd(const Mat *m1, const Mat *m2) {
-  Mat *out = mat_mat(m1->rows, m1->cols);
-  mat_add(out, m1, m2);
+MATDEF Mat *mat_radd(const Mat *a, const Mat *b) {
+  Mat *out = mat_mat(a->rows, a->cols);
+  mat_add(out, a, b);
 
   return out;
 }
 
-MATDEF void mat_sub(Mat *out, const Mat *m1, const Mat *m2) {
-  MAT_ASSERT_MAT(m1);
-  MAT_ASSERT_MAT(m2);
-  MAT_ASSERT(m1->rows == m2->rows);
-  MAT_ASSERT(m1->cols == m2->cols);
+MATDEF void mat_sub(Mat *out, const Mat *a, const Mat *b) {
+  MAT_ASSERT_MAT(a);
+  MAT_ASSERT_MAT(b);
+  MAT_ASSERT(a->rows == b->rows);
+  MAT_ASSERT(a->cols == b->cols);
 
-  size_t rows = m1->rows;
-  size_t cols = m1->cols;
+  size_t rows = a->rows;
+  size_t cols = a->cols;
 
   for (size_t i = 0; i < rows; i++) {
     for (size_t j = 0; j < cols; j++) {
-      out->data[i * cols + j] = mat_at(m1, i, j) - mat_at(m2, i, j);
+      out->data[i * cols + j] = mat_at(a, i, j) - mat_at(b, i, j);
     }
   }
 }
 
-MATDEF Mat *mat_rsub(const Mat *m1, const Mat *m2) {
-  MAT_ASSERT_MAT(m1);
-  MAT_ASSERT_MAT(m2);
+MATDEF Mat *mat_rsub(const Mat *a, const Mat *b) {
+  MAT_ASSERT_MAT(a);
+  MAT_ASSERT_MAT(b);
 
-  size_t rows = m1->rows;
-  size_t cols = m1->cols;
+  size_t rows = a->rows;
+  size_t cols = a->cols;
 
   Mat *out = mat_mat(rows, cols);
 
-  mat_sub(out, m1, m2);
+  mat_sub(out, a, b);
 
   return out;
 }
 
-MATDEF bool mat_equals_tol(const Mat *m1, const Mat *m2, mat_elem_t epsilon) {
-  MAT_ASSERT_MAT(m1);
-  MAT_ASSERT_MAT(m2);
+MATDEF bool mat_equals_tol(const Mat *a, const Mat *b, mat_elem_t epsilon) {
+  MAT_ASSERT_MAT(a);
+  MAT_ASSERT_MAT(b);
 
-  if (m1->rows != m2->rows || m1->cols != m2->cols)
+  if (a->rows != b->rows || a->cols != b->cols)
     return false;
 
-  for (size_t i = 0; i < m1->rows * m1->cols; i++) {
-    mat_elem_t diff = m1->data[i] - m2->data[i];
+  for (size_t i = 0; i < a->rows * a->cols; i++) {
+    mat_elem_t diff = a->data[i] - b->data[i];
     if (diff < 0) diff = -diff;
     if (diff > epsilon)
       return false;
@@ -563,59 +563,59 @@ MATDEF bool mat_equals_tol(const Mat *m1, const Mat *m2, mat_elem_t epsilon) {
   return true;
 }
 
-MATDEF bool mat_equals(const Mat *m1, const Mat *m2) {
-  return mat_equals_tol(m1, m2, MAT_DEFAULT_EPSILON);
+MATDEF bool mat_equals(const Mat *a, const Mat *b) {
+  return mat_equals_tol(a, b, MAT_DEFAULT_EPSILON);
 }
 
-MATDEF void mat_mul(Mat *out, const Mat *m1, const Mat *m2) {
+MATDEF void mat_mul(Mat *out, const Mat *a, const Mat *b) {
   MAT_ASSERT_MAT(out);
-  MAT_ASSERT_MAT(m1);
-  MAT_ASSERT_MAT(m2);
-  MAT_ASSERT(m1->cols == m2->rows);
+  MAT_ASSERT_MAT(a);
+  MAT_ASSERT_MAT(b);
+  MAT_ASSERT(a->cols == b->rows);
 
-  for (size_t i = 0; i < m1->rows; i++) {
-    for (size_t j = 0; j < m2->cols; j++) {
+  for (size_t i = 0; i < a->rows; i++) {
+    for (size_t j = 0; j < b->cols; j++) {
       mat_elem_t sum = 0;
-      for (size_t k = 0; k < m1->cols; k++) {
-        sum += m1->data[i * m1->cols + k] * m2->data[k * m2->cols + j];
+      for (size_t k = 0; k < a->cols; k++) {
+        sum += a->data[i * a->cols + k] * b->data[k * b->cols + j];
       }
       out->data[i * out->cols + j] = sum;
     }
   }
 }
 
-MATDEF Mat *mat_rmul(const Mat *m1, const Mat *m2) {
-  MAT_ASSERT_MAT(m1);
-  MAT_ASSERT_MAT(m2);
-  MAT_ASSERT(m1->cols == m2->rows);
+MATDEF Mat *mat_rmul(const Mat *a, const Mat *b) {
+  MAT_ASSERT_MAT(a);
+  MAT_ASSERT_MAT(b);
+  MAT_ASSERT(a->cols == b->rows);
 
-  Mat* result = mat_mat(m1->rows, m2->cols);
+  Mat* result = mat_mat(a->rows, b->cols);
 
-  mat_mul(result, m1, m2);
+  mat_mul(result, a, b);
 
   return result;
 }
 
-MATDEF void mat_hadamard(Mat *out, const Mat *m1, const Mat *m2) {
+MATDEF void mat_hadamard(Mat *out, const Mat *a, const Mat *b) {
   MAT_ASSERT_MAT(out);
-  MAT_ASSERT_MAT(m1);
-  MAT_ASSERT_MAT(m2);
-  MAT_ASSERT(m1->rows == m2->rows);
-  MAT_ASSERT(m1->cols == m2->cols);
+  MAT_ASSERT_MAT(a);
+  MAT_ASSERT_MAT(b);
+  MAT_ASSERT(a->rows == b->rows);
+  MAT_ASSERT(a->cols == b->cols);
 
-  for (size_t i = 0; i < m1->rows * m1->cols; i++) {
-    out->data[i] = m1->data[i] * m2->data[i];
+  for (size_t i = 0; i < a->rows * a->cols; i++) {
+    out->data[i] = a->data[i] * b->data[i];
   }
 }
 
-MATDEF Mat *mat_rhadamard(const Mat *m1, const Mat *m2) {
-  MAT_ASSERT_MAT(m1);
-  MAT_ASSERT_MAT(m2);
-  MAT_ASSERT(m1->rows == m2->rows);
-  MAT_ASSERT(m1->cols == m2->cols);
+MATDEF Mat *mat_rhadamard(const Mat *a, const Mat *b) {
+  MAT_ASSERT_MAT(a);
+  MAT_ASSERT_MAT(b);
+  MAT_ASSERT(a->rows == b->rows);
+  MAT_ASSERT(a->cols == b->cols);
 
-  Mat *result = mat_mat(m1->rows, m1->cols);
-  mat_hadamard(result, m1, m2);
+  Mat *result = mat_mat(a->rows, a->cols);
+  mat_hadamard(result, a, b);
 
   return result;
 }
