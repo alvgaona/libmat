@@ -9,6 +9,21 @@
 #define MATDEF
 #endif
 
+// Overridable allocator macros
+// Define these before including mat.h to use custom allocators
+// (e.g., arenas)
+#ifndef MAT_MALLOC
+#define MAT_MALLOC(sz) malloc(sz)
+#endif
+
+#ifndef MAT_CALLOC
+#define MAT_CALLOC(n, sz) calloc(n, sz)
+#endif
+
+#ifndef MAT_FREE
+#define MAT_FREE(p) free(p)
+#endif
+
 #ifdef MAT_STRIP_PREFIX
 
 #define empty mat_empty
@@ -25,6 +40,12 @@
 #define vec mat_vec
 #define vec_from mat_vec_from
 #define free_mat mat_free_mat
+#define hadamard mat_hadamard
+#define rhadamard mat_rhadamard
+#define add_scalar mat_add_scalar
+#define radd_scalar mat_radd_scalar
+#define add_many mat_add_many
+#define radd_many mat_radd_many
 
 /* DO NOT strip. May cause collisions */
 // #define init mat_init
@@ -139,11 +160,11 @@ MATDEF Mat *mat_mat(size_t rows, size_t cols);
 
 MATDEF Vec *mat_vec(size_t dim);
 
-MATDEF Vec *mat_vec_from(size_t dim, mat_elem_t *values);
+MATDEF Vec *mat_vec_from(size_t dim, const mat_elem_t *values);
 
-MATDEF Mat *mat_from(size_t rows, size_t cols, mat_elem_t *values);
+MATDEF Mat *mat_from(size_t rows, size_t cols, const mat_elem_t *values);
 
-MATDEF void mat_init(Mat *out, mat_elem_t *values);
+MATDEF void mat_init(Mat *out, const mat_elem_t *values);
 
 MATDEF void mat_free_mat(Mat *m);
 
@@ -155,78 +176,78 @@ MATDEF Mat *mat_eye(size_t dim);
 
 // Utilities
 
-MATDEF void mat_print(Mat *m);
+MATDEF void mat_print(const Mat *m);
 
-MATDEF Mat* mat_copy(Mat *m);
+MATDEF Mat* mat_copy(const Mat *m);
 
-MATDEF Mat* mat_deep_copy(Mat *m);
+MATDEF Mat* mat_deep_copy(const Mat *m);
+
 
 // Matrix Operations
 
-MATDEF mat_elem_t mat_at(Mat *mat, size_t row, size_t col);
+MATDEF mat_elem_t mat_at(const Mat *mat, size_t row, size_t col);
 
-MATDEF MatSize mat_size(Mat *m);
+MATDEF MatSize mat_size(const Mat *m);
 
-MATDEF Mat *mat_rt(Mat *m);
+MATDEF Mat *mat_rt(const Mat *m);
 
-MATDEF void mat_t(Mat *out, Mat *m);
+MATDEF void mat_t(Mat *out, const Mat *m);
 
 MATDEF void mat_reshape(Mat *m, size_t rows, size_t cols);
 
-MATDEF Mat *mat_rreshape(Mat *m, size_t rows, size_t cols);
+MATDEF Mat *mat_rreshape(const Mat *m, size_t rows, size_t cols);
 
-MATDEF Vec *mat_diag(Mat *m);
+MATDEF Vec *mat_diag(const Mat *m);
 
-MATDEF Mat *mat_diag_from(size_t dim, mat_elem_t *values);
+MATDEF Mat *mat_diag_from(size_t dim, const mat_elem_t *values);
 
 MATDEF void mat_scale(Mat *m, mat_elem_t k);
 
-MATDEF Mat *mat_rscale(Mat *m, mat_elem_t k);
+MATDEF Mat *mat_rscale(const Mat *m, mat_elem_t k);
 
-MATDEF void mat_add(Mat *out, Mat *m1, Mat *m2);
+MATDEF void mat_add(Mat *out, const Mat *m1, const Mat *m2);
 
-MATDEF Mat *mat_radd(Mat *m1, Mat *m2);
+MATDEF Mat *mat_radd(const Mat *m1, const Mat *m2);
 
-MATDEF Mat *mat_rsub(Mat *m1, Mat *m2);
+MATDEF void mat_sub(Mat *out, const Mat *m1, const Mat *m2);
 
-MATDEF void mat_sub(Mat *out, Mat *m1, Mat *m2);
+MATDEF Mat *mat_rsub(const Mat *m1, const Mat *m2);
 
 MATDEF void mat_add_many(Mat *out, size_t count, ...);
 
 MATDEF Mat *mat_radd_many(size_t count, ...);
 
-MATDEF void mat_mul(Mat *out, Mat *m1, Mat *m2);
+MATDEF void mat_mul(Mat *out, const Mat *m1, const Mat *m2);
 
-MATDEF Mat *mat_rmul(Mat *m1, Mat *m2);
+MATDEF Mat *mat_rmul(const Mat *m1, const Mat *m2);
 
-MATDEF void mat_hadamard(Mat *out, Mat *m1, Mat *m2);
+MATDEF void mat_hadamard(Mat *out, const Mat *m1, const Mat *m2);
 
-MATDEF Mat *mat_rhadamard(Mat *m1, Mat *m2);
+MATDEF Mat *mat_rhadamard(const Mat *m1, const Mat *m2);
 
-MATDEF bool mat_equals_tol(Mat *m1, Mat *m2, mat_elem_t epsilon);
+MATDEF bool mat_equals_tol(const Mat *m1, const Mat *m2, mat_elem_t epsilon);
 
-MATDEF bool mat_equals(Mat *m1, Mat *m2);
+MATDEF bool mat_equals(const Mat *m1, const Mat *m2);
 
-MATDEF mat_elem_t mat_dot(Vec *v1, Vec *v2);
-
-// TODO: implement
-void mat_cross(Vec* out, Vec *v1, Vec *v2);
+MATDEF mat_elem_t mat_dot(const Vec *v1, const Vec *v2);
 
 // TODO: implement
-void mat_outer(Mat* out, Vec *v1, Vec *v2);
+void mat_cross(Vec* out, const Vec *v1, const Vec *v2);
 
 // TODO: implement
-mat_elem_t mat_norm(Mat *m);
+void mat_outer(Mat* out, const Vec *v1, const Vec *v2);
 
 // TODO: implement
-mat_elem_t mat_normp(Mat *m, size_t p);
+mat_elem_t mat_norm(const Mat *m);
 
 // TODO: implement
-mat_elem_t mat_norm_max(Mat *m);
+mat_elem_t mat_normp(const Mat *m, size_t p);
 
 // TODO: implement
-mat_elem_t mat_norm_f(Mat *m);
+mat_elem_t mat_norm_max(const Mat *m);
 
+// TODO: implement
+mat_elem_t mat_norm_f(const Mat *m);
 
 #endif // MAT_H_
 
@@ -242,7 +263,7 @@ mat_elem_t mat_norm_f(Mat *m);
 MATDEF Mat *mat_empty(size_t rows, size_t cols) {
   MAT_ASSERT_DIM(rows, cols);
 
-  Mat *mat = malloc(sizeof(Mat));
+  Mat *mat = MAT_MALLOC(sizeof(Mat));
   mat->rows = rows;
   mat->cols = cols;
   mat->data = NULL;
@@ -252,7 +273,7 @@ MATDEF Mat *mat_empty(size_t rows, size_t cols) {
 
 MATDEF Mat* mat_mat(size_t rows, size_t cols) {
   Mat *mat = mat_empty(rows, cols);
-  mat->data = calloc(rows * cols, sizeof(mat_elem_t));
+  mat->data = MAT_CALLOC(rows * cols, sizeof(mat_elem_t));
 
   return mat;
 }
@@ -262,13 +283,13 @@ MATDEF Vec *mat_vec(size_t dim) {
   return vec;
 }
 
-MATDEF Vec *mat_vec_from(size_t dim, mat_elem_t *values) {
+MATDEF Vec *mat_vec_from(size_t dim, const mat_elem_t *values) {
   Vec *result = mat_from(dim, 1, values);
 
   return result;
 }
 
-MATDEF Mat *mat_from(size_t rows, size_t cols, mat_elem_t *values) {
+MATDEF Mat *mat_from(size_t rows, size_t cols, const mat_elem_t *values) {
   MAT_ASSERT_DIM(rows, cols);
 
   Mat *result = mat_mat(rows, cols);
@@ -277,7 +298,7 @@ MATDEF Mat *mat_from(size_t rows, size_t cols, mat_elem_t *values) {
   return result;
 }
 
-MATDEF void mat_init(Mat *out, mat_elem_t *values) {
+MATDEF void mat_init(Mat *out, const mat_elem_t *values) {
   MAT_ASSERT_MAT(out);
   MAT_ASSERT(values != NULL);
 
@@ -291,8 +312,8 @@ MATDEF void mat_init(Mat *out, mat_elem_t *values) {
 MATDEF void mat_free_mat(Mat *m) {
   MAT_ASSERT_MAT(m);
 
-  free(m->data);
-  free(m);
+  MAT_FREE(m->data);
+  MAT_FREE(m);
 }
 
 MATDEF Mat *mat_zeros(size_t rows, size_t cols) { return mat_mat(rows, cols); }
@@ -321,7 +342,7 @@ MATDEF Mat *mat_eye(size_t dim) {
 
 // Utilities Impl
 
-MATDEF void mat_print(Mat *mat) {
+MATDEF void mat_print(const Mat *mat) {
   MAT_ASSERT(mat != NULL);
   MAT_ASSERT(mat->data != NULL);
 
@@ -341,7 +362,7 @@ MATDEF void mat_print(Mat *mat) {
   printf("]\n");
 }
 
-MATDEF Mat* mat_copy(Mat *m) {
+MATDEF Mat* mat_copy(const Mat *m) {
   MAT_ASSERT_MAT(m);
 
   Mat *result = mat_mat(m->rows, m->cols);
@@ -349,28 +370,30 @@ MATDEF Mat* mat_copy(Mat *m) {
   return result;
 }
 
-MATDEF Mat* mat_deep_copy(Mat *m) {
+MATDEF Mat* mat_deep_copy(const Mat *m) {
   MAT_ASSERT_MAT(m);
 
   Mat *result = mat_copy(m);
-  memcpy(result->data, m->data, m->rows * m->cols * sizeof(mat_elem_t));
+  size_t len = m->rows * m->cols;
+ 
+  memcpy(result->data, m->data, len * sizeof(mat_elem_t));
 
   return result;
 }
 
 // Operations Impl
 
-MATDEF mat_elem_t mat_at(Mat *m, size_t row, size_t col) {
+MATDEF mat_elem_t mat_at(const Mat *m, size_t row, size_t col) {
   MAT_ASSERT_MAT(m);
   return m->data[row * m->cols + col];
 }
 
-MATDEF MatSize mat_size(Mat *m) {
+MATDEF MatSize mat_size(const Mat *m) {
   MatSize size = {m->rows, m->cols};
   return size;
 }
 
-MATDEF Mat *mat_rt(Mat *m) {
+MATDEF Mat *mat_rt(const Mat *m) {
   MAT_ASSERT_MAT(m);
 
   Mat *result = mat_mat(m->cols, m->rows);
@@ -379,7 +402,7 @@ MATDEF Mat *mat_rt(Mat *m) {
   return result;
 }
 
-MATDEF void mat_t(Mat *out, Mat *m) {
+MATDEF void mat_t(Mat *out, const Mat *m) {
   MAT_ASSERT_MAT(out);
   MAT_ASSERT_MAT(m);
   MAT_ASSERT(out->rows == m->cols && out->cols == m->rows);
@@ -400,7 +423,7 @@ MATDEF void mat_reshape(Mat *out, size_t rows, size_t cols) {
   out->cols = cols;
 }
 
-MATDEF Mat *mat_rreshape(Mat *m, size_t rows, size_t cols) {
+MATDEF Mat *mat_rreshape(const Mat *m, size_t rows, size_t cols) {
   MAT_ASSERT_MAT(m);
   MAT_ASSERT_DIM(rows, cols);
 
@@ -412,7 +435,7 @@ MATDEF Mat *mat_rreshape(Mat *m, size_t rows, size_t cols) {
   return result;
 }
 
-MATDEF Vec *mat_diag(Mat *m) {
+MATDEF Vec *mat_diag(const Mat *m) {
   MAT_ASSERT_SQUARE(m);
 
   Vec *d = mat_vec(m->rows);
@@ -424,7 +447,7 @@ MATDEF Vec *mat_diag(Mat *m) {
   return d;
 }
 
-MATDEF Mat *mat_diag_from(size_t dim, mat_elem_t *values) {
+MATDEF Mat *mat_diag_from(size_t dim, const mat_elem_t *values) {
   MAT_ASSERT(values != NULL);
   MAT_ASSERT(dim > 0);
 
@@ -445,7 +468,7 @@ MATDEF void mat_scale(Mat *out, mat_elem_t k) {
   }
 }
 
-MATDEF Mat *mat_rscale(Mat *m, mat_elem_t k) {
+MATDEF Mat *mat_rscale(const Mat *m, mat_elem_t k) {
   Mat *result = mat_deep_copy(m);
 
   mat_scale(result, k);
@@ -461,7 +484,7 @@ MATDEF void mat_add_scalar(Mat *out, mat_elem_t k) {
   }
 }
 
-MATDEF Mat *mat_radd_scalar(Mat *m, mat_elem_t k) {
+MATDEF Mat *mat_radd_scalar(const Mat *m, mat_elem_t k) {
   Mat *result = mat_deep_copy(m);
 
   mat_add_scalar(result, k);
@@ -469,7 +492,7 @@ MATDEF Mat *mat_radd_scalar(Mat *m, mat_elem_t k) {
   return result;
 }
 
-MATDEF void mat_add(Mat *out, Mat *m1, Mat *m2) {
+MATDEF void mat_add(Mat *out, const Mat *m1, const Mat *m2) {
   MAT_ASSERT_MAT(out);
   MAT_ASSERT_MAT(m1);
   MAT_ASSERT_MAT(m2);
@@ -486,28 +509,14 @@ MATDEF void mat_add(Mat *out, Mat *m1, Mat *m2) {
   }
 }
 
-MATDEF Mat *mat_radd(Mat *m1, Mat *m2) {
+MATDEF Mat *mat_radd(const Mat *m1, const Mat *m2) {
   Mat *out = mat_mat(m1->rows, m1->cols);
   mat_add(out, m1, m2);
 
   return out;
 }
 
-MATDEF Mat *mat_rsub(Mat *m1, Mat *m2) {
-  MAT_ASSERT_MAT(m1);
-  MAT_ASSERT_MAT(m2);
-
-  size_t rows = m1->rows;
-  size_t cols = m1->cols;
-
-  Mat *out = mat_mat(rows, cols);
-
-  mat_sub(out, m1, m2);
-
-  return out;
-}
-
-MATDEF void mat_sub(Mat *out, Mat *m1, Mat *m2) {
+MATDEF void mat_sub(Mat *out, const Mat *m1, const Mat *m2) {
   MAT_ASSERT_MAT(m1);
   MAT_ASSERT_MAT(m2);
   MAT_ASSERT(m1->rows == m2->rows);
@@ -523,7 +532,21 @@ MATDEF void mat_sub(Mat *out, Mat *m1, Mat *m2) {
   }
 }
 
-MATDEF bool mat_equals_tol(Mat *m1, Mat *m2, mat_elem_t epsilon) {
+MATDEF Mat *mat_rsub(const Mat *m1, const Mat *m2) {
+  MAT_ASSERT_MAT(m1);
+  MAT_ASSERT_MAT(m2);
+
+  size_t rows = m1->rows;
+  size_t cols = m1->cols;
+
+  Mat *out = mat_mat(rows, cols);
+
+  mat_sub(out, m1, m2);
+
+  return out;
+}
+
+MATDEF bool mat_equals_tol(const Mat *m1, const Mat *m2, mat_elem_t epsilon) {
   MAT_ASSERT_MAT(m1);
   MAT_ASSERT_MAT(m2);
 
@@ -540,11 +563,11 @@ MATDEF bool mat_equals_tol(Mat *m1, Mat *m2, mat_elem_t epsilon) {
   return true;
 }
 
-MATDEF bool mat_equals(Mat *m1, Mat *m2) {
+MATDEF bool mat_equals(const Mat *m1, const Mat *m2) {
   return mat_equals_tol(m1, m2, MAT_DEFAULT_EPSILON);
 }
 
-MATDEF void mat_mul(Mat *out, Mat *m1, Mat *m2) {
+MATDEF void mat_mul(Mat *out, const Mat *m1, const Mat *m2) {
   MAT_ASSERT_MAT(out);
   MAT_ASSERT_MAT(m1);
   MAT_ASSERT_MAT(m2);
@@ -561,7 +584,7 @@ MATDEF void mat_mul(Mat *out, Mat *m1, Mat *m2) {
   }
 }
 
-MATDEF Mat *mat_rmul(Mat *m1, Mat *m2) {
+MATDEF Mat *mat_rmul(const Mat *m1, const Mat *m2) {
   MAT_ASSERT_MAT(m1);
   MAT_ASSERT_MAT(m2);
   MAT_ASSERT(m1->cols == m2->rows);
@@ -573,7 +596,7 @@ MATDEF Mat *mat_rmul(Mat *m1, Mat *m2) {
   return result;
 }
 
-MATDEF void mat_hadamard(Mat *out, Mat *m1, Mat *m2) {
+MATDEF void mat_hadamard(Mat *out, const Mat *m1, const Mat *m2) {
   MAT_ASSERT_MAT(out);
   MAT_ASSERT_MAT(m1);
   MAT_ASSERT_MAT(m2);
@@ -585,7 +608,7 @@ MATDEF void mat_hadamard(Mat *out, Mat *m1, Mat *m2) {
   }
 }
 
-MATDEF Mat *mat_rhadamard(Mat *m1, Mat *m2) {
+MATDEF Mat *mat_rhadamard(const Mat *m1, const Mat *m2) {
   MAT_ASSERT_MAT(m1);
   MAT_ASSERT_MAT(m2);
   MAT_ASSERT(m1->rows == m2->rows);
@@ -646,7 +669,7 @@ MATDEF Mat *mat_radd_many(size_t count, ...) {
   return result;
 }
 
-MATDEF mat_elem_t mat_dot(Vec *v1, Vec *v2) {
+MATDEF mat_elem_t mat_dot(const Vec *v1, const Vec *v2) {
   MAT_ASSERT_MAT(v1);
   MAT_ASSERT_MAT(v2);
 
@@ -657,6 +680,5 @@ MATDEF mat_elem_t mat_dot(Vec *v1, Vec *v2) {
 
   return result;
 }
-
 
 #endif // MAT_IMPLEMENTATION
