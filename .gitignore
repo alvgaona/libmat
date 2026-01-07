@@ -1,1 +1,10 @@
 build/
+
+# Test binaries (ignore all, keep .c and .h)
+tests/*
+!tests/*.c
+!tests/*.h
+
+# Example binaries (ignore all, keep .c)
+examples/*
+!examples/*.c
