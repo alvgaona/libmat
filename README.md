@@ -1,3 +1,3 @@
 # libmat
 
-A linear algebra library in Pure C
+A linear algebra library in pure C
