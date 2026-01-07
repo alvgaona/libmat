@@ -26,3 +26,11 @@ jobs:
 
       - name: Build examples
         run: make examples
+
+  sanitizers:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Test with ASan and UBSan
+        run: make check CFLAGS="-fsanitize=address,undefined -g -Wall -Wextra -I."
