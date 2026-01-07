@@ -1,8 +1,11 @@
 CC = gcc
+CXX = g++
 CFLAGS = -Wall -Wextra -I.
+CXXFLAGS = -Wall -Wextra -I.
 
 # Examples (feature demos)
 EXAMPLES = examples/strip_mat examples/matdef_mat examples/arena_mat examples/mat_log
+EXAMPLES_CXX = examples/basic_cpp
 
 # Tests
 TESTS = tests/test_mat_add tests/test_mat_sub tests/test_mat_mul \
@@ -16,12 +19,15 @@ TESTS = tests/test_mat_add tests/test_mat_sub tests/test_mat_mul \
 
 all: examples test
 
-examples: $(EXAMPLES)
+examples: $(EXAMPLES) $(EXAMPLES_CXX)
 
 test: $(TESTS)
 
 examples/%: examples/%.c mat.h
 	$(CC) $(CFLAGS) -o $@ $<
+
+examples/%: examples/%.cpp mat.h
+	$(CXX) $(CXXFLAGS) -o $@ $<
 
 tests/%: tests/%.c mat.h
 	$(CC) $(CFLAGS) -o $@ $<
@@ -31,4 +37,4 @@ check: test
 	@echo "All tests passed!"
 
 clean:
-	rm -f $(EXAMPLES) $(TESTS)
+	rm -f $(EXAMPLES) $(EXAMPLES_CXX) $(TESTS)
