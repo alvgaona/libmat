@@ -5,6 +5,10 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#ifdef __ARM_NEON
+  #include <arm_neon.h>
+#endif
+
 #ifndef MATDEF
 #define MATDEF
 #endif
@@ -72,17 +76,78 @@
     (mat_elem_t[])__VA_ARGS__ \
   )
 
+// Element type (float or double precision)
 #ifdef MAT_DOUBLE_PRECISION
   typedef double mat_elem_t;
+  #ifndef MAT_DEFAULT_EPSILON
+    #define MAT_DEFAULT_EPSILON 1e-9
+  #endif
 #else
   typedef float mat_elem_t;
-#endif // MAT_DOUBLE_PRECISION
+  #ifndef MAT_DEFAULT_EPSILON
+    #define MAT_DEFAULT_EPSILON 1e-6f
+  #endif
+#endif
+
+// NEON SIMD macros (only defined when targeting ARM with NEON)
+#ifdef __ARM_NEON
+  #ifdef MAT_DOUBLE_PRECISION
+    // NEON double precision (2 doubles per 128-bit register)
+    #define MAT_NEON_TYPE     float64x2_t
+    #define MAT_NEON_UTYPE    uint64x2_t
+    #define MAT_NEON_WIDTH    2
+    #define MAT_NEON_LOAD     vld1q_f64
+    #define MAT_NEON_DUP      vdupq_n_f64
+    #define MAT_NEON_DUP_U    vdupq_n_u64
+    #define MAT_NEON_FMA      vfmaq_f64
+    #define MAT_NEON_ADD      vaddq_f64
+    #define MAT_NEON_ADDV     vaddvq_f64
+    #define MAT_NEON_ABS      vabsq_f64
+    #define MAT_NEON_MAX      vmaxq_f64
+    #define MAT_NEON_MAXV     vmaxvq_f64
+    #define MAT_NEON_ABD      vabdq_f64
+    #define MAT_NEON_CGT      vcgtq_f64
+    #define MAT_NEON_CEQ      vceqq_f64
+    #define MAT_NEON_ORR_U    vorrq_u64
+    #define MAT_NEON_AND_U    vandq_u64
+    #define MAT_NEON_MVN_U(x) veorq_u64(x, vdupq_n_u64(0xFFFFFFFFFFFFFFFFULL))
+    #define MAT_NEON_MAXV_U(x) (vgetq_lane_u64(x, 0) | vgetq_lane_u64(x, 1))
+    #define MAT_NEON_ADDV_U(x) (vgetq_lane_u64(x, 0) + vgetq_lane_u64(x, 1))
+    #define MAT_NEON_ADD_U    vaddq_u64
+  #else
+    // NEON single precision (4 floats per 128-bit register)
+    #define MAT_NEON_TYPE     float32x4_t
+    #define MAT_NEON_UTYPE    uint32x4_t
+    #define MAT_NEON_WIDTH    4
+    #define MAT_NEON_LOAD     vld1q_f32
+    #define MAT_NEON_DUP      vdupq_n_f32
+    #define MAT_NEON_DUP_U    vdupq_n_u32
+    #define MAT_NEON_FMA      vfmaq_f32
+    #define MAT_NEON_ADD      vaddq_f32
+    #define MAT_NEON_ADDV     vaddvq_f32
+    #define MAT_NEON_ABS      vabsq_f32
+    #define MAT_NEON_MAX      vmaxq_f32
+    #define MAT_NEON_MAXV     vmaxvq_f32
+    #define MAT_NEON_ABD      vabdq_f32
+    #define MAT_NEON_CGT      vcgtq_f32
+    #define MAT_NEON_CEQ      vceqq_f32
+    #define MAT_NEON_ORR_U    vorrq_u32
+    #define MAT_NEON_AND_U    vandq_u32
+    #define MAT_NEON_MVN_U(x) vmvnq_u32(x)
+    #define MAT_NEON_MAXV_U(x) vmaxvq_u32(x)
+    #define MAT_NEON_ADDV_U(x) vaddvq_u32(x)
+    #define MAT_NEON_ADD_U    vaddq_u32
+  #endif
+#endif // __ARM_NEON
+
+// Control visibility of internal implementations
+#ifdef MAT_EXPOSE_INTERNALS
+  #define MAT_INTERNAL_STATIC
+#else
+  #define MAT_INTERNAL_STATIC static
+#endif
 
 #define identity eye
-
-#ifndef MAT_DEFAULT_EPSILON
-  #define MAT_DEFAULT_EPSILON 1e-6f
-#endif
 
 #ifndef MAT_LOG_LEVEL
   #define MAT_LOG_LEVEL 0
@@ -421,6 +486,58 @@ MATDEF bool mat_equals(const Mat *a, const Mat *b) {
   return mat_equals_tol(a, b, MAT_DEFAULT_EPSILON);
 }
 
+#ifdef __ARM_NEON
+MAT_INTERNAL_STATIC bool mat_equals_tol_neon_impl(const Mat *a, const Mat *b, mat_elem_t epsilon) {
+  size_t n = a->rows * a->cols;
+  const mat_elem_t *pa = a->data;
+  const mat_elem_t *pb = b->data;
+  MAT_NEON_TYPE eps = MAT_NEON_DUP(epsilon);
+
+  size_t i = 0;
+  for (; i + MAT_NEON_WIDTH * 4 <= n; i += MAT_NEON_WIDTH * 4) {
+    MAT_NEON_TYPE diff0 = MAT_NEON_ABD(MAT_NEON_LOAD(pa + i), MAT_NEON_LOAD(pb + i));
+    MAT_NEON_TYPE diff1 = MAT_NEON_ABD(MAT_NEON_LOAD(pa + i + MAT_NEON_WIDTH), MAT_NEON_LOAD(pb + i + MAT_NEON_WIDTH));
+    MAT_NEON_TYPE diff2 = MAT_NEON_ABD(MAT_NEON_LOAD(pa + i + MAT_NEON_WIDTH * 2), MAT_NEON_LOAD(pb + i + MAT_NEON_WIDTH * 2));
+    MAT_NEON_TYPE diff3 = MAT_NEON_ABD(MAT_NEON_LOAD(pa + i + MAT_NEON_WIDTH * 3), MAT_NEON_LOAD(pb + i + MAT_NEON_WIDTH * 3));
+
+    MAT_NEON_UTYPE gt0 = MAT_NEON_CGT(diff0, eps);
+    MAT_NEON_UTYPE gt1 = MAT_NEON_CGT(diff1, eps);
+    MAT_NEON_UTYPE gt2 = MAT_NEON_CGT(diff2, eps);
+    MAT_NEON_UTYPE gt3 = MAT_NEON_CGT(diff3, eps);
+
+    MAT_NEON_UTYPE any01 = MAT_NEON_ORR_U(gt0, gt1);
+    MAT_NEON_UTYPE any23 = MAT_NEON_ORR_U(gt2, gt3);
+    MAT_NEON_UTYPE any = MAT_NEON_ORR_U(any01, any23);
+
+    if (MAT_NEON_MAXV_U(any) != 0) return false;
+  }
+
+  for (; i + MAT_NEON_WIDTH <= n; i += MAT_NEON_WIDTH) {
+    MAT_NEON_TYPE diff = MAT_NEON_ABD(MAT_NEON_LOAD(pa + i), MAT_NEON_LOAD(pb + i));
+    MAT_NEON_UTYPE gt = MAT_NEON_CGT(diff, eps);
+    if (MAT_NEON_MAXV_U(gt) != 0) return false;
+  }
+
+  for (; i < n; i++) {
+    mat_elem_t diff = pa[i] - pb[i];
+    if (diff < 0) diff = -diff;
+    if (diff > epsilon) return false;
+  }
+
+  return true;
+}
+#endif
+
+MAT_INTERNAL_STATIC bool mat_equals_tol_scalar_impl(const Mat *a, const Mat *b, mat_elem_t epsilon) {
+  size_t n = a->rows * a->cols;
+  for (size_t i = 0; i < n; i++) {
+    mat_elem_t diff = a->data[i] - b->data[i];
+    if (diff < 0) diff = -diff;
+    if (diff > epsilon) return false;
+  }
+  return true;
+}
+
 MATDEF bool mat_equals_tol(const Mat *a, const Mat *b, mat_elem_t epsilon) {
   MAT_ASSERT_MAT(a);
   MAT_ASSERT_MAT(b);
@@ -428,14 +545,11 @@ MATDEF bool mat_equals_tol(const Mat *a, const Mat *b, mat_elem_t epsilon) {
   if (a->rows != b->rows || a->cols != b->cols)
     return false;
 
-  for (size_t i = 0; i < a->rows * a->cols; i++) {
-    mat_elem_t diff = a->data[i] - b->data[i];
-    if (diff < 0) diff = -diff;
-    if (diff > epsilon)
-      return false;
-  }
-
-  return true;
+#ifdef __ARM_NEON
+  return mat_equals_tol_neon_impl(a, b, epsilon);
+#else
+  return mat_equals_tol_scalar_impl(a, b, epsilon);
+#endif
 }
 
 // Element-wise Unary
@@ -511,7 +625,7 @@ MATDEF void mat_sub(Mat *out, const Mat *a, const Mat *b) {
   MAT_ASSERT(a->cols == b->cols);
 
   size_t len = a->rows * a->cols;
-  
+
   for (size_t i = 0; i < len; i++) {
     out->data[i] = a->data[i] - b->data[i];
   }
@@ -644,16 +758,72 @@ MATDEF Mat *mat_rhadamard(const Mat *a, const Mat *b) {
   return result;
 }
 
-MATDEF mat_elem_t mat_dot(const Vec *v1, const Vec *v2) {
-  MAT_ASSERT_MAT(v1);
-  MAT_ASSERT_MAT(v2);
+#ifdef __ARM_NEON
+MAT_INTERNAL_STATIC mat_elem_t mat_dot_neon_impl(const Vec *v1, const Vec *v2) {
+  size_t len = v1->rows;
+  mat_elem_t *pa = v1->data;
+  mat_elem_t *pb = v2->data;
 
+  MAT_NEON_TYPE vsum0 = MAT_NEON_DUP(0);
+  MAT_NEON_TYPE vsum1 = MAT_NEON_DUP(0);
+  MAT_NEON_TYPE vsum2 = MAT_NEON_DUP(0);
+  MAT_NEON_TYPE vsum3 = MAT_NEON_DUP(0);
+
+  size_t i = 0;
+
+  for (; i + MAT_NEON_WIDTH * 4 <= len; i += MAT_NEON_WIDTH * 4) {
+    MAT_NEON_TYPE va0 = MAT_NEON_LOAD(&pa[i]);
+    MAT_NEON_TYPE va1 = MAT_NEON_LOAD(&pa[i + MAT_NEON_WIDTH]);
+    MAT_NEON_TYPE va2 = MAT_NEON_LOAD(&pa[i + MAT_NEON_WIDTH * 2]);
+    MAT_NEON_TYPE va3 = MAT_NEON_LOAD(&pa[i + MAT_NEON_WIDTH * 3]);
+
+    MAT_NEON_TYPE vb0 = MAT_NEON_LOAD(&pb[i]);
+    MAT_NEON_TYPE vb1 = MAT_NEON_LOAD(&pb[i + MAT_NEON_WIDTH]);
+    MAT_NEON_TYPE vb2 = MAT_NEON_LOAD(&pb[i + MAT_NEON_WIDTH * 2]);
+    MAT_NEON_TYPE vb3 = MAT_NEON_LOAD(&pb[i + MAT_NEON_WIDTH * 3]);
+
+    vsum0 = MAT_NEON_FMA(vsum0, va0, vb0);
+    vsum1 = MAT_NEON_FMA(vsum1, va1, vb1);
+    vsum2 = MAT_NEON_FMA(vsum2, va2, vb2);
+    vsum3 = MAT_NEON_FMA(vsum3, va3, vb3);
+  }
+
+  for (; i + MAT_NEON_WIDTH <= len; i += MAT_NEON_WIDTH) {
+    MAT_NEON_TYPE va = MAT_NEON_LOAD(&pa[i]);
+    MAT_NEON_TYPE vb = MAT_NEON_LOAD(&pb[i]);
+    vsum0 = MAT_NEON_FMA(vsum0, va, vb);
+  }
+
+  vsum0 = MAT_NEON_ADD(vsum0, vsum1);
+  vsum2 = MAT_NEON_ADD(vsum2, vsum3);
+  vsum0 = MAT_NEON_ADD(vsum0, vsum2);
+  mat_elem_t result = MAT_NEON_ADDV(vsum0);
+
+  for (; i < len; i++) {
+    result += pa[i] * pb[i];
+  }
+
+  return result;
+}
+#endif
+
+MAT_INTERNAL_STATIC mat_elem_t mat_dot_scalar_impl(const Vec *v1, const Vec *v2) {
   mat_elem_t result = 0;
   for (size_t i = 0; i < v1->rows; i++) {
     result += v1->data[i] * v2->data[i];
   }
-
   return result;
+}
+
+MATDEF mat_elem_t mat_dot(const Vec *v1, const Vec *v2) {
+  MAT_ASSERT_MAT(v1);
+  MAT_ASSERT_MAT(v2);
+
+#ifdef __ARM_NEON
+  return mat_dot_neon_impl(v1, v2);
+#else
+  return mat_dot_scalar_impl(v1, v2);
+#endif
 }
 
 // Structure Operations
@@ -747,30 +917,126 @@ MATDEF mat_elem_t mat_norm2(const Mat *a) {
   return mat_norm(a, 2);
 }
 
-MATDEF mat_elem_t mat_norm_max(const Mat *a) {
-  MAT_ASSERT_MAT(a);
+#ifdef __ARM_NEON
+MAT_INTERNAL_STATIC mat_elem_t mat_norm_max_neon_impl(const Mat *a) {
+  size_t len = a->rows * a->cols;
+  mat_elem_t *pa = a->data;
 
+  MAT_NEON_TYPE vmax0 = MAT_NEON_DUP(0);
+  MAT_NEON_TYPE vmax1 = MAT_NEON_DUP(0);
+  MAT_NEON_TYPE vmax2 = MAT_NEON_DUP(0);
+  MAT_NEON_TYPE vmax3 = MAT_NEON_DUP(0);
+
+  size_t i = 0;
+  for (; i + MAT_NEON_WIDTH * 4 <= len; i += MAT_NEON_WIDTH * 4) {
+    MAT_NEON_TYPE va0 = MAT_NEON_ABS(MAT_NEON_LOAD(&pa[i]));
+    MAT_NEON_TYPE va1 = MAT_NEON_ABS(MAT_NEON_LOAD(&pa[i + MAT_NEON_WIDTH]));
+    MAT_NEON_TYPE va2 = MAT_NEON_ABS(MAT_NEON_LOAD(&pa[i + MAT_NEON_WIDTH * 2]));
+    MAT_NEON_TYPE va3 = MAT_NEON_ABS(MAT_NEON_LOAD(&pa[i + MAT_NEON_WIDTH * 3]));
+
+    vmax0 = MAT_NEON_MAX(vmax0, va0);
+    vmax1 = MAT_NEON_MAX(vmax1, va1);
+    vmax2 = MAT_NEON_MAX(vmax2, va2);
+    vmax3 = MAT_NEON_MAX(vmax3, va3);
+  }
+
+  for (; i + MAT_NEON_WIDTH <= len; i += MAT_NEON_WIDTH) {
+    MAT_NEON_TYPE va = MAT_NEON_ABS(MAT_NEON_LOAD(&pa[i]));
+    vmax0 = MAT_NEON_MAX(vmax0, va);
+  }
+
+  vmax0 = MAT_NEON_MAX(vmax0, vmax1);
+  vmax2 = MAT_NEON_MAX(vmax2, vmax3);
+  vmax0 = MAT_NEON_MAX(vmax0, vmax2);
+  mat_elem_t max = MAT_NEON_MAXV(vmax0);
+
+  for (; i < len; i++) {
+    mat_elem_t v = fabs(pa[i]);
+    if (v > max) max = v;
+  }
+
+  return max;
+}
+#endif
+
+MAT_INTERNAL_STATIC mat_elem_t mat_norm_max_scalar_impl(const Mat *a) {
   size_t len = a->rows * a->cols;
   mat_elem_t max = fabs(a->data[0]);
   for (size_t i = 1; i < len; i++) {
     mat_elem_t v = fabs(a->data[i]);
     if (v > max) max = v;
   }
-
   return max;
+}
+
+MATDEF mat_elem_t mat_norm_max(const Mat *a) {
+  MAT_ASSERT_MAT(a);
+
+#ifdef __ARM_NEON
+  return mat_norm_max_neon_impl(a);
+#else
+  return mat_norm_max_scalar_impl(a);
+#endif
+}
+
+#ifdef __ARM_NEON
+MAT_INTERNAL_STATIC mat_elem_t mat_norm_fro_neon_impl(const Mat *a) {
+  size_t len = a->rows * a->cols;
+  mat_elem_t *pa = a->data;
+
+  MAT_NEON_TYPE vsum0 = MAT_NEON_DUP(0);
+  MAT_NEON_TYPE vsum1 = MAT_NEON_DUP(0);
+  MAT_NEON_TYPE vsum2 = MAT_NEON_DUP(0);
+  MAT_NEON_TYPE vsum3 = MAT_NEON_DUP(0);
+
+  size_t i = 0;
+  for (; i + MAT_NEON_WIDTH * 4 <= len; i += MAT_NEON_WIDTH * 4) {
+    MAT_NEON_TYPE va0 = MAT_NEON_LOAD(&pa[i]);
+    MAT_NEON_TYPE va1 = MAT_NEON_LOAD(&pa[i + MAT_NEON_WIDTH]);
+    MAT_NEON_TYPE va2 = MAT_NEON_LOAD(&pa[i + MAT_NEON_WIDTH * 2]);
+    MAT_NEON_TYPE va3 = MAT_NEON_LOAD(&pa[i + MAT_NEON_WIDTH * 3]);
+
+    vsum0 = MAT_NEON_FMA(vsum0, va0, va0);
+    vsum1 = MAT_NEON_FMA(vsum1, va1, va1);
+    vsum2 = MAT_NEON_FMA(vsum2, va2, va2);
+    vsum3 = MAT_NEON_FMA(vsum3, va3, va3);
+  }
+
+  for (; i + MAT_NEON_WIDTH <= len; i += MAT_NEON_WIDTH) {
+    MAT_NEON_TYPE va = MAT_NEON_LOAD(&pa[i]);
+    vsum0 = MAT_NEON_FMA(vsum0, va, va);
+  }
+
+  vsum0 = MAT_NEON_ADD(vsum0, vsum1);
+  vsum2 = MAT_NEON_ADD(vsum2, vsum3);
+  vsum0 = MAT_NEON_ADD(vsum0, vsum2);
+  mat_elem_t sum = MAT_NEON_ADDV(vsum0);
+
+  for (; i < len; i++) {
+    sum += pa[i] * pa[i];
+  }
+
+  return sqrt(sum);
+}
+#endif
+
+MAT_INTERNAL_STATIC mat_elem_t mat_norm_fro_scalar_impl(const Mat *a) {
+  size_t len = a->rows * a->cols;
+  mat_elem_t sum = 0;
+  for (size_t i = 0; i < len; i++) {
+    sum += a->data[i] * a->data[i];
+  }
+  return sqrt(sum);
 }
 
 MATDEF mat_elem_t mat_norm_fro(const Mat *a) {
   MAT_ASSERT_MAT(a);
 
-  size_t len = a->rows * a->cols;
-
-  mat_elem_t sum = 0;
-  for (size_t i = 0; i < len; i++) {
-    sum += a->data[i] * a->data[i];
-  }
-
-  return sqrt(sum);
+#ifdef __ARM_NEON
+  return mat_norm_fro_neon_impl(a);
+#else
+  return mat_norm_fro_scalar_impl(a);
+#endif
 }
 
 // Matrix Properties
@@ -780,24 +1046,89 @@ MATDEF mat_elem_t mat_trace(const Mat *a) {
   MAT_ASSERT_SQUARE(a);
 
   size_t dim = a->rows;
-  mat_elem_t result = 0;
-  for (size_t i = 0; i < dim; i++) {
-    result += a->data[i * dim + i];
+  mat_elem_t *pa = a->data;
+  size_t stride = dim + 1;
+
+  // Multiple accumulators to break dependency chain
+  mat_elem_t sum0 = 0, sum1 = 0, sum2 = 0, sum3 = 0;
+
+  size_t i = 0;
+  for (; i + 4 <= dim; i += 4) {
+    sum0 += pa[i * stride];
+    sum1 += pa[(i + 1) * stride];
+    sum2 += pa[(i + 2) * stride];
+    sum3 += pa[(i + 3) * stride];
+  }
+
+  mat_elem_t result = sum0 + sum1 + sum2 + sum3;
+
+  for (; i < dim; i++) {
+    result += pa[i * stride];
   }
 
   return result;
 }
 
-MATDEF mat_elem_t mat_nnz(const Mat *a) {
-  MAT_ASSERT_MAT(a);
+#ifdef __ARM_NEON
+MAT_INTERNAL_STATIC mat_elem_t mat_nnz_neon_impl(const Mat *a) {
+  size_t len = a->rows * a->cols;
+  mat_elem_t *pa = a->data;
 
+  MAT_NEON_TYPE vzero = MAT_NEON_DUP(0);
+  MAT_NEON_UTYPE vcount0 = MAT_NEON_DUP_U(0);
+  MAT_NEON_UTYPE vcount1 = MAT_NEON_DUP_U(0);
+  MAT_NEON_UTYPE vcount2 = MAT_NEON_DUP_U(0);
+  MAT_NEON_UTYPE vcount3 = MAT_NEON_DUP_U(0);
+  MAT_NEON_UTYPE vone = MAT_NEON_DUP_U(1);
+
+  size_t i = 0;
+  for (; i + MAT_NEON_WIDTH * 4 <= len; i += MAT_NEON_WIDTH * 4) {
+    MAT_NEON_TYPE va0 = MAT_NEON_LOAD(&pa[i]);
+    MAT_NEON_TYPE va1 = MAT_NEON_LOAD(&pa[i + MAT_NEON_WIDTH]);
+    MAT_NEON_TYPE va2 = MAT_NEON_LOAD(&pa[i + MAT_NEON_WIDTH * 2]);
+    MAT_NEON_TYPE va3 = MAT_NEON_LOAD(&pa[i + MAT_NEON_WIDTH * 3]);
+
+    MAT_NEON_UTYPE mask0 = MAT_NEON_AND_U(MAT_NEON_MVN_U(MAT_NEON_CEQ(va0, vzero)), vone);
+    MAT_NEON_UTYPE mask1 = MAT_NEON_AND_U(MAT_NEON_MVN_U(MAT_NEON_CEQ(va1, vzero)), vone);
+    MAT_NEON_UTYPE mask2 = MAT_NEON_AND_U(MAT_NEON_MVN_U(MAT_NEON_CEQ(va2, vzero)), vone);
+    MAT_NEON_UTYPE mask3 = MAT_NEON_AND_U(MAT_NEON_MVN_U(MAT_NEON_CEQ(va3, vzero)), vone);
+
+    vcount0 = MAT_NEON_ADD_U(vcount0, mask0);
+    vcount1 = MAT_NEON_ADD_U(vcount1, mask1);
+    vcount2 = MAT_NEON_ADD_U(vcount2, mask2);
+    vcount3 = MAT_NEON_ADD_U(vcount3, mask3);
+  }
+
+  vcount0 = MAT_NEON_ADD_U(vcount0, vcount1);
+  vcount2 = MAT_NEON_ADD_U(vcount2, vcount3);
+  vcount0 = MAT_NEON_ADD_U(vcount0, vcount2);
+  size_t count = MAT_NEON_ADDV_U(vcount0);
+
+  for (; i < len; i++) {
+    if (pa[i] != 0) count++;
+  }
+
+  return (mat_elem_t)count;
+}
+#endif
+
+MAT_INTERNAL_STATIC mat_elem_t mat_nnz_scalar_impl(const Mat *a) {
   size_t len = a->rows * a->cols;
   mat_elem_t count = 0;
   for (size_t i = 0; i < len; i++) {
     if (a->data[i] != 0) count++;
   }
-
   return count;
+}
+
+MATDEF mat_elem_t mat_nnz(const Mat *a) {
+  MAT_ASSERT_MAT(a);
+
+#ifdef __ARM_NEON
+  return mat_nnz_neon_impl(a);
+#else
+  return mat_nnz_scalar_impl(a);
+#endif
 }
 
 #endif // MAT_IMPLEMENTATION
