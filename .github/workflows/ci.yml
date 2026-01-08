@@ -21,11 +21,18 @@ jobs:
 
   examples:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - cc: gcc
+            cxx: g++
+          - cc: clang
+            cxx: clang++
     steps:
       - uses: actions/checkout@v4
 
       - name: Build examples
-        run: make examples
+        run: make examples CC=${{ matrix.cc }} CXX=${{ matrix.cxx }}
 
   sanitizers:
     runs-on: ubuntu-latest
