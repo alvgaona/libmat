@@ -27,7 +27,6 @@
 #ifdef MAT_STRIP_PREFIX
 
 #define empty mat_empty
-#define mat mat_mat
 #define zeros mat_zeros
 #define ones mat_ones
 #define eye mat_eye
@@ -37,7 +36,6 @@
 #define rreshape mat_rreshape
 #define diag mat_diag
 #define diag_from mat_diag_from
-#define vec mat_vec
 #define vec_from mat_vec_from
 #define free_mat mat_free_mat
 #define hadamard mat_hadamard
@@ -47,21 +45,31 @@
 #define add_many mat_add_many
 #define radd_many mat_radd_many
 
-/* DO NOT strip. May cause collisions */
-// #define init mat_init
-// #define size mat_size
-// #define from mat_from
-// #define at mat_at
-// #define equals mat_equals
-// #define equals_tol mat_equals_tol
-
-/* Core operations are not stripped for readability */
-// mat_add
-// mat_radd
-// mat_sub
-// mat_rsub
-// mat_mul
 #endif // MAT_STRIP_PREFIX
+
+// Initialization macros
+#define mat_new(cols, ...) \
+  mat_from( \
+    sizeof((mat_elem_t[][cols])__VA_ARGS__) / sizeof(mat_elem_t[cols]), \
+    cols, \
+    (mat_elem_t*)((mat_elem_t[][cols])__VA_ARGS__) \
+  )
+
+#define mat_set(out, ...) \
+  mat_init(out, (mat_elem_t[])__VA_ARGS__)
+
+#define mat_vnew(...) \
+  mat_vec_from( \
+    sizeof((mat_elem_t[])__VA_ARGS__) / sizeof(mat_elem_t), \
+    (mat_elem_t[])__VA_ARGS__ \
+  )
+
+#define mat_rnew(...) \
+  mat_from( \
+    1, \
+    sizeof((mat_elem_t[])__VA_ARGS__) / sizeof(mat_elem_t), \
+    (mat_elem_t[])__VA_ARGS__ \
+  )
 
 #ifdef MAT_DOUBLE_PRECISION
   typedef double mat_elem_t;
