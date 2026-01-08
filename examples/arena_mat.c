@@ -10,6 +10,7 @@ typedef struct {
     size_t offset;
 } Arena;
 
+#ifdef USE_ARENA
 static Arena arena;
 
 static void arena_init(Arena *a, size_t size) {
@@ -32,8 +33,9 @@ static void *arena_calloc(Arena *a, size_t n, size_t sz) {
     return ptr;
 }
 
-static void arena_reset(Arena *a) { a->offset = 0; }
+static void arena_reset(Arena *a) { (void)a; a->offset = 0; }
 static void arena_free(Arena *a) { free(a->buf); }
+#endif
 
 // Compile with -DUSE_ARENA to use arena allocator
 #ifdef USE_ARENA
