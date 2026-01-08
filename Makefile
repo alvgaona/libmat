@@ -3,17 +3,12 @@ CXX = g++
 CFLAGS = -Wall -Wextra -I.
 CXXFLAGS = -Wall -Wextra -I.
 
-# Examples (feature demos)
-EXAMPLES = examples/strip_mat examples/matdef_mat examples/arena_mat examples/mat_log
-EXAMPLES_CXX = examples/basic_cpp
+# Examples
+EXAMPLES = $(patsubst %.c,%,$(wildcard examples/*.c))
+EXAMPLES_CXX = $(patsubst %.cpp,%,$(wildcard examples/*.cpp))
 
 # Tests
-TESTS = tests/test_mat_add tests/test_mat_sub tests/test_mat_mul \
-        tests/test_mat_transpose tests/test_mat_create tests/test_mat_scale \
-        tests/test_mat_hadamard tests/test_mat_dot tests/test_mat_copy \
-        tests/test_mat_equals tests/test_mat_reshape tests/test_mat_diag \
-        tests/test_mat_from tests/test_mat_access tests/test_mat_add_many \
-        tests/test_mat_scalar
+TESTS = $(patsubst %.c,%,$(wildcard tests/*.c))
 
 .PHONY: all examples test check clean
 
@@ -37,4 +32,5 @@ check: test
 	@echo "All tests passed!"
 
 clean:
-	rm -f $(EXAMPLES) $(EXAMPLES_CXX) $(TESTS)
+	find examples tests -type f ! -name "*.c" ! -name "*.cpp" ! -name "*.h" -delete
+	rm -rf examples/*.dSYM tests/*.dSYM
