@@ -9,6 +9,15 @@
   #include <arm_neon.h>
 #endif
 
+// x86 SIMD headers
+#if defined(__AVX2__)
+  #include <immintrin.h>
+  #define MAT_HAS_AVX2
+#elif defined(__SSE2__) || defined(__x86_64__) || defined(_M_X64)
+  #include <emmintrin.h>
+  #define MAT_HAS_SSE2
+#endif
+
 #ifndef MATDEF
 #define MATDEF
 #endif
@@ -815,12 +824,141 @@ MAT_INTERNAL_STATIC mat_elem_t mat_dot_scalar_impl(const Vec *v1, const Vec *v2)
   return result;
 }
 
+#ifdef MAT_HAS_SSE2
+#ifndef MAT_DOUBLE_PRECISION
+MAT_INTERNAL_STATIC mat_elem_t mat_dot_sse2_impl(const Vec *v1, const Vec *v2) {
+  size_t len = v1->rows;
+  float *pa = v1->data;
+  float *pb = v2->data;
+
+  __m128 sum0 = _mm_setzero_ps();
+  __m128 sum1 = _mm_setzero_ps();
+  __m128 sum2 = _mm_setzero_ps();
+  __m128 sum3 = _mm_setzero_ps();
+
+  size_t i = 0;
+
+  // Process 16 floats at a time (4 vectors of 4)
+  for (; i + 16 <= len; i += 16) {
+    __m128 a0 = _mm_loadu_ps(&pa[i]);
+    __m128 a1 = _mm_loadu_ps(&pa[i + 4]);
+    __m128 a2 = _mm_loadu_ps(&pa[i + 8]);
+    __m128 a3 = _mm_loadu_ps(&pa[i + 12]);
+
+    __m128 b0 = _mm_loadu_ps(&pb[i]);
+    __m128 b1 = _mm_loadu_ps(&pb[i + 4]);
+    __m128 b2 = _mm_loadu_ps(&pb[i + 8]);
+    __m128 b3 = _mm_loadu_ps(&pb[i + 12]);
+
+    sum0 = _mm_add_ps(sum0, _mm_mul_ps(a0, b0));
+    sum1 = _mm_add_ps(sum1, _mm_mul_ps(a1, b1));
+    sum2 = _mm_add_ps(sum2, _mm_mul_ps(a2, b2));
+    sum3 = _mm_add_ps(sum3, _mm_mul_ps(a3, b3));
+  }
+
+  // Process 4 floats at a time
+  for (; i + 4 <= len; i += 4) {
+    __m128 a = _mm_loadu_ps(&pa[i]);
+    __m128 b = _mm_loadu_ps(&pb[i]);
+    sum0 = _mm_add_ps(sum0, _mm_mul_ps(a, b));
+  }
+
+  // Combine accumulators
+  sum0 = _mm_add_ps(sum0, sum1);
+  sum2 = _mm_add_ps(sum2, sum3);
+  sum0 = _mm_add_ps(sum0, sum2);
+
+  // Horizontal sum
+  __m128 shuf = _mm_shuffle_ps(sum0, sum0, _MM_SHUFFLE(2, 3, 0, 1));
+  sum0 = _mm_add_ps(sum0, shuf);
+  shuf = _mm_movehl_ps(shuf, sum0);
+  sum0 = _mm_add_ss(sum0, shuf);
+  float result = _mm_cvtss_f32(sum0);
+
+  // Scalar remainder
+  for (; i < len; i++) {
+    result += pa[i] * pb[i];
+  }
+
+  return result;
+}
+#endif
+#endif
+
+#ifdef MAT_HAS_AVX2
+#ifndef MAT_DOUBLE_PRECISION
+MAT_INTERNAL_STATIC mat_elem_t mat_dot_avx2_impl(const Vec *v1, const Vec *v2) {
+  size_t len = v1->rows;
+  float *pa = v1->data;
+  float *pb = v2->data;
+
+  __m256 sum0 = _mm256_setzero_ps();
+  __m256 sum1 = _mm256_setzero_ps();
+  __m256 sum2 = _mm256_setzero_ps();
+  __m256 sum3 = _mm256_setzero_ps();
+
+  size_t i = 0;
+
+  // Process 32 floats at a time (4 vectors of 8)
+  for (; i + 32 <= len; i += 32) {
+    __m256 a0 = _mm256_loadu_ps(&pa[i]);
+    __m256 a1 = _mm256_loadu_ps(&pa[i + 8]);
+    __m256 a2 = _mm256_loadu_ps(&pa[i + 16]);
+    __m256 a3 = _mm256_loadu_ps(&pa[i + 24]);
+
+    __m256 b0 = _mm256_loadu_ps(&pb[i]);
+    __m256 b1 = _mm256_loadu_ps(&pb[i + 8]);
+    __m256 b2 = _mm256_loadu_ps(&pb[i + 16]);
+    __m256 b3 = _mm256_loadu_ps(&pb[i + 24]);
+
+    sum0 = _mm256_fmadd_ps(a0, b0, sum0);
+    sum1 = _mm256_fmadd_ps(a1, b1, sum1);
+    sum2 = _mm256_fmadd_ps(a2, b2, sum2);
+    sum3 = _mm256_fmadd_ps(a3, b3, sum3);
+  }
+
+  // Process 8 floats at a time
+  for (; i + 8 <= len; i += 8) {
+    __m256 a = _mm256_loadu_ps(&pa[i]);
+    __m256 b = _mm256_loadu_ps(&pb[i]);
+    sum0 = _mm256_fmadd_ps(a, b, sum0);
+  }
+
+  // Combine accumulators
+  sum0 = _mm256_add_ps(sum0, sum1);
+  sum2 = _mm256_add_ps(sum2, sum3);
+  sum0 = _mm256_add_ps(sum0, sum2);
+
+  // Horizontal sum (AVX)
+  __m128 hi = _mm256_extractf128_ps(sum0, 1);
+  __m128 lo = _mm256_castps256_ps128(sum0);
+  __m128 sum128 = _mm_add_ps(lo, hi);
+  __m128 shuf = _mm_shuffle_ps(sum128, sum128, _MM_SHUFFLE(2, 3, 0, 1));
+  sum128 = _mm_add_ps(sum128, shuf);
+  shuf = _mm_movehl_ps(shuf, sum128);
+  sum128 = _mm_add_ss(sum128, shuf);
+  float result = _mm_cvtss_f32(sum128);
+
+  // Scalar remainder
+  for (; i < len; i++) {
+    result += pa[i] * pb[i];
+  }
+
+  return result;
+}
+#endif
+#endif
+
 MATDEF mat_elem_t mat_dot(const Vec *v1, const Vec *v2) {
   MAT_ASSERT_MAT(v1);
   MAT_ASSERT_MAT(v2);
 
 #ifdef __ARM_NEON
   return mat_dot_neon_impl(v1, v2);
+#elif defined(MAT_HAS_AVX2) && !defined(MAT_DOUBLE_PRECISION)
+  return mat_dot_avx2_impl(v1, v2);
+#elif defined(MAT_HAS_SSE2) && !defined(MAT_DOUBLE_PRECISION)
+  return mat_dot_sse2_impl(v1, v2);
 #else
   return mat_dot_scalar_impl(v1, v2);
 #endif
