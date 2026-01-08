@@ -491,13 +491,9 @@ MATDEF void mat_add(Mat *out, const Mat *a, const Mat *b) {
   MAT_ASSERT(a->rows == b->rows);
   MAT_ASSERT(a->cols == b->cols);
 
-  size_t rows = a->rows;
-  size_t cols = a->cols;
-
-  for (size_t i = 0; i < rows; i++) {
-    for (size_t j = 0; j < cols; j++) {
-      out->data[i * cols + j] = mat_at(a, i, j) + mat_at(b, i, j);
-    }
+  size_t len = a->rows * a->cols;
+  for (size_t i = 0; i < len; i++) {
+    out->data[i] = a->data[i] + b->data[i];
   }
 }
 
@@ -514,13 +510,10 @@ MATDEF void mat_sub(Mat *out, const Mat *a, const Mat *b) {
   MAT_ASSERT(a->rows == b->rows);
   MAT_ASSERT(a->cols == b->cols);
 
-  size_t rows = a->rows;
-  size_t cols = a->cols;
-
-  for (size_t i = 0; i < rows; i++) {
-    for (size_t j = 0; j < cols; j++) {
-      out->data[i * cols + j] = mat_at(a, i, j) - mat_at(b, i, j);
-    }
+  size_t len = a->rows * a->cols;
+  
+  for (size_t i = 0; i < len; i++) {
+    out->data[i] = a->data[i] - b->data[i];
   }
 }
 
@@ -595,13 +588,22 @@ MATDEF void mat_mul(Mat *out, const Mat *a, const Mat *b) {
   MAT_ASSERT_MAT(b);
   MAT_ASSERT(a->cols == b->rows);
 
-  for (size_t i = 0; i < a->rows; i++) {
-    for (size_t j = 0; j < b->cols; j++) {
-      mat_elem_t sum = 0;
-      for (size_t k = 0; k < a->cols; k++) {
-        sum += a->data[i * a->cols + k] * b->data[k * b->cols + j];
+  size_t rows = a->rows;
+  size_t cols = b->cols;
+  size_t inner = a->cols;
+
+  // Zero output
+  for (size_t i = 0; i < rows * cols; i++) {
+    out->data[i] = 0;
+  }
+
+  // ikj loop order for cache-friendly access
+  for (size_t i = 0; i < rows; i++) {
+    for (size_t k = 0; k < inner; k++) {
+      mat_elem_t aik = a->data[i * inner + k];
+      for (size_t j = 0; j < cols; j++) {
+        out->data[i * cols + j] += aik * b->data[k * cols + j];
       }
-      out->data[i * out->cols + j] = sum;
     }
   }
 }
