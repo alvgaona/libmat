@@ -26,6 +26,7 @@
 
 #ifdef MAT_STRIP_PREFIX
 
+#define mat mat_mat
 #define empty mat_empty
 #define zeros mat_zeros
 #define ones mat_ones
