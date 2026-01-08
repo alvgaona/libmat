@@ -4,6 +4,9 @@ build/
 tests/*
 !tests/*.c
 !tests/*.h
+!tests/bench/
+tests/bench/*
+!tests/bench/*.c
 
 # Example binaries (ignore all, keep .c)
 examples/*

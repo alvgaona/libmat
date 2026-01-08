@@ -11,7 +11,7 @@ EXAMPLES_CXX = $(patsubst %.cpp,%,$(wildcard examples/*.cpp))
 # Tests
 TESTS = $(patsubst %.c,%,$(wildcard tests/*.c))
 
-.PHONY: all examples test check clean
+.PHONY: all examples test check bench clean
 
 all: examples test
 
@@ -31,6 +31,12 @@ tests/%: tests/%.c mat.h
 check: test
 	@for t in $(TESTS); do echo "Running $$t..."; ./$$t || exit 1; done
 	@echo "All tests passed!"
+
+tests/bench/bench_all: tests/bench/bench_all.c mat.h
+	$(CC) $(CFLAGS) -O3 -o $@ $< $(LDLIBS)
+
+bench: tests/bench/bench_all
+	./tests/bench/bench_all
 
 clean:
 	find examples tests -type f ! -name "*.c" ! -name "*.cpp" ! -name "*.h" -delete
