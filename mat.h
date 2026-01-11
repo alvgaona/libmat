@@ -15,6 +15,24 @@
 #define MATDEF
 #endif
 
+// Mark experimental functions (warns on use)
+#if defined(__GNUC__)
+#define MAT_EXPERIMENTAL __attribute__((warning("experimental: does not guarantee correct results")))
+#elif defined(_MSC_VER)
+#define MAT_EXPERIMENTAL __declspec(deprecated("experimental: does not guarantee correct results"))
+#else
+#define MAT_EXPERIMENTAL
+#endif
+
+// Mark unimplemented functions (errors on use)
+#if defined(__GNUC__)
+#define MAT_NOT_IMPLEMENTED __attribute__((error("not implemented")))
+#elif defined(_MSC_VER)
+#define MAT_NOT_IMPLEMENTED __declspec(deprecated("not implemented - will not link"))
+#else
+#define MAT_NOT_IMPLEMENTED
+#endif
+
 // Overridable allocator macros
 // Define these before including mat.h to use custom allocators
 // (e.g., arenas)
@@ -580,11 +598,11 @@ MATDEF mat_elem_t mat_trace(const Mat *a);
 // Return determinant. Matrix must be square. Uses LU decomposition.
 MATDEF mat_elem_t mat_det(const Mat *a);
 
-// Return numerical rank via SVD (not yet implemented).
-MATDEF mat_elem_t mat_rank(const Mat *a);
+// Return numerical rank via SVD.
+MAT_NOT_IMPLEMENTED MATDEF mat_elem_t mat_rank(const Mat *a);
 
-// Return condition number (not yet implemented).
-MATDEF mat_elem_t mat_cond(const Mat *a);
+// Return condition number.
+MAT_NOT_IMPLEMENTED MATDEF mat_elem_t mat_cond(const Mat *a);
 
 // Return count of non-zero elements.
 MATDEF mat_elem_t mat_nnz(const Mat *a);
@@ -594,7 +612,7 @@ MATDEF mat_elem_t mat_nnz(const Mat *a);
 // QR decomposition via Householder reflections.
 // A = Q * R where Q is orthogonal (m x m), R is upper triangular (m x n).
 // Q and R must be pre-allocated with correct dimensions.
-MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R);
+MAT_EXPERIMENTAL MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R);
 
 // LU decomposition with full pivoting.
 // P * A * Q = L * U where P, Q are permutations.
@@ -603,6 +621,36 @@ MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R);
 // P and Q must be pre-allocated permutations of size n.
 // Returns the number of row+column swaps (useful for determinant sign).
 MATDEF int mat_lu(const Mat *A, Mat *L, Mat *U, Perm *p, Perm *q);
+
+// Cholesky decomposition (A = L * L^T, A must be symmetric positive definite).
+MAT_NOT_IMPLEMENTED MATDEF void mat_chol(const Mat *A, Mat *L);
+
+// Singular value decomposition (A = U * S * Vt).
+MAT_NOT_IMPLEMENTED MATDEF void mat_svd(const Mat *A, Mat *U, Vec *S, Mat *Vt);
+
+// Matrix inverse using LU decomposition.
+MAT_NOT_IMPLEMENTED MATDEF void mat_inv(Mat *out, const Mat *A);
+
+// Moore-Penrose pseudoinverse via SVD.
+MAT_NOT_IMPLEMENTED MATDEF void mat_pinv(Mat *out, const Mat *A);
+
+// Eigendecomposition.
+MAT_NOT_IMPLEMENTED MATDEF void mat_eig(const Mat *A, Vec *eigenvalues, Mat *eigenvectors);
+
+// Eigenvalues only (faster, no eigenvectors).
+MAT_NOT_IMPLEMENTED MATDEF void mat_eigvals(Vec *out, const Mat *A);
+
+// Solve Ax = b.
+MAT_NOT_IMPLEMENTED MATDEF void mat_solve(Vec *x, const Mat *A, const Vec *b);
+
+// Least squares solution.
+MAT_NOT_IMPLEMENTED MATDEF void mat_lstsq(Vec *x, const Mat *A, const Vec *b);
+
+// Kronecker product.
+MAT_NOT_IMPLEMENTED MATDEF void mat_kron(Mat *out, const Mat *A, const Mat *B);
+
+// 2D convolution.
+MAT_NOT_IMPLEMENTED MATDEF void mat_conv2d(Mat *out, const Mat *A, const Mat *kernel);
 
 #ifdef __cplusplus
 }
