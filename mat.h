@@ -5,9 +5,6 @@
 #include <stdint.h>
 #include <stdbool.h>
 
-// Optional profiling support (macros are no-ops when PROFILE_ENABLED not defined)
-#include "profile.h"
-
 // ARM NEON detection
 #if defined(__ARM_NEON) || defined(__ARM_NEON__) || defined(_M_ARM64)
   #define MAT_HAS_ARM_NEON
@@ -3639,15 +3636,11 @@ MATDEF void mat_inv(Mat *out, const Mat *A) {
   size_t n = A->rows;
   MAT_ASSERT(out->rows == n && out->cols == n);
 
-  PROFILE_START("alloc");
   Mat *L = mat_mat(n, n);
   Mat *U = mat_mat(n, n);
   Perm *p = mat_perm(n);
-  PROFILE_END("alloc");
 
-  PROFILE_START("plu");
   mat_plu(A, L, U, p);
-  PROFILE_END("plu");
 
   // Y = L^-1 * P * I (forward substitution on permuted identity)
   // out stores Y, then X = U^-1 * Y
@@ -3655,14 +3648,11 @@ MATDEF void mat_inv(Mat *out, const Mat *A) {
   mat_elem_t *Ldata = L->data;
   mat_elem_t *Udata = U->data;
 
-  PROFILE_START("init_Y");
   // Initialize Y = P * I (permuted identity)
   memset(Y, 0, n * n * sizeof(mat_elem_t));
   for (size_t i = 0; i < n; i++)
     Y[i * n + p->data[i]] = 1;
-  PROFILE_END("init_Y");
 
-  PROFILE_START("forward_subst");
   // Blocked forward substitution: L * Z = Y => Z = L^-1 * Y
   // Use strided GEMM for block updates
 #define MAT_INV_BLOCK_SIZE 64
@@ -3692,9 +3682,7 @@ MATDEF void mat_inv(Mat *out, const Mat *A) {
       }
     }
   }
-  PROFILE_END("forward_subst");
 
-  PROFILE_START("backward_subst");
   // Blocked backward substitution: U * X = Y => X = U^-1 * Y
   // Use strided GEMM for block updates
   for (size_t ib = n; ib > 0;) {
@@ -3728,13 +3716,10 @@ MATDEF void mat_inv(Mat *out, const Mat *A) {
         Yi[k] *= u_ii_inv;
     }
   }
-  PROFILE_END("backward_subst");
 
-  PROFILE_START("free");
   MAT_FREE_MAT(L);
   MAT_FREE_MAT(U);
   MAT_FREE_PERM(p);
-  PROFILE_END("free");
 }
 
 MATDEF mat_elem_t mat_det(const Mat *A) {
