@@ -33,7 +33,7 @@ void test_mat_rt_rectangular(void) {
 
 void test_mat_rt_identity(void) {
     TEST_BEGIN("mat_rt identity unchanged");
-    Mat *eye = mat_eye(3);
+    Mat *eye = mat_reye(3);
 
     Mat *result = mat_rt(eye);
     CHECK(mat_equals(result, eye));

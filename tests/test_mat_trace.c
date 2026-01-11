@@ -63,7 +63,7 @@ void test_mat_trace_2x2(void) {
 
 void test_mat_trace_identity(void) {
     TEST_BEGIN("mat_trace identity");
-    Mat *a = mat_eye(4);
+    Mat *a = mat_reye(4);
 
     mat_elem_t trace = mat_trace(a);
 

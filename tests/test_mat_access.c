@@ -47,7 +47,7 @@ void test_mat_size_basic(void) {
 
 void test_mat_size_square(void) {
     TEST_BEGIN("mat_size square");
-    Mat *a = mat_eye(4);
+    Mat *a = mat_reye(4);
 
     MatSize size = mat_size(a);
     CHECK(size.x == 4 && size.y == 4);
