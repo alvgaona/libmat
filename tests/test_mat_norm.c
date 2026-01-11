@@ -52,7 +52,7 @@ void test_mat_norm_max_single(void) {
 
 void test_mat_norm_fro_identity(void) {
     TEST_BEGIN("mat_norm_fro identity");
-    Mat *a = mat_eye(3);
+    Mat *a = mat_reye(3);
 
     mat_elem_t norm = mat_norm_fro(a);
 
