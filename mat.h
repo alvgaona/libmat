@@ -125,6 +125,7 @@ typedef struct {
     #define MAT_NEON_DUP      vdupq_n_f64
     #define MAT_NEON_DUP_U    vdupq_n_u64
     #define MAT_NEON_FMA      vfmaq_f64
+    #define MAT_NEON_FMS      vfmsq_f64
     #define MAT_NEON_ADD      vaddq_f64
     #define MAT_NEON_ADDV     vaddvq_f64
     #define MAT_NEON_ABS      vabsq_f64
@@ -149,6 +150,7 @@ typedef struct {
     #define MAT_NEON_DUP      vdupq_n_f32
     #define MAT_NEON_DUP_U    vdupq_n_u32
     #define MAT_NEON_FMA      vfmaq_f32
+    #define MAT_NEON_FMS      vfmsq_f32
     #define MAT_NEON_ADD      vaddq_f32
     #define MAT_NEON_ADDV     vaddvq_f32
     #define MAT_NEON_ABS      vabsq_f32
@@ -572,6 +574,19 @@ MATDEF mat_elem_t mat_nnz(const Mat *a);
 // A = Q * R where Q is orthogonal (m x m), R is upper triangular (m x n).
 // Q and R must be pre-allocated with correct dimensions.
 MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R);
+
+// LU decomposition (Doolittle algorithm, no pivoting).
+// A = L * U where L is lower triangular with 1s on diagonal, U is upper triangular.
+// L and U must be pre-allocated with dimensions n x n.
+// Returns 0 on success, -1 if a zero pivot is encountered.
+MATDEF int mat_lu(const Mat *A, Mat *L, Mat *U);
+
+// LU decomposition with full pivoting.
+// P * A * Q = L * U where P, Q are permutation matrices.
+// L and U must be pre-allocated with dimensions n x n.
+// row_perm and col_perm must be pre-allocated arrays of size n.
+// Returns the number of row swaps (useful for determinant sign).
+MATDEF int mat_lu_fullpiv(const Mat *A, Mat *L, Mat *U, size_t *row_perm, size_t *col_perm);
 
 #ifdef __cplusplus
 }
@@ -2558,8 +2573,10 @@ MATDEF mat_elem_t mat_std(const Mat *a) {
 #endif
 }
 
-// QR Decomposition using Householder reflections
+// QR Decomposition using blocked Householder (WY representation)
 // A (m x n) = Q (m x m) * R (m x n), requires m >= n
+#define MAT_QR_BLOCK_SIZE 2  // Temporarily small for debugging
+
 MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R) {
   MAT_ASSERT_MAT(A);
   MAT_ASSERT_MAT(Q);
@@ -2577,97 +2594,187 @@ MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R) {
   // Initialize Q to identity
   mat_eye(Q);
 
-  // Temporary storage for Householder vector
-  mat_elem_t *v = (mat_elem_t *)MAT_MALLOC(m * sizeof(mat_elem_t));
-  MAT_ASSERT(v != NULL);
+  size_t nb = MAT_QR_BLOCK_SIZE;
+  if (nb > n) nb = n;
 
-  for (size_t k = 0; k < n; k++) {
-    size_t len = m - k;  // length of the Householder vector
+  // Allocate workspace:
+  // V: m x nb - Householder vectors for current block
+  // T: nb x nb - upper triangular matrix for WY representation
+  // W: workspace for applying block reflector (max(m, n) x nb)
+  mat_elem_t *V = (mat_elem_t *)MAT_MALLOC(m * nb * sizeof(mat_elem_t));
+  mat_elem_t *T = (mat_elem_t *)MAT_MALLOC(nb * nb * sizeof(mat_elem_t));
+  mat_elem_t *W = (mat_elem_t *)MAT_MALLOC(m * nb * sizeof(mat_elem_t));
+  mat_elem_t *tau_arr = (mat_elem_t *)MAT_MALLOC(nb * sizeof(mat_elem_t));
+  MAT_ASSERT(V && T && W && tau_arr);
 
-    // Compute norm of R[k:m, k]
-    mat_elem_t norm_x = 0;
-    for (size_t i = 0; i < len; i++) {
-      mat_elem_t val = R->data[(k + i) * n + k];
-      norm_x += val * val;
-    }
+  for (size_t k = 0; k < n; k += nb) {
+    size_t kb = (k + nb <= n) ? nb : (n - k);  // actual block size
+    size_t panel_rows = m - k;
+
+    // === Panel factorization: factor columns k to k+kb ===
+    // Zero out V and T for this block
+    for (size_t i = 0; i < panel_rows * kb; i++) V[i] = 0;
+    for (size_t i = 0; i < kb * kb; i++) T[i] = 0;
+
+    for (size_t j = 0; j < kb; j++) {
+      size_t col = k + j;
+      size_t len = m - col;
+
+      // Compute norm of R[col:m, col]
+      mat_elem_t norm_x = 0;
+      for (size_t i = 0; i < len; i++) {
+        mat_elem_t val = R->data[(col + i) * n + col];
+        norm_x += val * val;
+      }
 #ifdef MAT_DOUBLE_PRECISION
-    norm_x = sqrt(norm_x);
+      norm_x = sqrt(norm_x);
 #else
-    norm_x = sqrtf(norm_x);
+      norm_x = sqrtf(norm_x);
 #endif
 
-    if (norm_x < MAT_DEFAULT_EPSILON) continue;  // skip zero columns
+      mat_elem_t tau = 0;
+      if (norm_x >= MAT_DEFAULT_EPSILON) {
+        // Form Householder vector
+        mat_elem_t x0 = R->data[col * n + col];
+        mat_elem_t sign = (x0 >= 0) ? 1 : -1;
+        mat_elem_t v0 = x0 + sign * norm_x;
 
-    // Form Householder vector v
-    mat_elem_t x0 = R->data[k * n + k];
-    mat_elem_t sign = (x0 >= 0) ? 1 : -1;
-    v[0] = x0 + sign * norm_x;
-    for (size_t i = 1; i < len; i++) {
-      v[i] = R->data[(k + i) * n + k];
+        // Store normalized v in V (v[0] = 1, rest scaled)
+        V[j * panel_rows + j] = 1;  // v[0] = 1 after normalization
+        for (size_t i = 1; i < len; i++) {
+          V[j * panel_rows + j + i] = R->data[(col + i) * n + col] / v0;
+        }
+
+        // tau = 2 / (v^T v) where v[0] = 1
+        mat_elem_t vtv = 1;
+        for (size_t i = 1; i < len; i++) {
+          mat_elem_t vi = V[j * panel_rows + j + i];
+          vtv += vi * vi;
+        }
+        tau = 2 / vtv;
+
+        // Apply H to R[col:m, col:k+kb] (panel columns)
+        for (size_t jj = col; jj < k + kb; jj++) {
+          mat_elem_t dot = R->data[col * n + jj];  // v[0] = 1
+          for (size_t i = 1; i < len; i++) {
+            dot += V[j * panel_rows + j + i] * R->data[(col + i) * n + jj];
+          }
+          dot *= tau;
+          R->data[col * n + jj] -= dot;  // v[0] = 1
+          for (size_t i = 1; i < len; i++) {
+            R->data[(col + i) * n + jj] -= dot * V[j * panel_rows + j + i];
+          }
+        }
+      }
+      tau_arr[j] = tau;
     }
 
-    // Compute tau = 2 / (v^T v)
-    mat_elem_t vtv = 0;
-    for (size_t i = 0; i < len; i++) vtv += v[i] * v[i];
-    mat_elem_t tau = 2 / vtv;
+    // === Build T matrix (upper triangular for forward product H_0 * H_1 * ... * H_{kb-1}) ===
+    // T(j, j) = tau(j)
+    // T(0:j-1, j) = -tau(j) * T(0:j-1, 0:j-1) * V(:, 0:j-1)^T * V(:, j)
+    for (size_t j = 0; j < kb; j++) {
+      T[j * kb + j] = tau_arr[j];
+      if (tau_arr[j] == 0 || j == 0) continue;
 
-    // Apply H = I - tau * v * v^T to R[k:m, k:n]
-    // R[k:m, j] -= tau * v * (v^T * R[k:m, j]) for each column j
-    for (size_t j = k; j < n; j++) {
-      // 4x unrolled dot product with multiple accumulators
-      mat_elem_t dot0 = 0, dot1 = 0, dot2 = 0, dot3 = 0;
-      size_t i = 0;
-      for (; i + 3 < len; i += 4) {
-        dot0 += v[i]     * R->data[(k + i)     * n + j];
-        dot1 += v[i + 1] * R->data[(k + i + 1) * n + j];
-        dot2 += v[i + 2] * R->data[(k + i + 2) * n + j];
-        dot3 += v[i + 3] * R->data[(k + i + 3) * n + j];
+      // Compute z[i] = V(:, i)^T * V(:, j) for i = 0, ..., j-1
+      // Store in W temporarily
+      for (size_t i = 0; i < j; i++) {
+        // V(:,i) has 1 at position i, then V[i*panel_rows + r] for r > i
+        // V(:,j) has 1 at position j, then V[j*panel_rows + r] for r > j
+        // Since j > i, the overlap starts at position j
+        mat_elem_t dot = V[i * panel_rows + j];  // V(:,i)[j] * 1
+        for (size_t r = j + 1; r < panel_rows; r++) {
+          dot += V[i * panel_rows + r] * V[j * panel_rows + r];
+        }
+        W[i] = dot;
       }
-      mat_elem_t dot = (dot0 + dot1) + (dot2 + dot3);
-      for (; i < len; i++) {
-        dot += v[i] * R->data[(k + i) * n + j];
-      }
-      dot *= tau;
-      // 4x unrolled vector update
-      i = 0;
-      for (; i + 3 < len; i += 4) {
-        R->data[(k + i)     * n + j] -= dot * v[i];
-        R->data[(k + i + 1) * n + j] -= dot * v[i + 1];
-        R->data[(k + i + 2) * n + j] -= dot * v[i + 2];
-        R->data[(k + i + 3) * n + j] -= dot * v[i + 3];
-      }
-      for (; i < len; i++) {
-        R->data[(k + i) * n + j] -= dot * v[i];
+
+      // T(0:j-1, j) = -tau(j) * T(0:j-1, 0:j-1) * z
+      // Upper triangular matrix-vector multiply
+      for (size_t i = 0; i < j; i++) {
+        mat_elem_t sum = 0;
+        for (size_t p = i; p < j; p++) {
+          sum += T[i * kb + p] * W[p];
+        }
+        T[i * kb + j] = -tau_arr[j] * sum;
       }
     }
 
-    // Apply H to Q[:, k:m] (Q = Q * H, so we update columns k:m of Q)
-    // Q[:, k:m] -= tau * (Q[:, k:m] * v) * v^T
-    for (size_t i = 0; i < m; i++) {
-      // 4x unrolled dot product with multiple accumulators
-      mat_elem_t dot0 = 0, dot1 = 0, dot2 = 0, dot3 = 0;
-      size_t j = 0;
-      for (; j + 3 < len; j += 4) {
-        dot0 += Q->data[i * m + (k + j)]     * v[j];
-        dot1 += Q->data[i * m + (k + j + 1)] * v[j + 1];
-        dot2 += Q->data[i * m + (k + j + 2)] * v[j + 2];
-        dot3 += Q->data[i * m + (k + j + 3)] * v[j + 3];
+    // === Apply block reflector to trailing matrix R[k:m, k+kb:n] ===
+    if (k + kb < n) {
+      size_t trail_cols = n - k - kb;
+
+      // W = V^T * R[k:m, k+kb:n]  (kb x trail_cols)
+      for (size_t jj = 0; jj < trail_cols; jj++) {
+        for (size_t ii = 0; ii < kb; ii++) {
+          mat_elem_t dot = 0;
+          for (size_t r = ii; r < panel_rows; r++) {
+            mat_elem_t v_r = (r == ii) ? 1 : ((r > ii) ? V[ii * panel_rows + r] : 0);
+            dot += v_r * R->data[(k + r) * n + (k + kb + jj)];
+          }
+          W[ii * trail_cols + jj] = dot;
+        }
       }
-      mat_elem_t dot = (dot0 + dot1) + (dot2 + dot3);
-      for (; j < len; j++) {
-        dot += Q->data[i * m + (k + j)] * v[j];
+
+      // W = T * W  (kb x trail_cols), T is upper triangular
+      for (size_t jj = 0; jj < trail_cols; jj++) {
+        for (size_t ii = 0; ii < kb; ii++) {
+          mat_elem_t sum = 0;
+          for (size_t p = ii; p < kb; p++) {
+            sum += T[ii * kb + p] * W[p * trail_cols + jj];
+          }
+          // Store in place (process top to bottom so we can overwrite)
+          W[ii * trail_cols + jj] = sum;
+        }
       }
-      dot *= tau;
-      // 4x unrolled vector update
-      j = 0;
-      for (; j + 3 < len; j += 4) {
-        Q->data[i * m + (k + j)]     -= dot * v[j];
-        Q->data[i * m + (k + j + 1)] -= dot * v[j + 1];
-        Q->data[i * m + (k + j + 2)] -= dot * v[j + 2];
-        Q->data[i * m + (k + j + 3)] -= dot * v[j + 3];
+
+      // R[k:m, k+kb:n] -= V * W
+      for (size_t r = 0; r < panel_rows; r++) {
+        for (size_t jj = 0; jj < trail_cols; jj++) {
+          mat_elem_t sum = 0;
+          for (size_t ii = 0; ii < kb; ii++) {
+            mat_elem_t v_r = (r == ii) ? 1 : ((r > ii) ? V[ii * panel_rows + r] : 0);
+            sum += v_r * W[ii * trail_cols + jj];
+          }
+          R->data[(k + r) * n + (k + kb + jj)] -= sum;
+        }
       }
-      for (; j < len; j++) {
-        Q->data[i * m + (k + j)] -= dot * v[j];
+    }
+
+    // === Apply block reflector to Q[:, k:m] ===
+    // Q = Q * (I - V * T * V^T) = Q - Q * V * T * V^T
+    // Let W = Q[:, k:m] * V  (m x kb)
+    for (size_t ii = 0; ii < m; ii++) {
+      for (size_t jj = 0; jj < kb; jj++) {
+        mat_elem_t dot = 0;
+        for (size_t r = jj; r < panel_rows; r++) {
+          mat_elem_t v_r = (r == jj) ? 1 : ((r > jj) ? V[jj * panel_rows + r] : 0);
+          dot += Q->data[ii * m + (k + r)] * v_r;
+        }
+        W[ii * kb + jj] = dot;
+      }
+    }
+
+    // W = W * T  (m x kb), T is upper triangular
+    for (size_t ii = 0; ii < m; ii++) {
+      for (int jj = (int)kb - 1; jj >= 0; jj--) {  // bottom to top for in-place
+        mat_elem_t sum = 0;
+        for (size_t p = 0; p <= (size_t)jj; p++) {
+          sum += W[ii * kb + p] * T[p * kb + jj];
+        }
+        W[ii * kb + jj] = sum;
+      }
+    }
+
+    // Q[:, k:m] -= W * V^T
+    for (size_t ii = 0; ii < m; ii++) {
+      for (size_t r = 0; r < panel_rows; r++) {
+        mat_elem_t sum = 0;
+        for (size_t jj = 0; jj < kb; jj++) {
+          mat_elem_t v_r = (r == jj) ? 1 : ((r > jj) ? V[jj * panel_rows + r] : 0);
+          sum += W[ii * kb + jj] * v_r;
+        }
+        Q->data[ii * m + (k + r)] -= sum;
       }
     }
   }
@@ -2679,7 +2786,309 @@ MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R) {
     }
   }
 
-  MAT_FREE(v);
+  MAT_FREE(V);
+  MAT_FREE(T);
+  MAT_FREE(W);
+  MAT_FREE(tau_arr);
+}
+
+MATDEF int mat_lu(const Mat *A, Mat *L, Mat *U) {
+  MAT_ASSERT_MAT(A);
+  MAT_ASSERT_MAT(L);
+  MAT_ASSERT_MAT(U);
+
+  size_t n = A->rows;
+  MAT_ASSERT(A->cols == n && "mat_lu requires square matrix");
+  MAT_ASSERT(L->rows == n && L->cols == n);
+  MAT_ASSERT(U->rows == n && U->cols == n);
+
+  // Initialize L to identity, U to zeros
+  mat_eye(L);
+  memset(U->data, 0, n * n * sizeof(mat_elem_t));
+
+  // Doolittle algorithm
+  for (size_t i = 0; i < n; i++) {
+    // Compute U[i, j] for j = i to n-1 (row i of U)
+    for (size_t j = i; j < n; j++) {
+      mat_elem_t sum = 0;
+      for (size_t k = 0; k < i; k++) {
+        sum += L->data[i * n + k] * U->data[k * n + j];
+      }
+      U->data[i * n + j] = A->data[i * n + j] - sum;
+    }
+
+    // Check for zero pivot
+    if (fabsf(U->data[i * n + i]) < MAT_DEFAULT_EPSILON) {
+      return -1;
+    }
+
+    // Compute L[j, i] for j = i+1 to n-1 (column i of L, below diagonal)
+    for (size_t j = i + 1; j < n; j++) {
+      mat_elem_t sum = 0;
+      for (size_t k = 0; k < i; k++) {
+        sum += L->data[j * n + k] * U->data[k * n + i];
+      }
+      L->data[j * n + i] = (A->data[j * n + i] - sum) / U->data[i * n + i];
+    }
+  }
+
+  return 0;
+}
+
+// Scalar implementation of full pivoting LU
+MAT_INTERNAL_STATIC int mat_lu_fullpiv_scalar_impl(Mat *M, size_t *row_perm, size_t *col_perm) {
+  size_t n = M->rows;
+  mat_elem_t *data = M->data;
+  int swap_count = 0;
+
+  for (size_t k = 0; k < n; k++) {
+    // Find largest element in submatrix data[k:n, k:n]
+    mat_elem_t max_val = 0;
+    size_t pivot_row = k, pivot_col = k;
+
+    for (size_t i = k; i < n; i++) {
+      for (size_t j = k; j < n; j++) {
+        mat_elem_t val = fabsf(data[i * n + j]);
+        if (val > max_val) {
+          max_val = val;
+          pivot_row = i;
+          pivot_col = j;
+        }
+      }
+    }
+
+    // Swap rows k and pivot_row
+    if (pivot_row != k) {
+      for (size_t j = 0; j < n; j++) {
+        mat_elem_t tmp = data[k * n + j];
+        data[k * n + j] = data[pivot_row * n + j];
+        data[pivot_row * n + j] = tmp;
+      }
+      size_t tmp = row_perm[k];
+      row_perm[k] = row_perm[pivot_row];
+      row_perm[pivot_row] = tmp;
+      swap_count++;
+    }
+
+    // Swap columns k and pivot_col
+    if (pivot_col != k) {
+      for (size_t i = 0; i < n; i++) {
+        mat_elem_t tmp = data[i * n + k];
+        data[i * n + k] = data[i * n + pivot_col];
+        data[i * n + pivot_col] = tmp;
+      }
+      size_t tmp = col_perm[k];
+      col_perm[k] = col_perm[pivot_col];
+      col_perm[pivot_col] = tmp;
+      swap_count++;
+    }
+
+    // Skip if pivot is zero (matrix is singular)
+    if (fabsf(data[k * n + k]) < MAT_DEFAULT_EPSILON) {
+      continue;
+    }
+
+    // Elimination: rank-1 update of trailing submatrix
+    mat_elem_t pivot_inv = 1.0f / data[k * n + k];
+    mat_elem_t *row_k = &data[k * n];
+
+    for (size_t i = k + 1; i < n; i++) {
+      mat_elem_t *row_i = &data[i * n];
+      mat_elem_t l_ik = row_i[k] * pivot_inv;
+      row_i[k] = l_ik;
+
+      for (size_t j = k + 1; j < n; j++) {
+        row_i[j] -= l_ik * row_k[j];
+      }
+    }
+  }
+
+  return swap_count;
+}
+
+#ifdef MAT_HAS_ARM_NEON
+// NEON-optimized implementation of full pivoting LU
+MAT_INTERNAL_STATIC int mat_lu_fullpiv_neon_impl(Mat *M, size_t *row_perm, size_t *col_perm) {
+  size_t n = M->rows;
+  mat_elem_t *data = M->data;
+  int swap_count = 0;
+
+  for (size_t k = 0; k < n; k++) {
+    // Find largest element in submatrix data[k:n, k:n] using NEON
+    mat_elem_t max_val = 0;
+    size_t pivot_row = k, pivot_col = k;
+
+    for (size_t i = k; i < n; i++) {
+      mat_elem_t *row = &data[i * n];
+      size_t j = k;
+
+      // NEON vectorized max search within row
+      MAT_NEON_TYPE vmax = MAT_NEON_DUP(0);
+      for (; j + MAT_NEON_WIDTH <= n; j += MAT_NEON_WIDTH) {
+        MAT_NEON_TYPE v = MAT_NEON_LOAD(&row[j]);
+        MAT_NEON_TYPE vabs = MAT_NEON_ABS(v);
+        vmax = MAT_NEON_MAX(vmax, vabs);
+      }
+      mat_elem_t row_max = MAT_NEON_MAXV(vmax);
+
+      // Scalar remainder
+      for (; j < n; j++) {
+        mat_elem_t val = fabsf(row[j]);
+        if (val > row_max) row_max = val;
+      }
+
+      // If this row has a larger max, find the exact column
+      if (row_max > max_val) {
+        max_val = row_max;
+        pivot_row = i;
+        // Find the column with max value in this row
+        for (size_t jj = k; jj < n; jj++) {
+          if (fabsf(row[jj]) == row_max) {
+            pivot_col = jj;
+            break;
+          }
+        }
+      }
+    }
+
+    // Swap rows k and pivot_row using NEON
+    if (pivot_row != k) {
+      mat_elem_t *row_k_ptr = &data[k * n];
+      mat_elem_t *row_p_ptr = &data[pivot_row * n];
+      size_t j = 0;
+
+      for (; j + MAT_NEON_WIDTH <= n; j += MAT_NEON_WIDTH) {
+        MAT_NEON_TYPE vk = MAT_NEON_LOAD(&row_k_ptr[j]);
+        MAT_NEON_TYPE vp = MAT_NEON_LOAD(&row_p_ptr[j]);
+        MAT_NEON_STORE(&row_k_ptr[j], vp);
+        MAT_NEON_STORE(&row_p_ptr[j], vk);
+      }
+      for (; j < n; j++) {
+        mat_elem_t tmp = row_k_ptr[j];
+        row_k_ptr[j] = row_p_ptr[j];
+        row_p_ptr[j] = tmp;
+      }
+
+      size_t tmp = row_perm[k];
+      row_perm[k] = row_perm[pivot_row];
+      row_perm[pivot_row] = tmp;
+      swap_count++;
+    }
+
+    // Swap columns k and pivot_col (not vectorizable - strided access)
+    if (pivot_col != k) {
+      for (size_t i = 0; i < n; i++) {
+        mat_elem_t tmp = data[i * n + k];
+        data[i * n + k] = data[i * n + pivot_col];
+        data[i * n + pivot_col] = tmp;
+      }
+      size_t tmp = col_perm[k];
+      col_perm[k] = col_perm[pivot_col];
+      col_perm[pivot_col] = tmp;
+      swap_count++;
+    }
+
+    // Skip if pivot is zero
+    if (fabsf(data[k * n + k]) < MAT_DEFAULT_EPSILON) {
+      continue;
+    }
+
+    // Elimination: rank-1 update using NEON
+    mat_elem_t pivot_inv = 1.0f / data[k * n + k];
+    mat_elem_t *row_k = &data[k * n];
+
+    for (size_t i = k + 1; i < n; i++) {
+      mat_elem_t *row_i = &data[i * n];
+      mat_elem_t l_ik = row_i[k] * pivot_inv;
+      row_i[k] = l_ik;
+
+      MAT_NEON_TYPE vl = MAT_NEON_DUP(l_ik);
+      size_t j = k + 1;
+
+      // NEON vectorized update: row_i[j] -= l_ik * row_k[j]
+      for (; j + MAT_NEON_WIDTH * 4 <= n; j += MAT_NEON_WIDTH * 4) {
+        MAT_NEON_TYPE vk0 = MAT_NEON_LOAD(&row_k[j]);
+        MAT_NEON_TYPE vk1 = MAT_NEON_LOAD(&row_k[j + MAT_NEON_WIDTH]);
+        MAT_NEON_TYPE vk2 = MAT_NEON_LOAD(&row_k[j + MAT_NEON_WIDTH * 2]);
+        MAT_NEON_TYPE vk3 = MAT_NEON_LOAD(&row_k[j + MAT_NEON_WIDTH * 3]);
+
+        MAT_NEON_TYPE vi0 = MAT_NEON_LOAD(&row_i[j]);
+        MAT_NEON_TYPE vi1 = MAT_NEON_LOAD(&row_i[j + MAT_NEON_WIDTH]);
+        MAT_NEON_TYPE vi2 = MAT_NEON_LOAD(&row_i[j + MAT_NEON_WIDTH * 2]);
+        MAT_NEON_TYPE vi3 = MAT_NEON_LOAD(&row_i[j + MAT_NEON_WIDTH * 3]);
+
+        vi0 = MAT_NEON_FMS(vi0, vl, vk0);
+        vi1 = MAT_NEON_FMS(vi1, vl, vk1);
+        vi2 = MAT_NEON_FMS(vi2, vl, vk2);
+        vi3 = MAT_NEON_FMS(vi3, vl, vk3);
+
+        MAT_NEON_STORE(&row_i[j], vi0);
+        MAT_NEON_STORE(&row_i[j + MAT_NEON_WIDTH], vi1);
+        MAT_NEON_STORE(&row_i[j + MAT_NEON_WIDTH * 2], vi2);
+        MAT_NEON_STORE(&row_i[j + MAT_NEON_WIDTH * 3], vi3);
+      }
+
+      for (; j + MAT_NEON_WIDTH <= n; j += MAT_NEON_WIDTH) {
+        MAT_NEON_TYPE vk = MAT_NEON_LOAD(&row_k[j]);
+        MAT_NEON_TYPE vi = MAT_NEON_LOAD(&row_i[j]);
+        vi = MAT_NEON_FMS(vi, vl, vk);
+        MAT_NEON_STORE(&row_i[j], vi);
+      }
+
+      // Scalar remainder
+      for (; j < n; j++) {
+        row_i[j] -= l_ik * row_k[j];
+      }
+    }
+  }
+
+  return swap_count;
+}
+#endif
+
+MATDEF int mat_lu_fullpiv(const Mat *A, Mat *L, Mat *U, size_t *row_perm, size_t *col_perm) {
+  MAT_ASSERT_MAT(A);
+  MAT_ASSERT_MAT(L);
+  MAT_ASSERT_MAT(U);
+
+  size_t n = A->rows;
+  MAT_ASSERT(A->cols == n && "mat_lu_fullpiv requires square matrix");
+  MAT_ASSERT(L->rows == n && L->cols == n);
+  MAT_ASSERT(U->rows == n && U->cols == n);
+
+  // Will contain both L and U at the end)
+  Mat *M = mat_rdeep_copy(A);
+
+  // Initialize permutations to identity
+  for (size_t i = 0; i < n; i++) {
+    row_perm[i] = i;
+    col_perm[i] = i;
+  }
+
+#ifdef MAT_HAS_ARM_NEON
+  int swap_count = mat_lu_fullpiv_neon_impl(M, row_perm, col_perm);
+#else
+  int swap_count = mat_lu_fullpiv_scalar_impl(M, row_perm, col_perm);
+#endif
+
+  // Extract L (lower triangular with 1s on diagonal) and U (upper triangular) from M
+  mat_eye(L);
+  memset(U->data, 0, n * n * sizeof(mat_elem_t));
+
+  mat_elem_t *data = M->data;
+  for (size_t i = 0; i < n; i++) {
+    // L: copy below diagonal
+    for (size_t j = 0; j < i; j++) {
+      L->data[i * n + j] = data[i * n + j];
+    }
+    // U: copy diagonal and above
+    for (size_t j = i; j < n; j++) {
+      U->data[i * n + j] = data[i * n + j];
+    }
+  }
+
+  MAT_FREE_MAT(M);
+  return swap_count;
 }
 
 #endif // MAT_IMPLEMENTATION
