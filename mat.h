@@ -2614,12 +2614,29 @@ MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R) {
     // Apply H = I - tau * v * v^T to R[k:m, k:n]
     // R[k:m, j] -= tau * v * (v^T * R[k:m, j]) for each column j
     for (size_t j = k; j < n; j++) {
-      mat_elem_t dot = 0;
-      for (size_t i = 0; i < len; i++) {
+      // 4x unrolled dot product with multiple accumulators
+      mat_elem_t dot0 = 0, dot1 = 0, dot2 = 0, dot3 = 0;
+      size_t i = 0;
+      for (; i + 3 < len; i += 4) {
+        dot0 += v[i]     * R->data[(k + i)     * n + j];
+        dot1 += v[i + 1] * R->data[(k + i + 1) * n + j];
+        dot2 += v[i + 2] * R->data[(k + i + 2) * n + j];
+        dot3 += v[i + 3] * R->data[(k + i + 3) * n + j];
+      }
+      mat_elem_t dot = (dot0 + dot1) + (dot2 + dot3);
+      for (; i < len; i++) {
         dot += v[i] * R->data[(k + i) * n + j];
       }
       dot *= tau;
-      for (size_t i = 0; i < len; i++) {
+      // 4x unrolled vector update
+      i = 0;
+      for (; i + 3 < len; i += 4) {
+        R->data[(k + i)     * n + j] -= dot * v[i];
+        R->data[(k + i + 1) * n + j] -= dot * v[i + 1];
+        R->data[(k + i + 2) * n + j] -= dot * v[i + 2];
+        R->data[(k + i + 3) * n + j] -= dot * v[i + 3];
+      }
+      for (; i < len; i++) {
         R->data[(k + i) * n + j] -= dot * v[i];
       }
     }
@@ -2627,12 +2644,29 @@ MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R) {
     // Apply H to Q[:, k:m] (Q = Q * H, so we update columns k:m of Q)
     // Q[:, k:m] -= tau * (Q[:, k:m] * v) * v^T
     for (size_t i = 0; i < m; i++) {
-      mat_elem_t dot = 0;
-      for (size_t j = 0; j < len; j++) {
+      // 4x unrolled dot product with multiple accumulators
+      mat_elem_t dot0 = 0, dot1 = 0, dot2 = 0, dot3 = 0;
+      size_t j = 0;
+      for (; j + 3 < len; j += 4) {
+        dot0 += Q->data[i * m + (k + j)]     * v[j];
+        dot1 += Q->data[i * m + (k + j + 1)] * v[j + 1];
+        dot2 += Q->data[i * m + (k + j + 2)] * v[j + 2];
+        dot3 += Q->data[i * m + (k + j + 3)] * v[j + 3];
+      }
+      mat_elem_t dot = (dot0 + dot1) + (dot2 + dot3);
+      for (; j < len; j++) {
         dot += Q->data[i * m + (k + j)] * v[j];
       }
       dot *= tau;
-      for (size_t j = 0; j < len; j++) {
+      // 4x unrolled vector update
+      j = 0;
+      for (; j + 3 < len; j += 4) {
+        Q->data[i * m + (k + j)]     -= dot * v[j];
+        Q->data[i * m + (k + j + 1)] -= dot * v[j + 1];
+        Q->data[i * m + (k + j + 2)] -= dot * v[j + 2];
+        Q->data[i * m + (k + j + 3)] -= dot * v[j + 3];
+      }
+      for (; j < len; j++) {
         Q->data[i * m + (k + j)] -= dot * v[j];
       }
     }
