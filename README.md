@@ -27,9 +27,8 @@ make bench (run standard benches)
 
 ```bash
 # Example: build and run GEMM benchmark
-c++ -O3 -I. -I/opt/homebrew/include/eigen3 \
-  tests/bench/eigen/bench_gemm.cpp -o bench_gemm
-./bench_gemm
+cd tests/bench/eigen
+c++ -O3 -I../../.. -I.. -I. -I/path/to/include/eigen3 bench_plu.cpp -o bench_plu && ./bench_plu
 ```
 
 ### vs OpenBLAS
@@ -39,8 +38,6 @@ c++ -O3 -I. -I/opt/homebrew/include/eigen3 \
 
 ```bash
 # Example: build and run GEMM benchmark
-cc -O3 -I. -I/opt/homebrew/opt/openblas/include \
-  -L/opt/homebrew/opt/openblas/lib \
-  tests/bench/openblas/bench_gemm_blas.c -o bench_gemm_blas -lopenblas -lm
-./bench_gemm_blas
+cd tests/bench/openblas
+cc -O3 -I../../.. -I.. -I. -I/path/to/openblas/include -L/path/to/openblas/lib bench_axpy_blas.c -o bench_axpy -lopenblas -lm && ./bench_axpy
 ```
