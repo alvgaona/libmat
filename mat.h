@@ -1349,16 +1349,97 @@ MATDEF void mat_gemm(Mat *C, mat_elem_t alpha, const Mat *A, const Mat *B, mat_e
 
 // Structure Operations
 
+#define MAT_T_BLOCK 32
+
+#ifdef MAT_HAS_ARM_NEON
+MAT_INTERNAL_STATIC void mat_t_neon_impl(Mat *out, const Mat *m) {
+  size_t rows = m->rows;
+  size_t cols = m->cols;
+  const mat_elem_t *src = m->data;
+  mat_elem_t *dst = out->data;
+
+  size_t ii = 0;
+  for (; ii + MAT_T_BLOCK <= rows; ii += MAT_T_BLOCK) {
+    size_t jj = 0;
+    for (; jj + MAT_T_BLOCK <= cols; jj += MAT_T_BLOCK) {
+      for (size_t i = ii; i < ii + MAT_T_BLOCK; i += 4) {
+        for (size_t j = jj; j < jj + MAT_T_BLOCK; j += 4) {
+          MAT_NEON_TYPE r0 = MAT_NEON_LOAD(&src[(i+0) * cols + j]);
+          MAT_NEON_TYPE r1 = MAT_NEON_LOAD(&src[(i+1) * cols + j]);
+          MAT_NEON_TYPE r2 = MAT_NEON_LOAD(&src[(i+2) * cols + j]);
+          MAT_NEON_TYPE r3 = MAT_NEON_LOAD(&src[(i+3) * cols + j]);
+
+          #ifdef MAT_DOUBLE_PRECISION
+          float64x2_t a0 = vget_low_f64(r0), a1 = vget_high_f64(r0);
+          float64x2_t b0 = vget_low_f64(r1), b1 = vget_high_f64(r1);
+          float64x2_t c0 = vget_low_f64(r2), c1 = vget_high_f64(r2);
+          float64x2_t d0 = vget_low_f64(r3), d1 = vget_high_f64(r3);
+          vst1_f64(&dst[(j+0) * rows + i], vzip1_f64(a0, b0));
+          vst1_f64(&dst[(j+0) * rows + i + 2], vzip1_f64(c0, d0));
+          vst1_f64(&dst[(j+1) * rows + i], vzip2_f64(a0, b0));
+          vst1_f64(&dst[(j+1) * rows + i + 2], vzip2_f64(c0, d0));
+          vst1_f64(&dst[(j+2) * rows + i], vzip1_f64(a1, b1));
+          vst1_f64(&dst[(j+2) * rows + i + 2], vzip1_f64(c1, d1));
+          vst1_f64(&dst[(j+3) * rows + i], vzip2_f64(a1, b1));
+          vst1_f64(&dst[(j+3) * rows + i + 2], vzip2_f64(c1, d1));
+          #else
+          float32x4x2_t p01 = vtrnq_f32(r0, r1);
+          float32x4x2_t p23 = vtrnq_f32(r2, r3);
+          float32x4_t t0 = vcombine_f32(vget_low_f32(p01.val[0]), vget_low_f32(p23.val[0]));
+          float32x4_t t1 = vcombine_f32(vget_low_f32(p01.val[1]), vget_low_f32(p23.val[1]));
+          float32x4_t t2 = vcombine_f32(vget_high_f32(p01.val[0]), vget_high_f32(p23.val[0]));
+          float32x4_t t3 = vcombine_f32(vget_high_f32(p01.val[1]), vget_high_f32(p23.val[1]));
+          MAT_NEON_STORE(&dst[(j+0) * rows + i], t0);
+          MAT_NEON_STORE(&dst[(j+1) * rows + i], t1);
+          MAT_NEON_STORE(&dst[(j+2) * rows + i], t2);
+          MAT_NEON_STORE(&dst[(j+3) * rows + i], t3);
+          #endif
+        }
+      }
+    }
+    for (size_t i = ii; i < ii + MAT_T_BLOCK; i++) {
+      for (size_t j = jj; j < cols; j++) {
+        dst[j * rows + i] = src[i * cols + j];
+      }
+    }
+  }
+  for (size_t i = ii; i < rows; i++) {
+    for (size_t j = 0; j < cols; j++) {
+      dst[j * rows + i] = src[i * cols + j];
+    }
+  }
+}
+#endif
+
+MAT_INTERNAL_STATIC void mat_t_scalar_impl(Mat *out, const Mat *m) {
+  size_t rows = m->rows;
+  size_t cols = m->cols;
+  const mat_elem_t *src = m->data;
+  mat_elem_t *dst = out->data;
+
+  for (size_t ii = 0; ii < rows; ii += MAT_T_BLOCK) {
+    for (size_t jj = 0; jj < cols; jj += MAT_T_BLOCK) {
+      size_t i_end = (ii + MAT_T_BLOCK < rows) ? ii + MAT_T_BLOCK : rows;
+      size_t j_end = (jj + MAT_T_BLOCK < cols) ? jj + MAT_T_BLOCK : cols;
+      for (size_t i = ii; i < i_end; i++) {
+        for (size_t j = jj; j < j_end; j++) {
+          dst[j * rows + i] = src[i * cols + j];
+        }
+      }
+    }
+  }
+}
+
 MATDEF void mat_t(Mat *out, const Mat *m) {
   MAT_ASSERT_MAT(out);
   MAT_ASSERT_MAT(m);
   MAT_ASSERT(out->rows == m->cols && out->cols == m->rows);
 
-  for (size_t i = 0; i < m->rows; i++) {
-    for (size_t j = 0; j < m->cols; j++) {
-      out->data[j * m->rows + i] = m->data[i * m->cols + j];
-    }
-  }
+#ifdef MAT_HAS_ARM_NEON
+  mat_t_neon_impl(out, m);
+#else
+  mat_t_scalar_impl(out, m);
+#endif
 }
 
 MATDEF Mat *mat_rt(const Mat *m) {
@@ -1729,290 +1810,13 @@ MATDEF mat_elem_t mat_nnz(const Mat *a) {
 #endif
 }
 
-// QR Decomposition using Householder reflections
-
-// Scalar implementation of QR decomposition
-MAT_INTERNAL_STATIC void mat_qr_scalar_impl(const Mat *A, Mat *Q, Mat *R) {
-  size_t m = A->rows;
-  size_t n = A->cols;
-
-  // R = A, Q = I
-  mat_deep_copy(R, A);
-  mat_eye(Q);
-
-  size_t num_reflections = (m < n) ? m : n;
-  
-  // Use scratch arena for temporary vector
-  mat_elem_t *v_data = (mat_elem_t *)mat_scratch_alloc_(m * sizeof(mat_elem_t));
-  Vec v_storage = { .rows = m, .cols = 1, .data = v_data };
-  Vec *v = &v_storage;
-
-  for (size_t k = 0; k < num_reflections; k++) {
-    size_t len = m - k;
-
-    // Extract column k from row k onwards into v
-    for (size_t i = 0; i < len; i++) {
-      v->data[i] = R->data[(k + i) * n + k];
-    }
-    v->rows = len;
-
-    // Compute norm of v
-    mat_elem_t norm = mat_norm(v, 2);
-    if (norm < MAT_DEFAULT_EPSILON) continue;
-
-    // Compute Householder vector
-    mat_elem_t x0 = v->data[0];
-    mat_elem_t sign = (x0 >= 0) ? 1 : -1;
-    v->data[0] = x0 + sign * norm;
-
-    // beta = 2 / (v^T v)
-    mat_elem_t vtv = mat_dot(v, v);
-    if (vtv < MAT_DEFAULT_EPSILON) continue;
-    mat_elem_t beta = 2.0 / vtv;
-
-    // Apply H to R columns
-    for (size_t j = k; j < n; j++) {
-      mat_elem_t dot = 0;
-      for (size_t i = 0; i < len; i++) {
-        dot += v->data[i] * R->data[(k + i) * n + j];
-      }
-      mat_elem_t scale = beta * dot;
-      for (size_t i = 0; i < len; i++) {
-        R->data[(k + i) * n + j] -= scale * v->data[i];
-      }
-    }
-
-    // Apply H to Q rows
-    for (size_t i = 0; i < m; i++) {
-      mat_elem_t dot = 0;
-      for (size_t j = 0; j < len; j++) {
-        dot += Q->data[i * m + (k + j)] * v->data[j];
-      }
-      mat_elem_t scale = beta * dot;
-      for (size_t j = 0; j < len; j++) {
-        Q->data[i * m + (k + j)] -= scale * v->data[j];
-      }
-    }
-  }
-
-#ifndef MAT_NO_SCRATCH
-  mat_scratch_reset_();
-#else
-  mat_scratch_free_(v_data);
-#endif
-
-  // Clean up numerical zeros below diagonal
-  for (size_t i = 1; i < m; i++) {
-    for (size_t j = 0; j < i && j < n; j++) {
-      if (fabs(R->data[i * n + j]) < MAT_DEFAULT_EPSILON) {
-        R->data[i * n + j] = 0;
-      }
-    }
-  }
-}
-
-#ifdef MAT_HAS_ARM_NEON
-// NEON-optimized: Apply Householder to R columns
-// For each column j in [col_start, n), compute R[row_start:m, j] -= beta * (v^T * R[row_start:m, j]) * v
-MAT_INTERNAL_STATIC void mat_qr_apply_H_to_R_neon(
-    mat_elem_t *R, size_t m, size_t n,
-    const mat_elem_t *v, size_t len, mat_elem_t beta,
-    size_t row_start, size_t col_start) {
-
-  for (size_t j = col_start; j < n; j++) {
-    // Compute dot = v^T * R[row_start:m, j]
-    MAT_NEON_TYPE vdot0 = MAT_NEON_DUP(0);
-    MAT_NEON_TYPE vdot1 = MAT_NEON_DUP(0);
-    size_t i = 0;
-
-    for (; i + MAT_NEON_WIDTH * 2 <= len; i += MAT_NEON_WIDTH * 2) {
-      MAT_NEON_TYPE vv0 = MAT_NEON_LOAD(&v[i]);
-      MAT_NEON_TYPE vv1 = MAT_NEON_LOAD(&v[i + MAT_NEON_WIDTH]);
-      MAT_NEON_TYPE vr0 = MAT_NEON_LOAD(&R[(row_start + i) * n + j]);
-      MAT_NEON_TYPE vr1 = MAT_NEON_LOAD(&R[(row_start + i + MAT_NEON_WIDTH) * n + j]);
-      vdot0 = MAT_NEON_FMA(vdot0, vv0, vr0);
-      vdot1 = MAT_NEON_FMA(vdot1, vv1, vr1);
-    }
-
-    // Note: R is stored row-major, so R[row][j] elements are not contiguous
-    // We need scalar access for the strided column
-    mat_elem_t dot = 0;
-    for (size_t ii = 0; ii < len; ii++) {
-      dot += v[ii] * R[(row_start + ii) * n + j];
-    }
-
-    mat_elem_t scale = beta * dot;
-
-    // R[row_start:m, j] -= scale * v
-    for (size_t ii = 0; ii < len; ii++) {
-      R[(row_start + ii) * n + j] -= scale * v[ii];
-    }
-  }
-}
-
-// NEON-optimized: Apply Householder to Q rows
-// For each row i of Q, compute Q[i, col_start:m] -= beta * (Q[i, col_start:m] * v) * v^T
-MAT_INTERNAL_STATIC void mat_qr_apply_H_to_Q_neon(
-    mat_elem_t *Q, size_t m,
-    const mat_elem_t *v, size_t len, mat_elem_t beta,
-    size_t col_start) {
-
-  for (size_t i = 0; i < m; i++) {
-    mat_elem_t *row = &Q[i * m + col_start];
-
-    // Compute dot = Q[i, col_start:m] * v (contiguous access!)
-    MAT_NEON_TYPE vdot0 = MAT_NEON_DUP(0);
-    MAT_NEON_TYPE vdot1 = MAT_NEON_DUP(0);
-    MAT_NEON_TYPE vdot2 = MAT_NEON_DUP(0);
-    MAT_NEON_TYPE vdot3 = MAT_NEON_DUP(0);
-    size_t j = 0;
-
-    for (; j + MAT_NEON_WIDTH * 4 <= len; j += MAT_NEON_WIDTH * 4) {
-      MAT_NEON_TYPE vq0 = MAT_NEON_LOAD(&row[j]);
-      MAT_NEON_TYPE vq1 = MAT_NEON_LOAD(&row[j + MAT_NEON_WIDTH]);
-      MAT_NEON_TYPE vq2 = MAT_NEON_LOAD(&row[j + MAT_NEON_WIDTH * 2]);
-      MAT_NEON_TYPE vq3 = MAT_NEON_LOAD(&row[j + MAT_NEON_WIDTH * 3]);
-      MAT_NEON_TYPE vv0 = MAT_NEON_LOAD(&v[j]);
-      MAT_NEON_TYPE vv1 = MAT_NEON_LOAD(&v[j + MAT_NEON_WIDTH]);
-      MAT_NEON_TYPE vv2 = MAT_NEON_LOAD(&v[j + MAT_NEON_WIDTH * 2]);
-      MAT_NEON_TYPE vv3 = MAT_NEON_LOAD(&v[j + MAT_NEON_WIDTH * 3]);
-      vdot0 = MAT_NEON_FMA(vdot0, vq0, vv0);
-      vdot1 = MAT_NEON_FMA(vdot1, vq1, vv1);
-      vdot2 = MAT_NEON_FMA(vdot2, vq2, vv2);
-      vdot3 = MAT_NEON_FMA(vdot3, vq3, vv3);
-    }
-
-    for (; j + MAT_NEON_WIDTH <= len; j += MAT_NEON_WIDTH) {
-      MAT_NEON_TYPE vq = MAT_NEON_LOAD(&row[j]);
-      MAT_NEON_TYPE vv = MAT_NEON_LOAD(&v[j]);
-      vdot0 = MAT_NEON_FMA(vdot0, vq, vv);
-    }
-
-    vdot0 = MAT_NEON_ADD(vdot0, vdot1);
-    vdot2 = MAT_NEON_ADD(vdot2, vdot3);
-    vdot0 = MAT_NEON_ADD(vdot0, vdot2);
-    mat_elem_t dot = MAT_NEON_ADDV(vdot0);
-
-    for (; j < len; j++) {
-      dot += row[j] * v[j];
-    }
-
-    mat_elem_t scale = beta * dot;
-    MAT_NEON_TYPE vscale = MAT_NEON_DUP(scale);
-
-    // Q[i, col_start:m] -= scale * v
-    j = 0;
-    for (; j + MAT_NEON_WIDTH * 4 <= len; j += MAT_NEON_WIDTH * 4) {
-      MAT_NEON_TYPE vq0 = MAT_NEON_LOAD(&row[j]);
-      MAT_NEON_TYPE vq1 = MAT_NEON_LOAD(&row[j + MAT_NEON_WIDTH]);
-      MAT_NEON_TYPE vq2 = MAT_NEON_LOAD(&row[j + MAT_NEON_WIDTH * 2]);
-      MAT_NEON_TYPE vq3 = MAT_NEON_LOAD(&row[j + MAT_NEON_WIDTH * 3]);
-      MAT_NEON_TYPE vv0 = MAT_NEON_LOAD(&v[j]);
-      MAT_NEON_TYPE vv1 = MAT_NEON_LOAD(&v[j + MAT_NEON_WIDTH]);
-      MAT_NEON_TYPE vv2 = MAT_NEON_LOAD(&v[j + MAT_NEON_WIDTH * 2]);
-      MAT_NEON_TYPE vv3 = MAT_NEON_LOAD(&v[j + MAT_NEON_WIDTH * 3]);
-      vq0 = MAT_NEON_ADD(vq0, MAT_NEON_FMA(MAT_NEON_DUP(0), vv0, MAT_NEON_DUP(-scale)));
-      vq1 = MAT_NEON_ADD(vq1, MAT_NEON_FMA(MAT_NEON_DUP(0), vv1, MAT_NEON_DUP(-scale)));
-      vq2 = MAT_NEON_ADD(vq2, MAT_NEON_FMA(MAT_NEON_DUP(0), vv2, MAT_NEON_DUP(-scale)));
-      vq3 = MAT_NEON_ADD(vq3, MAT_NEON_FMA(MAT_NEON_DUP(0), vv3, MAT_NEON_DUP(-scale)));
-      MAT_NEON_STORE(&row[j], vq0);
-      MAT_NEON_STORE(&row[j + MAT_NEON_WIDTH], vq1);
-      MAT_NEON_STORE(&row[j + MAT_NEON_WIDTH * 2], vq2);
-      MAT_NEON_STORE(&row[j + MAT_NEON_WIDTH * 3], vq3);
-    }
-
-    for (; j + MAT_NEON_WIDTH <= len; j += MAT_NEON_WIDTH) {
-      MAT_NEON_TYPE vq = MAT_NEON_LOAD(&row[j]);
-      MAT_NEON_TYPE vv = MAT_NEON_LOAD(&v[j]);
-      vq = MAT_NEON_ADD(vq, MAT_NEON_FMA(MAT_NEON_DUP(0), vv, MAT_NEON_DUP(-scale)));
-      MAT_NEON_STORE(&row[j], vq);
-    }
-
-    for (; j < len; j++) {
-      row[j] -= scale * v[j];
-    }
-  }
-}
-
-// NEON implementation of QR decomposition using Householder reflections
-MAT_INTERNAL_STATIC void mat_qr_neon_impl(const Mat *A, Mat *Q, Mat *R) {
-  size_t m = A->rows;
-  size_t n = A->cols;
-
-  // R = A, Q = I  
-  mat_deep_copy(R, A);
-  mat_eye(Q);
-
-  size_t num_reflections = (m < n) ? m : n;
-  
-  // Use scratch arena for temporary vector
-  mat_elem_t *v_data = (mat_elem_t *)mat_scratch_alloc_(m * sizeof(mat_elem_t));
-  Vec v_storage = { .rows = m, .cols = 1, .data = v_data };
-  Vec *v = &v_storage;
-
-  for (size_t k = 0; k < num_reflections; k++) {
-    size_t len = m - k;
-
-    // Extract column k from row k onwards into v
-    for (size_t i = 0; i < len; i++) {
-      v->data[i] = R->data[(k + i) * n + k];
-    }
-    v->rows = len;
-
-    // Compute norm of v
-    mat_elem_t norm = mat_norm(v, 2);
-    if (norm < MAT_DEFAULT_EPSILON) continue;
-
-    // Compute Householder vector
-    mat_elem_t x0 = v->data[0];
-    mat_elem_t sign = (x0 >= 0) ? 1 : -1;
-    v->data[0] = x0 + sign * norm;
-
-    // beta = 2 / (v^T v)
-    mat_elem_t vtv = mat_dot(v, v);
-    if (vtv < MAT_DEFAULT_EPSILON) continue;
-    mat_elem_t beta = 2.0 / vtv;
-
-    // Apply H to R: R[k:m, k:n] -= beta * v * (v^T * R[k:m, k:n])
-    mat_qr_apply_H_to_R_neon(R->data, m, n, v->data, len, beta, k, k);
-
-    // Apply H to Q: Q[:, k:m] -= beta * (Q[:, k:m] * v) * v^T
-    mat_qr_apply_H_to_Q_neon(Q->data, m, v->data, len, beta, k);
-  }
-
-#ifndef MAT_NO_SCRATCH
-  mat_scratch_reset_();
-#else
-  mat_scratch_free_(v_data);
-#endif
-
-  // Clean up numerical zeros below diagonal
-  for (size_t i = 1; i < m; i++) {
-    for (size_t j = 0; j < i && j < n; j++) {
-      if (fabs(R->data[i * n + j]) < MAT_DEFAULT_EPSILON) {
-        R->data[i * n + j] = 0;
-      }
-    }
-  }
-}
-#endif
-
+// TODO: QR Decomposition using Householder reflections
 MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R) {
   MAT_ASSERT_MAT(A);
   MAT_ASSERT_MAT(Q);
   MAT_ASSERT_MAT(R);
-
-  size_t m = A->rows;
-  size_t n = A->cols;
-
-  MAT_ASSERT(Q->rows == m && Q->cols == m);
-  MAT_ASSERT(R->rows == m && R->cols == n);
-
-#ifdef MAT_HAS_ARM_NEON
-  mat_qr_neon_impl(A, Q, R);
-#else
-  mat_qr_scalar_impl(A, Q, R);
-#endif
+  (void)A; (void)Q; (void)R;
+  MAT_ASSERT(0 && "mat_qr not implemented");
 }
 
 #endif // MAT_IMPLEMENTATION
