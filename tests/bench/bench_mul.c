@@ -5,7 +5,7 @@
 
 #define MAT_EXPOSE_INTERNALS
 #define MAT_IMPLEMENTATION
-#include "../../mat.h"
+#include "mat.h"
 
 Mat *mat_random(size_t rows, size_t cols) {
   Mat *m = mat_mat(rows, cols);

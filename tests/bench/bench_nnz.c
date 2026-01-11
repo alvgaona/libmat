@@ -4,7 +4,7 @@
 
 #define MAT_EXPOSE_INTERNALS
 #define MAT_IMPLEMENTATION
-#include "../../mat.h"
+#include "mat.h"
 
 #define ITERATIONS 100
 #define ROUNDS 3
