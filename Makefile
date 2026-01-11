@@ -1,5 +1,5 @@
-CC = gcc
-CXX = g++
+CC = cc
+CXX = c++
 CFLAGS = -Wall -Wextra -I.
 CXXFLAGS = -Wall -Wextra -I.
 LDLIBS = -lm

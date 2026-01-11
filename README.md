@@ -16,6 +16,6 @@ make clean    # cleanup
 Benchmarks compare against OpenBLAS. To build:
 
 ```bash
-clang -O3 -o bench tests/bench/bench_norm2_blas.c \
+cc -O3 -o bench tests/bench/bench_norm2_blas.c \
   -I/path/to/openblas/include -L/path/to/openblas/lib -lopenblas -lm
 ```
