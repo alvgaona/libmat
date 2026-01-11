@@ -142,6 +142,27 @@
     #define MAT_NEON_ADDV_U(x) vaddvq_u32(x)
     #define MAT_NEON_ADD_U    vaddq_u32
   #endif
+
+  // Accumulator macros for overflow-safe reductions (always use double)
+  #define MAT_ACC_TYPE       float64x2_t
+  #define MAT_ACC_ZERO       vdupq_n_f64(0)
+  #define MAT_ACC_ADD        vaddq_f64
+  #define MAT_ACC_ADDV       vaddvq_f64
+  #define MAT_ACC_FMA        vfmaq_f64
+  #ifdef MAT_DOUBLE_PRECISION
+    #define MAT_ACC_WIDTH    2
+    #define MAT_ACC_LOAD_SQ(acc, ptr) do { \
+        float64x2_t _v = vld1q_f64(ptr); \
+        acc = vfmaq_f64(acc, _v, _v); \
+      } while(0)
+  #else
+    #define MAT_ACC_WIDTH    2
+    #define MAT_ACC_LOAD_SQ(acc, ptr) do { \
+        float32x2_t _v = vld1_f32(ptr); \
+        float64x2_t _d = vcvt_f64_f32(_v); \
+        acc = vfmaq_f64(acc, _d, _d); \
+      } while(0)
+  #endif
 #endif // __ARM_NEON
 
 // Control visibility of internal implementations
@@ -317,10 +338,26 @@ MATDEF Mat *mat_diag_from(size_t dim, const mat_elem_t *values);
 
 // Norms
 
+// General p-norm: (sum |a_i|^p)^(1/p). Uses pow(), slow for large matrices.
 MATDEF mat_elem_t mat_norm(const Mat *a, size_t p);
+
+// L2 norm. Alias for mat_norm_fro.
 MATDEF mat_elem_t mat_norm2(const Mat *a);
+
+// Infinity norm: max |a_ij|. NEON-optimized.
 MATDEF mat_elem_t mat_norm_max(const Mat *a);
+
+// Frobenius norm: sqrt(sum a_ij^2). NEON-optimized.
+// For float32: accumulates in double to prevent overflow/underflow.
+// For float64: no overflow protection (same as fast). Blue's scaling may be
+// added in the future to handle extreme values.
 MATDEF mat_elem_t mat_norm_fro(const Mat *a);
+
+// Frobenius norm, fast version. NEON-optimized.
+// For float32: ~2x faster than safe, but no overflow protection.
+// For float64: same as safe (no higher precision available).
+// Overflows if any |a_ij|^2 exceeds type max (~1e19 for float, ~1e154 for double).
+MATDEF mat_elem_t mat_norm_fro_fast(const Mat *a);
 
 // Matrix Properties
 // TODO: mat_det, mat_rank, mat_cond, mat_inv, mat_pinv
@@ -332,7 +369,12 @@ MATDEF mat_elem_t mat_cond(const Mat *a);
 MATDEF mat_elem_t mat_nnz(const Mat *a);
 
 // Decomposition
-// TODO: mat_lu, mat_qr, mat_chol, mat_svd
+// TODO: mat_lu, mat_chol, mat_svd
+
+// QR decomposition using Householder reflections
+// A = Q * R where Q is orthogonal (m x m) and R is upper triangular (m x n)
+// Q and R must be pre-allocated with correct dimensions
+MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R);
 
 // Eigenvalue
 // TODO: mat_eig, mat_eigvals
@@ -1060,7 +1102,7 @@ MATDEF mat_elem_t mat_norm(const Mat *a, size_t p) {
 }
 
 MATDEF mat_elem_t mat_norm2(const Mat *a) {
-  return mat_norm(a, 2);
+  return mat_norm_fro(a);
 }
 
 #ifdef MAT_HAS_ARM_NEON
@@ -1130,6 +1172,61 @@ MAT_INTERNAL_STATIC mat_elem_t mat_norm_fro_neon_impl(const Mat *a) {
   size_t len = a->rows * a->cols;
   mat_elem_t *pa = a->data;
 
+  MAT_ACC_TYPE vsum0 = MAT_ACC_ZERO;
+  MAT_ACC_TYPE vsum1 = MAT_ACC_ZERO;
+  MAT_ACC_TYPE vsum2 = MAT_ACC_ZERO;
+  MAT_ACC_TYPE vsum3 = MAT_ACC_ZERO;
+
+  size_t i = 0;
+  for (; i + MAT_ACC_WIDTH * 4 <= len; i += MAT_ACC_WIDTH * 4) {
+    MAT_ACC_LOAD_SQ(vsum0, &pa[i]);
+    MAT_ACC_LOAD_SQ(vsum1, &pa[i + MAT_ACC_WIDTH]);
+    MAT_ACC_LOAD_SQ(vsum2, &pa[i + MAT_ACC_WIDTH * 2]);
+    MAT_ACC_LOAD_SQ(vsum3, &pa[i + MAT_ACC_WIDTH * 3]);
+  }
+
+  for (; i + MAT_ACC_WIDTH <= len; i += MAT_ACC_WIDTH) {
+    MAT_ACC_LOAD_SQ(vsum0, &pa[i]);
+  }
+
+  vsum0 = MAT_ACC_ADD(vsum0, vsum1);
+  vsum2 = MAT_ACC_ADD(vsum2, vsum3);
+  vsum0 = MAT_ACC_ADD(vsum0, vsum2);
+  double sum = MAT_ACC_ADDV(vsum0);
+
+  for (; i < len; i++) {
+    double v = pa[i];
+    sum += v * v;
+  }
+
+  return sqrt(sum);
+}
+#endif
+
+MAT_INTERNAL_STATIC mat_elem_t mat_norm_fro_scalar_impl(const Mat *a) {
+  size_t len = a->rows * a->cols;
+  mat_elem_t sum = 0;
+  for (size_t i = 0; i < len; i++) {
+    sum += a->data[i] * a->data[i];
+  }
+  return sqrt(sum);
+}
+
+MATDEF mat_elem_t mat_norm_fro(const Mat *a) {
+  MAT_ASSERT_MAT(a);
+
+#ifdef MAT_HAS_ARM_NEON
+  return mat_norm_fro_neon_impl(a);
+#else
+  return mat_norm_fro_scalar_impl(a);
+#endif
+}
+
+#ifdef MAT_HAS_ARM_NEON
+MAT_INTERNAL_STATIC mat_elem_t mat_norm_fro_fast_neon_impl(const Mat *a) {
+  size_t len = a->rows * a->cols;
+  mat_elem_t *pa = a->data;
+
   MAT_NEON_TYPE vsum0 = MAT_NEON_DUP(0);
   MAT_NEON_TYPE vsum1 = MAT_NEON_DUP(0);
   MAT_NEON_TYPE vsum2 = MAT_NEON_DUP(0);
@@ -1166,20 +1263,11 @@ MAT_INTERNAL_STATIC mat_elem_t mat_norm_fro_neon_impl(const Mat *a) {
 }
 #endif
 
-MAT_INTERNAL_STATIC mat_elem_t mat_norm_fro_scalar_impl(const Mat *a) {
-  size_t len = a->rows * a->cols;
-  mat_elem_t sum = 0;
-  for (size_t i = 0; i < len; i++) {
-    sum += a->data[i] * a->data[i];
-  }
-  return sqrt(sum);
-}
-
-MATDEF mat_elem_t mat_norm_fro(const Mat *a) {
+MATDEF mat_elem_t mat_norm_fro_fast(const Mat *a) {
   MAT_ASSERT_MAT(a);
 
 #ifdef MAT_HAS_ARM_NEON
-  return mat_norm_fro_neon_impl(a);
+  return mat_norm_fro_fast_neon_impl(a);
 #else
   return mat_norm_fro_scalar_impl(a);
 #endif
