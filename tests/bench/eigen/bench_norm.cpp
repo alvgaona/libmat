@@ -14,9 +14,11 @@
 #ifdef MAT_DOUBLE_PRECISION
   using EigenVector = Eigen::VectorXd;
   #define PRECISION_NAME "float64"
+  #define BENCH_FILL bench_fill_random_d
 #else
   using EigenVector = Eigen::VectorXf;
   #define PRECISION_NAME "float32"
+  #define BENCH_FILL bench_fill_random_f
 #endif
 
 volatile mat_elem_t sink;
@@ -25,7 +27,7 @@ void bench_speed(size_t n) {
   printf("\n--- Size: %zu ---\n", n);
 
   Vec *x = mat_vec(n);
-  bench_fill_random_f(x->data, n);
+  BENCH_FILL(x->data, n);
 
   Eigen::Map<EigenVector> ex(x->data, n);
 

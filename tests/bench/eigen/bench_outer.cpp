@@ -15,10 +15,12 @@
   using EigenVec = Eigen::VectorXd;
   using EigenMat = Eigen::MatrixXd;
   #define PRECISION_NAME "float64"
+  #define BENCH_FILL bench_fill_random_d
 #else
   using EigenVec = Eigen::VectorXf;
   using EigenMat = Eigen::MatrixXf;
   #define PRECISION_NAME "float32"
+  #define BENCH_FILL bench_fill_random_f
 #endif
 
 volatile float sink;
@@ -29,8 +31,8 @@ void bench_speed(size_t m, size_t n) {
   Vec *v1 = mat_vec(m);
   Vec *v2 = mat_vec(n);
   Mat *out = mat_mat(m, n);
-  bench_fill_random_f(v1->data, m);
-  bench_fill_random_f(v2->data, n);
+  BENCH_FILL(v1->data, m);
+  BENCH_FILL(v2->data, n);
 
   Eigen::Map<EigenVec> ev1(v1->data, m);
   Eigen::Map<EigenVec> ev2(v2->data, n);

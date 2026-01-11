@@ -34,6 +34,7 @@ void bench_speed(size_t size) {
   BENCH_FILL(v->data, size);
 
   volatile mat_elem_t sink;
+  (void)sink;
   for (int i = 0; i < BENCH_WARMUP; i++) {
     sink = mat_norm2(v);
     sink = mat_norm_fro_fast(v);
@@ -155,6 +156,7 @@ int main() {
   printf("=== NORM2 BENCHMARK: libmat vs OpenBLAS [%s] ===\n", PRECISION_NAME);
   printf("Iterations per round: %d\n", ITERATIONS);
   printf("Rounds: %d\n", BENCH_ROUNDS);
+  printf("OpenBLAS threads: %d\n", openblas_get_num_threads());
 
   bench_speed(100);
   bench_speed(1000);

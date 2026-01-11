@@ -14,9 +14,11 @@
 #ifdef MAT_DOUBLE_PRECISION
   using EigenMatrix = Eigen::MatrixXd;
   #define PRECISION_NAME "float64"
+  #define BENCH_FILL bench_fill_random_d
 #else
   using EigenMatrix = Eigen::MatrixXf;
   #define PRECISION_NAME "float32"
+  #define BENCH_FILL bench_fill_random_f
 #endif
 
 void bench_speed(size_t n) {
@@ -25,8 +27,8 @@ void bench_speed(size_t n) {
   Mat *A = mat_mat(1, n);
   Mat *B = mat_mat(1, n);
   Mat *C = mat_mat(1, n);
-  bench_fill_random_f(A->data, n);
-  bench_fill_random_f(B->data, n);
+  BENCH_FILL(A->data, n);
+  BENCH_FILL(B->data, n);
 
   Eigen::Map<EigenMatrix> eA(A->data, 1, n);
   Eigen::Map<EigenMatrix> eB(B->data, 1, n);
