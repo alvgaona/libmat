@@ -309,9 +309,44 @@ MATDEF bool mat_equals(const Mat *a, const Mat *b);
 MATDEF bool mat_equals_tol(const Mat *a, const Mat *b, mat_elem_t epsilon);
 
 // Element-wise Unary
-// TODO: mat_sqrt, mat_exp, mat_log, mat_pow, mat_clip
 
+// NOTE: the trascedental functions require further optimization (SIMD vectorization)
+// as the current implementations are just scalar ones.
+// These are not production-ready. In other words, do not match
+// performance of well-known libraries (e.g. Eigen, OpenBLAS).
+
+
+// Element-wise absolute value
 MATDEF void mat_abs(Mat *out, const Mat *a);
+
+// Element-wise square-root
+MATDEF void mat_sqrt(Mat *out, const Mat *a);
+
+// Element-wise exponential
+MATDEF void mat_exp(Mat *out, const Mat *a);
+
+// Element-wise natural logarithm
+MATDEF void mat_log(Mat *out, const Mat *a);
+
+// Element-wise logarithm base 10
+MATDEF void mat_log10(Mat *out, const Mat *a);
+
+// Element-wise sin function
+MATDEF void mat_sin(Mat *out, const Mat *a);
+
+// Element-wise cos function
+MATDEF void mat_cos(Mat *out, const Mat *a);
+
+// Element-wise power function
+MATDEF void mat_pow(Mat *out, const Mat *a, mat_elem_t exp);
+
+// Element-wise clip function
+MATDEF void mat_clip(Mat *out, const Mat *a, mat_elem_t min_val, mat_elem_t max_val);
+
+// Element-wise Binary
+
+MATDEF void mat_div(Mat *out, const Mat *a, const Mat *b);
+MATDEF void mat_atan2(Mat *out, const Mat *y, const Mat *x);
 
 // Scalar Operations
 
@@ -342,13 +377,19 @@ MATDEF void mat_outer(Mat *out, const Vec *v1, const Vec *v2);
 
 // Fused Operations (BLAS-like)
 
-MATDEF void mat_axpy(Vec *y, mat_elem_t alpha, const Vec *x);           // y += alpha * x
+// Scalar and vector addition: y = α * x + y
+MATDEF void mat_axpy(Vec *y, mat_elem_t alpha, const Vec *x);
+
+// General Matrix-vector Multiplication: y = α * A * x + β * y 
 MATDEF void mat_gemv(Vec *y, mat_elem_t alpha, const Mat *A, const Vec *x, mat_elem_t beta);  // y = alpha * A * x + beta * y
-MATDEF void mat_ger(Mat *A, mat_elem_t alpha, const Vec *x, const Vec *y);   // A += alpha * x * y^T
-MATDEF void mat_gemm(Mat *C, mat_elem_t alpha, const Mat *A, const Mat *B, mat_elem_t beta);  // C = alpha * A * B + beta * C
+
+// General Matrix Rank-1:  A = A +  α * x * y^T
+MATDEF void mat_ger(Mat *A, mat_elem_t alpha, const Vec *x, const Vec *y);
+
+// General Matrix Multiplication form:  C = alpha * A * B + beta * C
+MATDEF void mat_gemm(Mat *C, mat_elem_t alpha, const Mat *A, const Mat *B, mat_elem_t beta);
 
 // Structure Operations
-// TODO: mat_hcat, mat_vcat, mat_row, mat_col
 
 MATDEF void mat_t(Mat *out, const Mat *m);
 MATDEF Mat *mat_rt(const Mat *m);
@@ -356,6 +397,8 @@ MATDEF void mat_reshape(Mat *out, size_t rows, size_t cols);
 MATDEF Mat *mat_rreshape(const Mat *m, size_t rows, size_t cols);
 MATDEF void mat_hcat(Mat *out, const Mat *a, const Mat *b);
 MATDEF void mat_vcat(Mat *out, const Mat *a, const Mat *b);
+MATDEF Vec *mat_row(const Mat *m, size_t row);
+MATDEF Vec *mat_col(const Mat *m, size_t col);
 MATDEF Mat *mat_slice(const Mat *m, size_t row_start, size_t row_end, size_t col_start, size_t col_end);
 MATDEF void mat_slice_set(Mat *m, size_t row_start, size_t col_start, const Mat *src);
 
@@ -365,8 +408,15 @@ MATDEF Vec *mat_diag(const Mat *m);
 MATDEF Mat *mat_diag_from(size_t dim, const mat_elem_t *values);
 
 // Reduction Operations
-// TODO: mat_sum, mat_mean, mat_min, mat_max
-// TODO: mat_sum_rows, mat_sum_cols, mat_argmin, mat_argmax, mat_var, mat_std
+
+MATDEF mat_elem_t mat_sum(const Mat *a);
+MATDEF mat_elem_t mat_mean(const Mat *a);
+MATDEF mat_elem_t mat_min(const Mat *a);
+MATDEF mat_elem_t mat_max(const Mat *a);
+MATDEF void mat_sum_axis(Vec *out, const Mat *a, int axis);  // axis=0: sum cols (result rows), axis=1: sum rows (result cols)
+MATDEF size_t mat_argmin(const Mat *a);
+MATDEF size_t mat_argmax(const Mat *a);
+MATDEF mat_elem_t mat_std(const Mat *a);
 
 // Norms
 
@@ -692,6 +742,131 @@ MATDEF void mat_abs(Mat *out, const Mat *a) {
 
   size_t len = a->rows * a->cols;
   for (size_t i = 0; i < len; i++) out->data[i] = fabs(a->data[i]);
+}
+
+MATDEF void mat_sqrt(Mat *out, const Mat *a) {
+  MAT_ASSERT_MAT(out);
+  MAT_ASSERT_MAT(a);
+
+  size_t len = a->rows * a->cols;
+#ifdef MAT_DOUBLE_PRECISION
+  for (size_t i = 0; i < len; i++) out->data[i] = sqrt(a->data[i]);
+#else
+  for (size_t i = 0; i < len; i++) out->data[i] = sqrtf(a->data[i]);
+#endif
+}
+
+MATDEF void mat_exp(Mat *out, const Mat *a) {
+  MAT_ASSERT_MAT(out);
+  MAT_ASSERT_MAT(a);
+
+  size_t len = a->rows * a->cols;
+#ifdef MAT_DOUBLE_PRECISION
+  for (size_t i = 0; i < len; i++) out->data[i] = exp(a->data[i]);
+#else
+  for (size_t i = 0; i < len; i++) out->data[i] = expf(a->data[i]);
+#endif
+}
+
+MATDEF void mat_log(Mat *out, const Mat *a) {
+  MAT_ASSERT_MAT(out);
+  MAT_ASSERT_MAT(a);
+
+  size_t len = a->rows * a->cols;
+#ifdef MAT_DOUBLE_PRECISION
+  for (size_t i = 0; i < len; i++) out->data[i] = log(a->data[i]);
+#else
+  for (size_t i = 0; i < len; i++) out->data[i] = logf(a->data[i]);
+#endif
+}
+
+MATDEF void mat_log10(Mat *out, const Mat *a) {
+  MAT_ASSERT_MAT(out);
+  MAT_ASSERT_MAT(a);
+
+  size_t len = a->rows * a->cols;
+#ifdef MAT_DOUBLE_PRECISION
+  for (size_t i = 0; i < len; i++) out->data[i] = log10(a->data[i]);
+#else
+  for (size_t i = 0; i < len; i++) out->data[i] = log10f(a->data[i]);
+#endif
+}
+
+MATDEF void mat_sin(Mat *out, const Mat *a) {
+  MAT_ASSERT_MAT(out);
+  MAT_ASSERT_MAT(a);
+
+  size_t len = a->rows * a->cols;
+#ifdef MAT_DOUBLE_PRECISION
+  for (size_t i = 0; i < len; i++) out->data[i] = sin(a->data[i]);
+#else
+  for (size_t i = 0; i < len; i++) out->data[i] = sinf(a->data[i]);
+#endif
+}
+
+MATDEF void mat_cos(Mat *out, const Mat *a) {
+  MAT_ASSERT_MAT(out);
+  MAT_ASSERT_MAT(a);
+
+  size_t len = a->rows * a->cols;
+#ifdef MAT_DOUBLE_PRECISION
+  for (size_t i = 0; i < len; i++) out->data[i] = cos(a->data[i]);
+#else
+  for (size_t i = 0; i < len; i++) out->data[i] = cosf(a->data[i]);
+#endif
+}
+
+MATDEF void mat_pow(Mat *out, const Mat *a, mat_elem_t exponent) {
+  MAT_ASSERT_MAT(out);
+  MAT_ASSERT_MAT(a);
+
+  size_t len = a->rows * a->cols;
+#ifdef MAT_DOUBLE_PRECISION
+  for (size_t i = 0; i < len; i++) out->data[i] = pow(a->data[i], exponent);
+#else
+  for (size_t i = 0; i < len; i++) out->data[i] = powf(a->data[i], exponent);
+#endif
+}
+
+MATDEF void mat_clip(Mat *out, const Mat *a, mat_elem_t min_val, mat_elem_t max_val) {
+  MAT_ASSERT_MAT(out);
+  MAT_ASSERT_MAT(a);
+
+  size_t len = a->rows * a->cols;
+  for (size_t i = 0; i < len; i++) {
+    mat_elem_t v = a->data[i];
+    if (v < min_val) v = min_val;
+    else if (v > max_val) v = max_val;
+    out->data[i] = v;
+  }
+}
+
+// Element-wise Binary
+
+MATDEF void mat_div(Mat *out, const Mat *a, const Mat *b) {
+  MAT_ASSERT_MAT(out);
+  MAT_ASSERT_MAT(a);
+  MAT_ASSERT_MAT(b);
+  MAT_ASSERT(a->rows == b->rows && a->cols == b->cols);
+
+  size_t len = a->rows * a->cols;
+  for (size_t i = 0; i < len; i++) {
+    out->data[i] = a->data[i] / b->data[i];
+  }
+}
+
+MATDEF void mat_atan2(Mat *out, const Mat *y, const Mat *x) {
+  MAT_ASSERT_MAT(out);
+  MAT_ASSERT_MAT(y);
+  MAT_ASSERT_MAT(x);
+  MAT_ASSERT(y->rows == x->rows && y->cols == x->cols);
+
+  size_t len = y->rows * y->cols;
+#ifdef MAT_DOUBLE_PRECISION
+  for (size_t i = 0; i < len; i++) out->data[i] = atan2(y->data[i], x->data[i]);
+#else
+  for (size_t i = 0; i < len; i++) out->data[i] = atan2f(y->data[i], x->data[i]);
+#endif
 }
 
 // Scalar Operations
@@ -1503,6 +1678,50 @@ MATDEF void mat_slice_set(Mat *m, size_t row_start, size_t col_start, const Mat 
   }
 }
 
+MATDEF void mat_hcat(Mat *out, const Mat *a, const Mat *b) {
+  MAT_ASSERT_MAT(out);
+  MAT_ASSERT_MAT(a);
+  MAT_ASSERT_MAT(b);
+  MAT_ASSERT(a->rows == b->rows && "mat_hcat: row count must match");
+  MAT_ASSERT(out->rows == a->rows && out->cols == a->cols + b->cols);
+
+  for (size_t i = 0; i < a->rows; i++) {
+    memcpy(&out->data[i * out->cols], &a->data[i * a->cols], a->cols * sizeof(mat_elem_t));
+    memcpy(&out->data[i * out->cols + a->cols], &b->data[i * b->cols], b->cols * sizeof(mat_elem_t));
+  }
+}
+
+MATDEF void mat_vcat(Mat *out, const Mat *a, const Mat *b) {
+  MAT_ASSERT_MAT(out);
+  MAT_ASSERT_MAT(a);
+  MAT_ASSERT_MAT(b);
+  MAT_ASSERT(a->cols == b->cols && "mat_vcat: column count must match");
+  MAT_ASSERT(out->rows == a->rows + b->rows && out->cols == a->cols);
+
+  memcpy(out->data, a->data, a->rows * a->cols * sizeof(mat_elem_t));
+  memcpy(&out->data[a->rows * a->cols], b->data, b->rows * b->cols * sizeof(mat_elem_t));
+}
+
+MATDEF Vec *mat_row(const Mat *m, size_t row) {
+  MAT_ASSERT_MAT(m);
+  MAT_ASSERT(row < m->rows && "mat_row: row index out of bounds");
+
+  Vec *v = mat_vec(m->cols);
+  memcpy(v->data, &m->data[row * m->cols], m->cols * sizeof(mat_elem_t));
+  return v;
+}
+
+MATDEF Vec *mat_col(const Mat *m, size_t col) {
+  MAT_ASSERT_MAT(m);
+  MAT_ASSERT(col < m->cols && "mat_col: column index out of bounds");
+
+  Vec *v = mat_vec(m->rows);
+  for (size_t i = 0; i < m->rows; i++) {
+    v->data[i] = m->data[i * m->cols + col];
+  }
+  return v;
+}
+
 // Diagonal Operations
 
 MATDEF Vec *mat_diag(const Mat *m) {
@@ -1807,6 +2026,300 @@ MATDEF mat_elem_t mat_nnz(const Mat *a) {
   return mat_nnz_neon_impl(a);
 #else
   return mat_nnz_scalar_impl(a);
+#endif
+}
+
+// Reduction Operations
+
+#ifdef MAT_HAS_ARM_NEON
+MAT_INTERNAL_STATIC mat_elem_t mat_sum_neon_impl(const Mat *a) {
+  size_t len = a->rows * a->cols;
+  mat_elem_t *pa = a->data;
+
+  MAT_NEON_TYPE vsum0 = MAT_NEON_DUP(0);
+  MAT_NEON_TYPE vsum1 = MAT_NEON_DUP(0);
+  MAT_NEON_TYPE vsum2 = MAT_NEON_DUP(0);
+  MAT_NEON_TYPE vsum3 = MAT_NEON_DUP(0);
+
+  size_t i = 0;
+  for (; i + MAT_NEON_WIDTH * 4 <= len; i += MAT_NEON_WIDTH * 4) {
+    vsum0 = MAT_NEON_ADD(vsum0, MAT_NEON_LOAD(&pa[i]));
+    vsum1 = MAT_NEON_ADD(vsum1, MAT_NEON_LOAD(&pa[i + MAT_NEON_WIDTH]));
+    vsum2 = MAT_NEON_ADD(vsum2, MAT_NEON_LOAD(&pa[i + MAT_NEON_WIDTH * 2]));
+    vsum3 = MAT_NEON_ADD(vsum3, MAT_NEON_LOAD(&pa[i + MAT_NEON_WIDTH * 3]));
+  }
+
+  vsum0 = MAT_NEON_ADD(vsum0, vsum1);
+  vsum2 = MAT_NEON_ADD(vsum2, vsum3);
+  vsum0 = MAT_NEON_ADD(vsum0, vsum2);
+  mat_elem_t sum = MAT_NEON_ADDV(vsum0);
+
+  for (; i < len; i++) {
+    sum += pa[i];
+  }
+
+  return sum;
+}
+#endif
+
+MAT_INTERNAL_STATIC mat_elem_t mat_sum_scalar_impl(const Mat *a) {
+  size_t len = a->rows * a->cols;
+  mat_elem_t *pa = a->data;
+
+  mat_elem_t sum0 = 0, sum1 = 0, sum2 = 0, sum3 = 0;
+
+  size_t i = 0;
+  for (; i + 4 <= len; i += 4) {
+    sum0 += pa[i];
+    sum1 += pa[i + 1];
+    sum2 += pa[i + 2];
+    sum3 += pa[i + 3];
+  }
+
+  mat_elem_t sum = sum0 + sum1 + sum2 + sum3;
+
+  for (; i < len; i++) {
+    sum += pa[i];
+  }
+
+  return sum;
+}
+
+MATDEF mat_elem_t mat_sum(const Mat *a) {
+  MAT_ASSERT_MAT(a);
+
+#ifdef MAT_HAS_ARM_NEON
+  return mat_sum_neon_impl(a);
+#else
+  return mat_sum_scalar_impl(a);
+#endif
+}
+
+MATDEF mat_elem_t mat_mean(const Mat *a) {
+  MAT_ASSERT_MAT(a);
+  return mat_sum(a) / (mat_elem_t)(a->rows * a->cols);
+}
+
+#ifdef MAT_HAS_ARM_NEON
+MAT_INTERNAL_STATIC mat_elem_t mat_min_neon_impl(const Mat *a) {
+  size_t len = a->rows * a->cols;
+  mat_elem_t *pa = a->data;
+
+  MAT_NEON_TYPE vmin0 = MAT_NEON_LOAD(&pa[0]);
+  MAT_NEON_TYPE vmin1 = vmin0;
+  MAT_NEON_TYPE vmin2 = vmin0;
+  MAT_NEON_TYPE vmin3 = vmin0;
+
+  size_t i = MAT_NEON_WIDTH;
+  for (; i + MAT_NEON_WIDTH * 4 <= len; i += MAT_NEON_WIDTH * 4) {
+    MAT_NEON_TYPE va0 = MAT_NEON_LOAD(&pa[i]);
+    MAT_NEON_TYPE va1 = MAT_NEON_LOAD(&pa[i + MAT_NEON_WIDTH]);
+    MAT_NEON_TYPE va2 = MAT_NEON_LOAD(&pa[i + MAT_NEON_WIDTH * 2]);
+    MAT_NEON_TYPE va3 = MAT_NEON_LOAD(&pa[i + MAT_NEON_WIDTH * 3]);
+
+#ifdef MAT_DOUBLE_PRECISION
+    vmin0 = vminq_f64(vmin0, va0);
+    vmin1 = vminq_f64(vmin1, va1);
+    vmin2 = vminq_f64(vmin2, va2);
+    vmin3 = vminq_f64(vmin3, va3);
+#else
+    vmin0 = vminq_f32(vmin0, va0);
+    vmin1 = vminq_f32(vmin1, va1);
+    vmin2 = vminq_f32(vmin2, va2);
+    vmin3 = vminq_f32(vmin3, va3);
+#endif
+  }
+
+#ifdef MAT_DOUBLE_PRECISION
+  vmin0 = vminq_f64(vmin0, vmin1);
+  vmin2 = vminq_f64(vmin2, vmin3);
+  vmin0 = vminq_f64(vmin0, vmin2);
+  mat_elem_t min_val = vminvq_f64(vmin0);
+#else
+  vmin0 = vminq_f32(vmin0, vmin1);
+  vmin2 = vminq_f32(vmin2, vmin3);
+  vmin0 = vminq_f32(vmin0, vmin2);
+  mat_elem_t min_val = vminvq_f32(vmin0);
+#endif
+
+  for (; i < len; i++) {
+    if (pa[i] < min_val) min_val = pa[i];
+  }
+
+  return min_val;
+}
+#endif
+
+MAT_INTERNAL_STATIC mat_elem_t mat_min_scalar_impl(const Mat *a) {
+  size_t len = a->rows * a->cols;
+  mat_elem_t *pa = a->data;
+
+  mat_elem_t min_val = pa[0];
+
+  for (size_t i = 1; i < len; i++) {
+    if (pa[i] < min_val) min_val = pa[i];
+  }
+
+  return min_val;
+}
+
+MATDEF mat_elem_t mat_min(const Mat *a) {
+  MAT_ASSERT_MAT(a);
+
+#ifdef MAT_HAS_ARM_NEON
+  return mat_min_neon_impl(a);
+#else
+  return mat_min_scalar_impl(a);
+#endif
+}
+
+#ifdef MAT_HAS_ARM_NEON
+MAT_INTERNAL_STATIC mat_elem_t mat_max_neon_impl(const Mat *a) {
+  size_t len = a->rows * a->cols;
+  mat_elem_t *pa = a->data;
+
+  MAT_NEON_TYPE vmax0 = MAT_NEON_LOAD(&pa[0]);
+  MAT_NEON_TYPE vmax1 = vmax0;
+  MAT_NEON_TYPE vmax2 = vmax0;
+  MAT_NEON_TYPE vmax3 = vmax0;
+
+  size_t i = MAT_NEON_WIDTH;
+  for (; i + MAT_NEON_WIDTH * 4 <= len; i += MAT_NEON_WIDTH * 4) {
+    MAT_NEON_TYPE va0 = MAT_NEON_LOAD(&pa[i]);
+    MAT_NEON_TYPE va1 = MAT_NEON_LOAD(&pa[i + MAT_NEON_WIDTH]);
+    MAT_NEON_TYPE va2 = MAT_NEON_LOAD(&pa[i + MAT_NEON_WIDTH * 2]);
+    MAT_NEON_TYPE va3 = MAT_NEON_LOAD(&pa[i + MAT_NEON_WIDTH * 3]);
+
+    vmax0 = MAT_NEON_MAX(vmax0, va0);
+    vmax1 = MAT_NEON_MAX(vmax1, va1);
+    vmax2 = MAT_NEON_MAX(vmax2, va2);
+    vmax3 = MAT_NEON_MAX(vmax3, va3);
+  }
+
+  vmax0 = MAT_NEON_MAX(vmax0, vmax1);
+  vmax2 = MAT_NEON_MAX(vmax2, vmax3);
+  vmax0 = MAT_NEON_MAX(vmax0, vmax2);
+  mat_elem_t max_val = MAT_NEON_MAXV(vmax0);
+
+  for (; i < len; i++) {
+    if (pa[i] > max_val) max_val = pa[i];
+  }
+
+  return max_val;
+}
+#endif
+
+MAT_INTERNAL_STATIC mat_elem_t mat_max_scalar_impl(const Mat *a) {
+  size_t len = a->rows * a->cols;
+  mat_elem_t *pa = a->data;
+
+  mat_elem_t max_val = pa[0];
+
+  for (size_t i = 1; i < len; i++) {
+    if (pa[i] > max_val) max_val = pa[i];
+  }
+
+  return max_val;
+}
+
+MATDEF mat_elem_t mat_max(const Mat *a) {
+  MAT_ASSERT_MAT(a);
+
+#ifdef MAT_HAS_ARM_NEON
+  return mat_max_neon_impl(a);
+#else
+  return mat_max_scalar_impl(a);
+#endif
+}
+
+MATDEF void mat_sum_axis(Vec *out, const Mat *a, int axis) {
+  MAT_ASSERT_MAT(a);
+  MAT_ASSERT_MAT(out);
+
+  if (axis == 0) {
+    // Sum along columns: result has shape (rows, 1) = (a->rows,)
+    MAT_ASSERT(out->rows * out->cols == a->rows && "mat_sum_axis: output size must match rows");
+
+    for (size_t i = 0; i < a->rows; i++) {
+      mat_elem_t sum = 0;
+      for (size_t j = 0; j < a->cols; j++) {
+        sum += a->data[i * a->cols + j];
+      }
+      out->data[i] = sum;
+    }
+  } else {
+    // Sum along rows (axis=1): result has shape (1, cols) = (a->cols,)
+    MAT_ASSERT(out->rows * out->cols == a->cols && "mat_sum_axis: output size must match cols");
+
+    // Zero output
+    for (size_t j = 0; j < a->cols; j++) {
+      out->data[j] = 0;
+    }
+
+    for (size_t i = 0; i < a->rows; i++) {
+      for (size_t j = 0; j < a->cols; j++) {
+        out->data[j] += a->data[i * a->cols + j];
+      }
+    }
+  }
+}
+
+MATDEF size_t mat_argmin(const Mat *a) {
+  MAT_ASSERT_MAT(a);
+
+  size_t len = a->rows * a->cols;
+  mat_elem_t *pa = a->data;
+
+  mat_elem_t min_val = pa[0];
+  size_t min_idx = 0;
+
+  for (size_t i = 1; i < len; i++) {
+    if (pa[i] < min_val) {
+      min_val = pa[i];
+      min_idx = i;
+    }
+  }
+
+  return min_idx;
+}
+
+MATDEF size_t mat_argmax(const Mat *a) {
+  MAT_ASSERT_MAT(a);
+
+  size_t len = a->rows * a->cols;
+  mat_elem_t *pa = a->data;
+
+  mat_elem_t max_val = pa[0];
+  size_t max_idx = 0;
+
+  for (size_t i = 1; i < len; i++) {
+    if (pa[i] > max_val) {
+      max_val = pa[i];
+      max_idx = i;
+    }
+  }
+
+  return max_idx;
+}
+
+MATDEF mat_elem_t mat_std(const Mat *a) {
+  MAT_ASSERT_MAT(a);
+
+  size_t n = a->rows * a->cols;
+  mat_elem_t mean = mat_mean(a);
+
+  mat_elem_t *pa = a->data;
+  mat_elem_t sum_sq = 0;
+
+  for (size_t i = 0; i < n; i++) {
+    mat_elem_t diff = pa[i] - mean;
+    sum_sq += diff * diff;
+  }
+
+#ifdef MAT_DOUBLE_PRECISION
+  return sqrt(sum_sq / (mat_elem_t)n);
+#else
+  return sqrtf(sum_sq / (mat_elem_t)n);
 #endif
 }
 
