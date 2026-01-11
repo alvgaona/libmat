@@ -14,9 +14,11 @@
 #ifdef MAT_DOUBLE_PRECISION
   using EigenVector = Eigen::VectorXd;
   #define PRECISION_NAME "float64"
+  #define BENCH_FILL bench_fill_random_d
 #else
   using EigenVector = Eigen::VectorXf;
   #define PRECISION_NAME "float32"
+  #define BENCH_FILL bench_fill_random_f
 #endif
 
 void bench_speed(size_t n) {
@@ -24,8 +26,8 @@ void bench_speed(size_t n) {
 
   Vec *x = mat_vec(n);
   Vec *y = mat_vec(n);
-  bench_fill_random_f(x->data, n);
-  bench_fill_random_f(y->data, n);
+  BENCH_FILL(x->data, n);
+  BENCH_FILL(y->data, n);
 
   EigenVector ey = Eigen::Map<EigenVector>(y->data, n);
   Eigen::Map<EigenVector> ex(x->data, n);

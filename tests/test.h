@@ -2,7 +2,6 @@
 #define TEST_H
 
 #include <stdio.h>
-#include <math.h>
 
 static int tests_passed = 0;
 static int tests_failed = 0;

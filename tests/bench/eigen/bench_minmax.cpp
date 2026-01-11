@@ -14,9 +14,11 @@
 #ifdef MAT_DOUBLE_PRECISION
   using EigenMatrix = Eigen::MatrixXd;
   #define PRECISION_NAME "float64"
+  #define BENCH_FILL bench_fill_random_d
 #else
   using EigenMatrix = Eigen::MatrixXf;
   #define PRECISION_NAME "float32"
+  #define BENCH_FILL bench_fill_random_f
 #endif
 
 volatile mat_elem_t sink;
@@ -25,7 +27,7 @@ void bench_min(size_t n) {
   printf("\n--- MIN Size: %zu ---\n", n);
 
   Mat *A = mat_mat(1, n);
-  bench_fill_random_f(A->data, n);
+  BENCH_FILL(A->data, n);
 
   Eigen::Map<EigenMatrix> eA(A->data, 1, n);
 
@@ -64,7 +66,7 @@ void bench_max(size_t n) {
   printf("\n--- MAX Size: %zu ---\n", n);
 
   Mat *A = mat_mat(1, n);
-  bench_fill_random_f(A->data, n);
+  BENCH_FILL(A->data, n);
 
   Eigen::Map<EigenMatrix> eA(A->data, 1, n);
 
