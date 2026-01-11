@@ -1681,6 +1681,215 @@ MATDEF void mat_ger(Mat *A, mat_elem_t alpha, const Vec *x, const Vec *y) {
 #endif
 }
 
+// Unit lower triangular GEMM for QR decomposition
+// V is unit lower triangular stored column-major: V[col * ldv + row] for row > col
+// Implicit 1 on diagonal, implicit 0 above diagonal
+
+#ifdef MAT_HAS_ARM_NEON
+// W = V^T * R where V is unit lower triangular (panel_rows x kb), R is (panel_rows x N)
+// Result W is (kb x N), stored row-major with stride ldw
+// V stored column-major: V[col * ldv + row] for row > col
+MAT_INTERNAL_STATIC void mat_gemm_unit_lower_t_neon(
+    mat_elem_t *W, size_t ldw,
+    const mat_elem_t *V, size_t ldv,
+    const mat_elem_t *R, size_t ldr,
+    size_t kb, size_t panel_rows, size_t N) {
+
+  for (size_t ii = 0; ii < kb; ii++) {
+    mat_elem_t *Wi = &W[ii * ldw];
+    const mat_elem_t *Rii = &R[ii * ldr];  // Row ii of R (diagonal element of V^T)
+
+    // Initialize W[ii,:] = R[ii,:] (the diagonal 1 in V^T)
+    size_t j = 0;
+    for (; j + MAT_NEON_WIDTH * 4 <= N; j += MAT_NEON_WIDTH * 4) {
+      MAT_NEON_STORE(&Wi[j], MAT_NEON_LOAD(&Rii[j]));
+      MAT_NEON_STORE(&Wi[j + MAT_NEON_WIDTH], MAT_NEON_LOAD(&Rii[j + MAT_NEON_WIDTH]));
+      MAT_NEON_STORE(&Wi[j + MAT_NEON_WIDTH * 2], MAT_NEON_LOAD(&Rii[j + MAT_NEON_WIDTH * 2]));
+      MAT_NEON_STORE(&Wi[j + MAT_NEON_WIDTH * 3], MAT_NEON_LOAD(&Rii[j + MAT_NEON_WIDTH * 3]));
+    }
+    for (; j < N; j++)
+      Wi[j] = Rii[j];
+
+    // Accumulate: W[ii,:] += V[ii,r] * R[r,:] for r = ii+1 to panel_rows-1
+    for (size_t r = ii + 1; r < panel_rows; r++) {
+      mat_elem_t v_val = V[ii * ldv + r];
+      const mat_elem_t *Rr = &R[r * ldr];
+      MAT_NEON_TYPE vv = MAT_NEON_DUP(v_val);
+
+      j = 0;
+      for (; j + MAT_NEON_WIDTH * 4 <= N; j += MAT_NEON_WIDTH * 4) {
+        MAT_NEON_TYPE w0 = MAT_NEON_LOAD(&Wi[j]);
+        MAT_NEON_TYPE w1 = MAT_NEON_LOAD(&Wi[j + MAT_NEON_WIDTH]);
+        MAT_NEON_TYPE w2 = MAT_NEON_LOAD(&Wi[j + MAT_NEON_WIDTH * 2]);
+        MAT_NEON_TYPE w3 = MAT_NEON_LOAD(&Wi[j + MAT_NEON_WIDTH * 3]);
+        MAT_NEON_TYPE r0 = MAT_NEON_LOAD(&Rr[j]);
+        MAT_NEON_TYPE r1 = MAT_NEON_LOAD(&Rr[j + MAT_NEON_WIDTH]);
+        MAT_NEON_TYPE r2 = MAT_NEON_LOAD(&Rr[j + MAT_NEON_WIDTH * 2]);
+        MAT_NEON_TYPE r3 = MAT_NEON_LOAD(&Rr[j + MAT_NEON_WIDTH * 3]);
+        MAT_NEON_STORE(&Wi[j], MAT_NEON_FMA(w0, vv, r0));
+        MAT_NEON_STORE(&Wi[j + MAT_NEON_WIDTH], MAT_NEON_FMA(w1, vv, r1));
+        MAT_NEON_STORE(&Wi[j + MAT_NEON_WIDTH * 2], MAT_NEON_FMA(w2, vv, r2));
+        MAT_NEON_STORE(&Wi[j + MAT_NEON_WIDTH * 3], MAT_NEON_FMA(w3, vv, r3));
+      }
+      for (; j < N; j++)
+        Wi[j] += v_val * Rr[j];
+    }
+  }
+}
+
+// C -= V * W where V is unit lower triangular (panel_rows x kb), W is (kb x N)
+// C is (panel_rows x N) with stride ldc
+// V stored column-major: V[col * ldv + row] for row > col
+MAT_INTERNAL_STATIC void mat_gemm_unit_lower_neon(
+    mat_elem_t *C, size_t ldc,
+    const mat_elem_t *V, size_t ldv,
+    const mat_elem_t *W, size_t ldw,
+    size_t panel_rows, size_t kb, size_t N) {
+
+  for (size_t r = 0; r < panel_rows; r++) {
+    mat_elem_t *Cr = &C[r * ldc];
+    size_t ii_max = (r < kb) ? r + 1 : kb;
+
+    for (size_t ii = 0; ii < ii_max; ii++) {
+      mat_elem_t v_val = (r == ii) ? 1.0f : V[ii * ldv + r];
+      const mat_elem_t *Wii = &W[ii * ldw];
+      MAT_NEON_TYPE vv = MAT_NEON_DUP(v_val);
+
+      size_t j = 0;
+      for (; j + MAT_NEON_WIDTH * 4 <= N; j += MAT_NEON_WIDTH * 4) {
+        MAT_NEON_TYPE c0 = MAT_NEON_LOAD(&Cr[j]);
+        MAT_NEON_TYPE c1 = MAT_NEON_LOAD(&Cr[j + MAT_NEON_WIDTH]);
+        MAT_NEON_TYPE c2 = MAT_NEON_LOAD(&Cr[j + MAT_NEON_WIDTH * 2]);
+        MAT_NEON_TYPE c3 = MAT_NEON_LOAD(&Cr[j + MAT_NEON_WIDTH * 3]);
+        MAT_NEON_TYPE w0 = MAT_NEON_LOAD(&Wii[j]);
+        MAT_NEON_TYPE w1 = MAT_NEON_LOAD(&Wii[j + MAT_NEON_WIDTH]);
+        MAT_NEON_TYPE w2 = MAT_NEON_LOAD(&Wii[j + MAT_NEON_WIDTH * 2]);
+        MAT_NEON_TYPE w3 = MAT_NEON_LOAD(&Wii[j + MAT_NEON_WIDTH * 3]);
+        MAT_NEON_STORE(&Cr[j], MAT_NEON_FMS(c0, vv, w0));
+        MAT_NEON_STORE(&Cr[j + MAT_NEON_WIDTH], MAT_NEON_FMS(c1, vv, w1));
+        MAT_NEON_STORE(&Cr[j + MAT_NEON_WIDTH * 2], MAT_NEON_FMS(c2, vv, w2));
+        MAT_NEON_STORE(&Cr[j + MAT_NEON_WIDTH * 3], MAT_NEON_FMS(c3, vv, w3));
+      }
+      for (; j < N; j++)
+        Cr[j] -= v_val * Wii[j];
+    }
+  }
+}
+
+// W = Q * V where Q is (M x panel_rows) with stride ldq, V is unit lower (panel_rows x kb)
+// Result W is (M x kb) with stride ldw
+MAT_INTERNAL_STATIC void mat_gemm_q_unit_lower_neon(
+    mat_elem_t *W, size_t ldw,
+    const mat_elem_t *Q, size_t ldq,
+    const mat_elem_t *V, size_t ldv,
+    size_t M, size_t panel_rows, size_t kb) {
+
+  for (size_t ii = 0; ii < M; ii++) {
+    const mat_elem_t *Qi = &Q[ii * ldq];
+    mat_elem_t *Wi = &W[ii * ldw];
+
+    for (size_t jj = 0; jj < kb; jj++) {
+      // W[ii, jj] = Q[ii, jj] * 1 + sum(Q[ii, r] * V[jj, r]) for r > jj
+      mat_elem_t dot = Qi[jj];  // diagonal 1
+      for (size_t r = jj + 1; r < panel_rows; r++) {
+        dot += Qi[r] * V[jj * ldv + r];
+      }
+      Wi[jj] = dot;
+    }
+  }
+}
+
+// Q -= W * V^T where W is (M x kb), V^T is unit upper (kb x panel_rows)
+// Q is (M x panel_rows) with stride ldq
+MAT_INTERNAL_STATIC void mat_gemm_sub_w_unit_upper_neon(
+    mat_elem_t *Q, size_t ldq,
+    const mat_elem_t *W, size_t ldw,
+    const mat_elem_t *V, size_t ldv,
+    size_t M, size_t kb, size_t panel_rows) {
+
+  // Process column by column of Q
+  for (size_t r = 0; r < panel_rows; r++) {
+    size_t jj_max = (r < kb) ? r + 1 : kb;
+
+    for (size_t ii = 0; ii < M; ii++) {
+      mat_elem_t sum = 0;
+      for (size_t jj = 0; jj < jj_max; jj++) {
+        mat_elem_t v_val = (r == jj) ? 1.0f : V[jj * ldv + r];
+        sum += W[ii * ldw + jj] * v_val;
+      }
+      Q[ii * ldq + r] -= sum;
+    }
+  }
+}
+#endif
+
+// Scalar fallbacks
+MAT_INTERNAL_STATIC void mat_gemm_unit_lower_t_scalar(
+    mat_elem_t *W, size_t ldw,
+    const mat_elem_t *V, size_t ldv,
+    const mat_elem_t *R, size_t ldr,
+    size_t kb, size_t panel_rows, size_t N) {
+  for (size_t ii = 0; ii < kb; ii++) {
+    for (size_t jj = 0; jj < N; jj++) {
+      mat_elem_t dot = R[ii * ldr + jj];  // diagonal 1
+      for (size_t r = ii + 1; r < panel_rows; r++)
+        dot += V[ii * ldv + r] * R[r * ldr + jj];
+      W[ii * ldw + jj] = dot;
+    }
+  }
+}
+
+MAT_INTERNAL_STATIC void mat_gemm_unit_lower_scalar(
+    mat_elem_t *C, size_t ldc,
+    const mat_elem_t *V, size_t ldv,
+    const mat_elem_t *W, size_t ldw,
+    size_t panel_rows, size_t kb, size_t N) {
+  for (size_t r = 0; r < panel_rows; r++) {
+    size_t ii_max = (r < kb) ? r + 1 : kb;
+    for (size_t jj = 0; jj < N; jj++) {
+      mat_elem_t sum = 0;
+      for (size_t ii = 0; ii < ii_max; ii++) {
+        mat_elem_t v_val = (r == ii) ? 1.0f : V[ii * ldv + r];
+        sum += v_val * W[ii * ldw + jj];
+      }
+      C[r * ldc + jj] -= sum;
+    }
+  }
+}
+
+MAT_INTERNAL_STATIC void mat_gemm_q_unit_lower_scalar(
+    mat_elem_t *W, size_t ldw,
+    const mat_elem_t *Q, size_t ldq,
+    const mat_elem_t *V, size_t ldv,
+    size_t M, size_t panel_rows, size_t kb) {
+  for (size_t ii = 0; ii < M; ii++) {
+    for (size_t jj = 0; jj < kb; jj++) {
+      mat_elem_t dot = Q[ii * ldq + jj];
+      for (size_t r = jj + 1; r < panel_rows; r++)
+        dot += Q[ii * ldq + r] * V[jj * ldv + r];
+      W[ii * ldw + jj] = dot;
+    }
+  }
+}
+
+MAT_INTERNAL_STATIC void mat_gemm_sub_w_unit_upper_scalar(
+    mat_elem_t *Q, size_t ldq,
+    const mat_elem_t *W, size_t ldw,
+    const mat_elem_t *V, size_t ldv,
+    size_t M, size_t kb, size_t panel_rows) {
+  for (size_t r = 0; r < panel_rows; r++) {
+    size_t jj_max = (r < kb) ? r + 1 : kb;
+    for (size_t ii = 0; ii < M; ii++) {
+      mat_elem_t sum = 0;
+      for (size_t jj = 0; jj < jj_max; jj++) {
+        mat_elem_t v_val = (r == jj) ? 1.0f : V[jj * ldv + r];
+        sum += W[ii * ldw + jj] * v_val;
+      }
+      Q[ii * ldq + r] -= sum;
+    }
+  }
+}
+
 // Strided GEMM: C = alpha * A * B + beta * C
 // For submatrix operations where matrices have leading dimensions != their logical width
 // A is M x K with stride lda, B is K x N with stride ldb, C is M x N with stride ldc
@@ -2839,7 +3048,7 @@ MATDEF mat_elem_t mat_std(const Mat *a) {
 
 // QR Decomposition using blocked Householder (WY representation)
 // A (m x n) = Q (m x m) * R (m x n), requires m >= n
-#define MAT_QR_BLOCK_SIZE 2  // Temporarily small for debugging
+#define MAT_QR_BLOCK_SIZE 32
 
 MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R) {
   MAT_ASSERT_MAT(A);
@@ -2969,55 +3178,49 @@ MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R) {
       size_t trail_cols = n - k - kb;
 
       // W = V^T * R[k:m, k+kb:n]  (kb x trail_cols)
-      for (size_t jj = 0; jj < trail_cols; jj++) {
-        for (size_t ii = 0; ii < kb; ii++) {
-          mat_elem_t dot = 0;
-          for (size_t r = ii; r < panel_rows; r++) {
-            mat_elem_t v_r = (r == ii) ? 1 : ((r > ii) ? V[ii * panel_rows + r] : 0);
-            dot += v_r * R->data[(k + r) * n + (k + kb + jj)];
-          }
-          W[ii * trail_cols + jj] = dot;
-        }
-      }
+#ifdef MAT_HAS_ARM_NEON
+      mat_gemm_unit_lower_t_neon(W, trail_cols, V, panel_rows,
+                                 &R->data[k * n + (k + kb)], n,
+                                 kb, panel_rows, trail_cols);
+#else
+      mat_gemm_unit_lower_t_scalar(W, trail_cols, V, panel_rows,
+                                   &R->data[k * n + (k + kb)], n,
+                                   kb, panel_rows, trail_cols);
+#endif
 
-      // W = T * W  (kb x trail_cols), T is upper triangular
+      // W = T^T * W  (kb x trail_cols), using T^T (lower triangular) for H_k*...*H_1
       for (size_t jj = 0; jj < trail_cols; jj++) {
-        for (size_t ii = 0; ii < kb; ii++) {
+        for (int ii = (int)kb - 1; ii >= 0; ii--) {
           mat_elem_t sum = 0;
-          for (size_t p = ii; p < kb; p++) {
-            sum += T[ii * kb + p] * W[p * trail_cols + jj];
+          for (size_t p = 0; p <= (size_t)ii; p++) {
+            sum += T[p * kb + ii] * W[p * trail_cols + jj];
           }
-          // Store in place (process top to bottom so we can overwrite)
           W[ii * trail_cols + jj] = sum;
         }
       }
 
       // R[k:m, k+kb:n] -= V * W
-      for (size_t r = 0; r < panel_rows; r++) {
-        for (size_t jj = 0; jj < trail_cols; jj++) {
-          mat_elem_t sum = 0;
-          for (size_t ii = 0; ii < kb; ii++) {
-            mat_elem_t v_r = (r == ii) ? 1 : ((r > ii) ? V[ii * panel_rows + r] : 0);
-            sum += v_r * W[ii * trail_cols + jj];
-          }
-          R->data[(k + r) * n + (k + kb + jj)] -= sum;
-        }
-      }
+#ifdef MAT_HAS_ARM_NEON
+      mat_gemm_unit_lower_neon(&R->data[k * n + (k + kb)], n,
+                               V, panel_rows, W, trail_cols,
+                               panel_rows, kb, trail_cols);
+#else
+      mat_gemm_unit_lower_scalar(&R->data[k * n + (k + kb)], n,
+                                 V, panel_rows, W, trail_cols,
+                                 panel_rows, kb, trail_cols);
+#endif
     }
 
     // === Apply block reflector to Q[:, k:m] ===
     // Q = Q * (I - V * T * V^T) = Q - Q * V * T * V^T
     // Let W = Q[:, k:m] * V  (m x kb)
-    for (size_t ii = 0; ii < m; ii++) {
-      for (size_t jj = 0; jj < kb; jj++) {
-        mat_elem_t dot = 0;
-        for (size_t r = jj; r < panel_rows; r++) {
-          mat_elem_t v_r = (r == jj) ? 1 : ((r > jj) ? V[jj * panel_rows + r] : 0);
-          dot += Q->data[ii * m + (k + r)] * v_r;
-        }
-        W[ii * kb + jj] = dot;
-      }
-    }
+#ifdef MAT_HAS_ARM_NEON
+    mat_gemm_q_unit_lower_neon(W, kb, &Q->data[k], m, V, panel_rows,
+                               m, panel_rows, kb);
+#else
+    mat_gemm_q_unit_lower_scalar(W, kb, &Q->data[k], m, V, panel_rows,
+                                 m, panel_rows, kb);
+#endif
 
     // W = W * T  (m x kb), T is upper triangular
     for (size_t ii = 0; ii < m; ii++) {
@@ -3031,16 +3234,13 @@ MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R) {
     }
 
     // Q[:, k:m] -= W * V^T
-    for (size_t ii = 0; ii < m; ii++) {
-      for (size_t r = 0; r < panel_rows; r++) {
-        mat_elem_t sum = 0;
-        for (size_t jj = 0; jj < kb; jj++) {
-          mat_elem_t v_r = (r == jj) ? 1 : ((r > jj) ? V[jj * panel_rows + r] : 0);
-          sum += W[ii * kb + jj] * v_r;
-        }
-        Q->data[ii * m + (k + r)] -= sum;
-      }
-    }
+#ifdef MAT_HAS_ARM_NEON
+    mat_gemm_sub_w_unit_upper_neon(&Q->data[k], m, W, kb, V, panel_rows,
+                                   m, kb, panel_rows);
+#else
+    mat_gemm_sub_w_unit_upper_scalar(&Q->data[k], m, W, kb, V, panel_rows,
+                                     m, kb, panel_rows);
+#endif
   }
 
   // Zero out lower triangular part of R
