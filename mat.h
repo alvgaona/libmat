@@ -34,6 +34,10 @@
 #define MAT_FREE_MAT(m) do { MAT_FREE((m)->data); MAT_FREE(m); } while(0)
 #endif
 
+#ifndef MAT_FREE_PERM
+#define MAT_FREE_PERM(p) do { MAT_FREE((p)->data); MAT_FREE(p); } while(0)
+#endif
+
 // Scratch arena for temporary allocations in hot paths
 // Define MAT_NO_SCRATCH to disable (uses malloc/free instead)
 // Define MAT_SCRATCH_SIZE to override the default size
@@ -279,6 +283,11 @@ typedef struct {
 
 typedef Mat Vec;
 
+typedef struct {
+  size_t *data;
+  size_t size;
+} Perm;
+
 /* Construction & Memory */
 
 // Allocate matrix struct without data buffer. Use for custom memory management.
@@ -313,6 +322,18 @@ MATDEF Vec *mat_vec(size_t dim);
 
 // Create column vector from array of values.
 MATDEF Vec *mat_vec_from(size_t dim, const mat_elem_t *values);
+
+// Allocate permutation of given size.
+MATDEF Perm *mat_perm(size_t n);
+
+// Free permutation and its data.
+MATDEF void mat_free_perm(Perm *p);
+
+// Set permutation to identity [0, 1, 2, ...].
+MATDEF void mat_perm_identity(Perm *p);
+
+// Convert permutation to explicit n×n permutation matrix.
+MATDEF Mat *mat_perm_mat(const Perm *p);
 
 // Shallow copy (copies struct, shares data pointer). Use mat_rdeep_copy for full copy.
 MATDEF Mat *mat_copy(const Mat *m);
@@ -575,18 +596,13 @@ MATDEF mat_elem_t mat_nnz(const Mat *a);
 // Q and R must be pre-allocated with correct dimensions.
 MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R);
 
-// LU decomposition (Doolittle algorithm, no pivoting).
-// A = L * U where L is lower triangular with 1s on diagonal, U is upper triangular.
-// L and U must be pre-allocated with dimensions n x n.
-// Returns 0 on success, -1 if a zero pivot is encountered.
-MATDEF int mat_lu(const Mat *A, Mat *L, Mat *U);
-
 // LU decomposition with full pivoting.
-// P * A * Q = L * U where P, Q are permutation matrices.
+// P * A * Q = L * U where P, Q are permutations.
+// L is lower triangular with 1s on diagonal, U is upper triangular.
 // L and U must be pre-allocated with dimensions n x n.
-// row_perm and col_perm must be pre-allocated arrays of size n.
-// Returns the number of row swaps (useful for determinant sign).
-MATDEF int mat_lu_fullpiv(const Mat *A, Mat *L, Mat *U, size_t *row_perm, size_t *col_perm);
+// P and Q must be pre-allocated permutations of size n.
+// Returns the number of row+column swaps (useful for determinant sign).
+MATDEF int mat_lu(const Mat *A, Mat *L, Mat *U, Perm *p, Perm *q);
 
 #ifdef __cplusplus
 }
@@ -727,6 +743,33 @@ MATDEF Vec *mat_vec_from(size_t dim, const mat_elem_t *values) {
   Vec *result = mat_from(dim, 1, values);
 
   return result;
+}
+
+MATDEF Perm *mat_perm(size_t n) {
+  Perm *p = (Perm *)MAT_MALLOC(sizeof(Perm));
+  p->data = (size_t *)MAT_MALLOC(n * sizeof(size_t));
+  p->size = n;
+  return p;
+}
+
+MATDEF void mat_free_perm(Perm *p) {
+  MAT_FREE(p->data);
+  MAT_FREE(p);
+}
+
+MATDEF void mat_perm_identity(Perm *p) {
+  for (size_t i = 0; i < p->size; i++) {
+    p->data[i] = i;
+  }
+}
+
+MATDEF Mat *mat_perm_mat(const Perm *p) {
+  size_t n = p->size;
+  Mat *m = mat_zeros(n, n);
+  for (size_t i = 0; i < n; i++) {
+    m->data[i * n + p->data[i]] = 1;
+  }
+  return m;
 }
 
 MATDEF Mat *mat_copy(const Mat *m) {
@@ -2792,53 +2835,12 @@ MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R) {
   MAT_FREE(tau_arr);
 }
 
-MATDEF int mat_lu(const Mat *A, Mat *L, Mat *U) {
-  MAT_ASSERT_MAT(A);
-  MAT_ASSERT_MAT(L);
-  MAT_ASSERT_MAT(U);
-
-  size_t n = A->rows;
-  MAT_ASSERT(A->cols == n && "mat_lu requires square matrix");
-  MAT_ASSERT(L->rows == n && L->cols == n);
-  MAT_ASSERT(U->rows == n && U->cols == n);
-
-  // Initialize L to identity, U to zeros
-  mat_eye(L);
-  memset(U->data, 0, n * n * sizeof(mat_elem_t));
-
-  // Doolittle algorithm
-  for (size_t i = 0; i < n; i++) {
-    // Compute U[i, j] for j = i to n-1 (row i of U)
-    for (size_t j = i; j < n; j++) {
-      mat_elem_t sum = 0;
-      for (size_t k = 0; k < i; k++) {
-        sum += L->data[i * n + k] * U->data[k * n + j];
-      }
-      U->data[i * n + j] = A->data[i * n + j] - sum;
-    }
-
-    // Check for zero pivot
-    if (fabsf(U->data[i * n + i]) < MAT_DEFAULT_EPSILON) {
-      return -1;
-    }
-
-    // Compute L[j, i] for j = i+1 to n-1 (column i of L, below diagonal)
-    for (size_t j = i + 1; j < n; j++) {
-      mat_elem_t sum = 0;
-      for (size_t k = 0; k < i; k++) {
-        sum += L->data[j * n + k] * U->data[k * n + i];
-      }
-      L->data[j * n + i] = (A->data[j * n + i] - sum) / U->data[i * n + i];
-    }
-  }
-
-  return 0;
-}
-
-// Scalar implementation of full pivoting LU
-MAT_INTERNAL_STATIC int mat_lu_fullpiv_scalar_impl(Mat *M, size_t *row_perm, size_t *col_perm) {
+// Scalar implementation of LU
+MAT_INTERNAL_STATIC int mat_lu_scalar_impl(Mat *M, Perm *p, Perm *q) {
   size_t n = M->rows;
   mat_elem_t *data = M->data;
+  size_t *row_perm = p->data;
+  size_t *col_perm = q->data;
   int swap_count = 0;
 
   for (size_t k = 0; k < n; k++) {
@@ -2908,9 +2910,11 @@ MAT_INTERNAL_STATIC int mat_lu_fullpiv_scalar_impl(Mat *M, size_t *row_perm, siz
 
 #ifdef MAT_HAS_ARM_NEON
 // NEON-optimized implementation of full pivoting LU
-MAT_INTERNAL_STATIC int mat_lu_fullpiv_neon_impl(Mat *M, size_t *row_perm, size_t *col_perm) {
+MAT_INTERNAL_STATIC int mat_lu_neon_impl(Mat *M, Perm *p, Perm *q) {
   size_t n = M->rows;
   mat_elem_t *data = M->data;
+  size_t *row_perm = p->data;
+  size_t *col_perm = q->data;
   int swap_count = 0;
 
   for (size_t k = 0; k < n; k++) {
@@ -3046,29 +3050,29 @@ MAT_INTERNAL_STATIC int mat_lu_fullpiv_neon_impl(Mat *M, size_t *row_perm, size_
 }
 #endif
 
-MATDEF int mat_lu_fullpiv(const Mat *A, Mat *L, Mat *U, size_t *row_perm, size_t *col_perm) {
+MATDEF int mat_lu(const Mat *A, Mat *L, Mat *U, Perm *p, Perm *q) {
   MAT_ASSERT_MAT(A);
   MAT_ASSERT_MAT(L);
   MAT_ASSERT_MAT(U);
+  MAT_ASSERT(p != NULL && q != NULL);
 
   size_t n = A->rows;
-  MAT_ASSERT(A->cols == n && "mat_lu_fullpiv requires square matrix");
+  MAT_ASSERT(A->cols == n && "mat_lu requires square matrix");
   MAT_ASSERT(L->rows == n && L->cols == n);
   MAT_ASSERT(U->rows == n && U->cols == n);
+  MAT_ASSERT(p->size == n && q->size == n);
 
   // Will contain both L and U at the end)
   Mat *M = mat_rdeep_copy(A);
 
   // Initialize permutations to identity
-  for (size_t i = 0; i < n; i++) {
-    row_perm[i] = i;
-    col_perm[i] = i;
-  }
+  mat_perm_identity(p);
+  mat_perm_identity(q);
 
 #ifdef MAT_HAS_ARM_NEON
-  int swap_count = mat_lu_fullpiv_neon_impl(M, row_perm, col_perm);
+  int swap_count = mat_lu_neon_impl(M, p, q);
 #else
-  int swap_count = mat_lu_fullpiv_scalar_impl(M, row_perm, col_perm);
+  int swap_count = mat_lu_scalar_impl(M, p, q);
 #endif
 
   // Extract L (lower triangular with 1s on diagonal) and U (upper triangular) from M
