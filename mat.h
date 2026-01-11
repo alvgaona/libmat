@@ -3116,17 +3116,19 @@ MAT_INTERNAL_STATIC int mat_plu_blocked_impl(Mat *M, Perm *p) {
       }
     }
 
-    // Trailing matrix update
+    // Trailing matrix update: A[k_end:n, k_end:n] -= L[k_end:n, kb:k_end] @ U[kb:k_end, k_end:n]
     if (k_end < n) {
-      for (size_t i = k_end; i < n; i++) {
-        mat_elem_t *row_i = &data[i * n];
-        for (size_t k = kb; k < k_end; k++) {
-          mat_elem_t l_ik = row_i[k];
-          mat_elem_t *row_k = &data[k * n];
-          for (size_t j = k_end; j < n; j++)
-            row_i[j] -= l_ik * row_k[j];
-        }
-      }
+      size_t trail_m = n - k_end;  // rows in trailing matrix
+      size_t trail_n = n - k_end;  // cols in trailing matrix
+      size_t block_k = k_end - kb; // block size
+      mat_gemm_strided(
+          &data[k_end * n + k_end], n,  // C: trailing submatrix
+          -1.0f,                        // alpha = -1
+          &data[k_end * n + kb], n,     // A: L block (rows k_end:n, cols kb:k_end)
+          trail_m, block_k,             // M, K
+          &data[kb * n + k_end], n,     // B: U block (rows kb:k_end, cols k_end:n)
+          trail_n,                      // N
+          1.0f);                        // beta = 1
     }
   }
 
