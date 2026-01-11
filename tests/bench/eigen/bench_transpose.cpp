@@ -1,9 +1,11 @@
 #include <cstdio>
 #include <cstdlib>
-#include <cfloat>
-#include <cmath>
-#include <mach/mach_time.h>
 #include <Eigen/Dense>
+
+#define BENCH_ROUNDS 20
+#define BENCH_WARMUP 10
+#define BENCH_IMPLEMENTATION
+#include "bench.h"
 
 #define MAT_IMPLEMENTATION
 #include "mat.h"
@@ -16,73 +18,42 @@
   #define PRECISION_NAME "float32"
 #endif
 
-#define ROUNDS 20
-#define WARMUP 10
-
-static double ns_per_tick;
-
-void init_timer() {
-  mach_timebase_info_data_t info;
-  mach_timebase_info(&info);
-  ns_per_tick = (double)info.numer / info.denom;
-}
-
-struct Stats { double avg, min, std; };
-
-Stats compute_stats(double *times, int n) {
-  Stats s = {0, DBL_MAX, 0};
-  for (int i = 0; i < n; i++) {
-    s.avg += times[i];
-    if (times[i] < s.min) s.min = times[i];
-  }
-  s.avg /= n;
-  for (int i = 0; i < n; i++)
-    s.std += (times[i] - s.avg) * (times[i] - s.avg);
-  s.std = sqrt(s.std / n);
-  return s;
-}
-
-void fill_random(mat_elem_t *data, size_t n) {
-  for (size_t i = 0; i < n; i++)
-    data[i] = (mat_elem_t)rand() / RAND_MAX * 2.0 - 1.0;
-}
-
 void bench_speed(size_t m, size_t n, int iterations) {
   printf("\n--- %zux%zu ---\n", m, n);
 
   // libmat
   Mat *A = mat_mat(m, n);
   Mat *At = mat_mat(n, m);
-  fill_random(A->data, m * n);
+  bench_fill_random_f(A->data, m * n);
 
   // Eigen
   Eigen::Map<EigenMatrix> eA(A->data, m, n);
   EigenMatrix eAt(n, m);
 
   // Warmup
-  for (int i = 0; i < WARMUP; i++) {
+  for (int i = 0; i < BENCH_WARMUP; i++) {
     mat_t(At, A);
     eAt.noalias() = eA.transpose();
   }
 
-  double libmat_times[ROUNDS], eigen_times[ROUNDS];
+  double libmat_times[BENCH_ROUNDS], eigen_times[BENCH_ROUNDS];
 
-  for (int r = 0; r < ROUNDS; r++) {
-    uint64_t start = mach_absolute_time();
+  for (int r = 0; r < BENCH_ROUNDS; r++) {
+    uint64_t start = bench_now();
     for (int i = 0; i < iterations; i++)
       mat_t(At, A);
-    uint64_t end = mach_absolute_time();
-    libmat_times[r] = (end - start) * ns_per_tick / iterations / 1000.0;
+    uint64_t end = bench_now();
+    libmat_times[r] = bench_ns(start, end) / iterations / 1000.0;
 
-    start = mach_absolute_time();
+    start = bench_now();
     for (int i = 0; i < iterations; i++)
       eAt.noalias() = eA.transpose();
-    end = mach_absolute_time();
-    eigen_times[r] = (end - start) * ns_per_tick / iterations / 1000.0;
+    end = bench_now();
+    eigen_times[r] = bench_ns(start, end) / iterations / 1000.0;
   }
 
-  Stats ls = compute_stats(libmat_times, ROUNDS);
-  Stats es = compute_stats(eigen_times, ROUNDS);
+  BenchStats ls = bench_stats(libmat_times, BENCH_ROUNDS);
+  BenchStats es = bench_stats(eigen_times, BENCH_ROUNDS);
 
   double gb_libmat = (2.0 * m * n * sizeof(mat_elem_t)) / (ls.avg * 1000.0);
   double gb_eigen = (2.0 * m * n * sizeof(mat_elem_t)) / (es.avg * 1000.0);
@@ -97,7 +68,7 @@ void bench_speed(size_t m, size_t n, int iterations) {
 
 int main() {
   srand(42);
-  init_timer();
+  bench_init();
 
   Eigen::setNbThreads(1);
 

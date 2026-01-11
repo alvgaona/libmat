@@ -1,9 +1,12 @@
 #include <cstdio>
 #include <cstdlib>
-#include <cfloat>
-#include <cmath>
-#include <mach/mach_time.h>
 #include <Eigen/Dense>
+
+#define BENCH_ITERATIONS 1
+#define BENCH_ROUNDS 1
+#define BENCH_WARMUP 1
+#define BENCH_IMPLEMENTATION
+#include "bench.h"
 
 #define MAT_IMPLEMENTATION
 #include "mat.h"
@@ -16,76 +19,44 @@
   #define PRECISION_NAME "float32"
 #endif
 
-#define ITERATIONS 1
-#define ROUNDS 1
-#define WARMUP 1
-
-static double ns_per_tick;
-
-void init_timer() {
-  mach_timebase_info_data_t info;
-  mach_timebase_info(&info);
-  ns_per_tick = (double)info.numer / info.denom;
-}
-
-struct Stats { double avg, min, std; };
-
-Stats compute_stats(double *times, int n) {
-  Stats s = {0, DBL_MAX, 0};
-  for (int i = 0; i < n; i++) {
-    s.avg += times[i];
-    if (times[i] < s.min) s.min = times[i];
-  }
-  s.avg /= n;
-  for (int i = 0; i < n; i++)
-    s.std += (times[i] - s.avg) * (times[i] - s.avg);
-  s.std = sqrt(s.std / n);
-  return s;
-}
-
-void fill_random(mat_elem_t *data, size_t n) {
-  for (size_t i = 0; i < n; i++)
-    data[i] = (mat_elem_t)rand() / RAND_MAX * 2.0 - 1.0;
-}
-
 void bench_speed(size_t m, size_t n) {
   printf("\n--- %zux%zu ---\n", m, n);
 
   Mat *A = mat_mat(m, n);
   Mat *Q = mat_mat(m, m);
   Mat *R = mat_mat(m, n);
-  fill_random(A->data, m * n);
+  bench_fill_random_f(A->data, m * n);
 
   Eigen::Map<EigenMatrix> eA(A->data, m, n);
 
-  for (int i = 0; i < WARMUP; i++) {
+  for (int i = 0; i < BENCH_WARMUP; i++) {
     mat_qr(A, Q, R);
     Eigen::HouseholderQR<EigenMatrix> qr(eA);
     (void)qr.householderQ();
     (void)qr.matrixQR();
   }
 
-  double libmat_times[ROUNDS], eigen_times[ROUNDS];
+  double libmat_times[BENCH_ROUNDS], eigen_times[BENCH_ROUNDS];
 
-  for (int r = 0; r < ROUNDS; r++) {
-    uint64_t start = mach_absolute_time();
-    for (int i = 0; i < ITERATIONS; i++)
+  for (int r = 0; r < BENCH_ROUNDS; r++) {
+    uint64_t start = bench_now();
+    for (int i = 0; i < BENCH_ITERATIONS; i++)
       mat_qr(A, Q, R);
-    uint64_t end = mach_absolute_time();
-    libmat_times[r] = (end - start) * ns_per_tick / ITERATIONS / 1000.0;
+    uint64_t end = bench_now();
+    libmat_times[r] = bench_ns(start, end) / BENCH_ITERATIONS / 1000.0;
 
-    start = mach_absolute_time();
-    for (int i = 0; i < ITERATIONS; i++) {
+    start = bench_now();
+    for (int i = 0; i < BENCH_ITERATIONS; i++) {
       Eigen::HouseholderQR<EigenMatrix> qr(eA);
       EigenMatrix eQ = qr.householderQ();
       EigenMatrix eR = qr.matrixQR().triangularView<Eigen::Upper>();
     }
-    end = mach_absolute_time();
-    eigen_times[r] = (end - start) * ns_per_tick / ITERATIONS / 1000.0;
+    end = bench_now();
+    eigen_times[r] = bench_ns(start, end) / BENCH_ITERATIONS / 1000.0;
   }
 
-  Stats ls = compute_stats(libmat_times, ROUNDS);
-  Stats es = compute_stats(eigen_times, ROUNDS);
+  BenchStats ls = bench_stats(libmat_times, BENCH_ROUNDS);
+  BenchStats es = bench_stats(eigen_times, BENCH_ROUNDS);
 
   printf("libmat: %8.1f ± %.1f us  (%.2fx vs Eigen)\n",
          ls.avg, ls.std, es.avg / ls.avg);
@@ -96,7 +67,7 @@ void bench_speed(size_t m, size_t n) {
 
 int main() {
   srand(42);
-  init_timer();
+  bench_init();
   Eigen::setNbThreads(1);
 
   printf("=== QR BENCHMARK: libmat vs Eigen [%s] ===\n", PRECISION_NAME);
