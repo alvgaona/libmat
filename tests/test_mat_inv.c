@@ -1,10 +1,12 @@
+#define MATDEF static inline
 #define MAT_IMPLEMENTATION
 #include "mat.h"
-#include <stdio.h>
+#include "test.h"
+#include <stdlib.h>
 
-static int test_inv_2x2(void) {
-    // A = [[4, 7], [2, 6]]
-    // A^-1 = [[0.6, -0.7], [-0.2, 0.4]]
+static void test_inv_2x2(void) {
+    TEST_BEGIN("inv_2x2");
+
     Mat *A = mat_from(2, 2, (mat_elem_t[]){
         4, 7,
         2, 6
@@ -16,25 +18,23 @@ static int test_inv_2x2(void) {
     // Check A * A^-1 = I
     Mat *I = mat_rmul(A, Ainv);
 
-    mat_elem_t max_err = 0;
     for (size_t i = 0; i < 2; i++) {
         for (size_t j = 0; j < 2; j++) {
             mat_elem_t expected = (i == j) ? 1.0f : 0.0f;
-            mat_elem_t err = fabsf(I->data[i * 2 + j] - expected);
-            if (err > max_err) max_err = err;
+            CHECK_FLOAT_EQ_TOL(I->data[i * 2 + j], expected, 1e-5f);
         }
     }
-
-    printf("2x2: A * A^-1 = I, max error = %e %s\n", max_err, max_err < 1e-5f ? "OK" : "FAIL");
 
     mat_free_mat(A);
     mat_free_mat(Ainv);
     mat_free_mat(I);
 
-    return max_err < 1e-5f ? 0 : 1;
+    TEST_END();
 }
 
-static int test_inv_3x3(void) {
+static void test_inv_3x3(void) {
+    TEST_BEGIN("inv_3x3");
+
     Mat *A = mat_from(3, 3, (mat_elem_t[]){
         1, 2, 3,
         0, 1, 4,
@@ -47,48 +47,43 @@ static int test_inv_3x3(void) {
     // Check A * A^-1 = I
     Mat *I = mat_rmul(A, Ainv);
 
-    mat_elem_t max_err = 0;
     for (size_t i = 0; i < 3; i++) {
         for (size_t j = 0; j < 3; j++) {
             mat_elem_t expected = (i == j) ? 1.0f : 0.0f;
-            mat_elem_t err = fabsf(I->data[i * 3 + j] - expected);
-            if (err > max_err) max_err = err;
+            CHECK_FLOAT_EQ_TOL(I->data[i * 3 + j], expected, 1e-5f);
         }
     }
-
-    printf("3x3: A * A^-1 = I, max error = %e %s\n", max_err, max_err < 1e-5f ? "OK" : "FAIL");
 
     mat_free_mat(A);
     mat_free_mat(Ainv);
     mat_free_mat(I);
 
-    return max_err < 1e-5f ? 0 : 1;
+    TEST_END();
 }
 
-static int test_inv_identity(void) {
-    // I^-1 = I
+static void test_inv_identity(void) {
+    TEST_BEGIN("inv_identity_5x5");
+
     Mat *I = mat_reye(5);
     Mat *Iinv = mat_mat(5, 5);
     mat_inv(Iinv, I);
 
-    mat_elem_t max_err = 0;
     for (size_t i = 0; i < 5; i++) {
         for (size_t j = 0; j < 5; j++) {
             mat_elem_t expected = (i == j) ? 1.0f : 0.0f;
-            mat_elem_t err = fabsf(Iinv->data[i * 5 + j] - expected);
-            if (err > max_err) max_err = err;
+            CHECK_FLOAT_EQ_TOL(Iinv->data[i * 5 + j], expected, 1e-5f);
         }
     }
-
-    printf("5x5 identity: I^-1 = I, max error = %e %s\n", max_err, max_err < 1e-5f ? "OK" : "FAIL");
 
     mat_free_mat(I);
     mat_free_mat(Iinv);
 
-    return max_err < 1e-5f ? 0 : 1;
+    TEST_END();
 }
 
-static int test_inv_random(size_t n) {
+static void test_inv_random(size_t n, const char *name) {
+    TEST_BEGIN(name);
+
     Mat *A = mat_mat(n, n);
     // Make diagonally dominant to ensure invertibility
     for (size_t i = 0; i < n; i++) {
@@ -107,35 +102,29 @@ static int test_inv_random(size_t n) {
     // Check A * A^-1 = I
     Mat *I = mat_rmul(A, Ainv);
 
-    mat_elem_t max_err = 0;
     for (size_t i = 0; i < n; i++) {
         for (size_t j = 0; j < n; j++) {
             mat_elem_t expected = (i == j) ? 1.0f : 0.0f;
-            mat_elem_t err = fabsf(I->data[i * n + j] - expected);
-            if (err > max_err) max_err = err;
+            CHECK_FLOAT_EQ_TOL(I->data[i * n + j], expected, 1e-4f);
         }
     }
-
-    printf("%zux%zu random: A * A^-1 = I, max error = %e %s\n", n, n, max_err, max_err < 1e-4f ? "OK" : "FAIL");
 
     mat_free_mat(A);
     mat_free_mat(Ainv);
     mat_free_mat(I);
 
-    return max_err < 1e-4f ? 0 : 1;
+    TEST_END();
 }
 
 int main(void) {
     srand(42);
-    int failures = 0;
 
-    failures += test_inv_2x2();
-    failures += test_inv_3x3();
-    failures += test_inv_identity();
-    failures += test_inv_random(10);
-    failures += test_inv_random(50);
-    failures += test_inv_random(100);
+    test_inv_2x2();
+    test_inv_3x3();
+    test_inv_identity();
+    test_inv_random(10, "inv_random_10x10");
+    test_inv_random(50, "inv_random_50x50");
+    test_inv_random(100, "inv_random_100x100");
 
-    printf("\n%s\n", failures == 0 ? "All tests passed!" : "Some tests failed!");
-    return failures;
+    TEST_SUMMARY();
 }

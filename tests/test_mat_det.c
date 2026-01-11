@@ -1,8 +1,11 @@
+#define MATDEF static inline
 #define MAT_IMPLEMENTATION
 #include "mat.h"
-#include <stdio.h>
+#include "test.h"
 
-static int test_det_2x2(void) {
+static void test_det_2x2(void) {
+    TEST_BEGIN("det_2x2");
+
     // det([[a, b], [c, d]]) = ad - bc
     // det([[3, 8], [4, 6]]) = 3*6 - 8*4 = 18 - 32 = -14
     Mat *A = mat_from(2, 2, (mat_elem_t[]){
@@ -11,17 +14,16 @@ static int test_det_2x2(void) {
     });
 
     mat_elem_t det = mat_det(A);
-    mat_elem_t expected = -14.0f;
-    mat_elem_t err = fabsf(det - expected);
-
-    printf("2x2: det = %.4f, expected = %.4f, error = %e %s\n",
-           det, expected, err, err < 1e-5f ? "OK" : "FAIL");
+    CHECK_FLOAT_EQ_TOL(det, -14.0f, 1e-5f);
 
     mat_free_mat(A);
-    return err < 1e-5f ? 0 : 1;
+
+    TEST_END();
 }
 
-static int test_det_3x3(void) {
+static void test_det_3x3(void) {
+    TEST_BEGIN("det_3x3");
+
     // det([[6, 1, 1], [4, -2, 5], [2, 8, 7]]) = -306
     Mat *A = mat_from(3, 3, (mat_elem_t[]){
         6, 1, 1,
@@ -30,32 +32,30 @@ static int test_det_3x3(void) {
     });
 
     mat_elem_t det = mat_det(A);
-    mat_elem_t expected = -306.0f;
-    mat_elem_t err = fabsf(det - expected);
-
-    printf("3x3: det = %.4f, expected = %.4f, error = %e %s\n",
-           det, expected, err, err < 1e-4f ? "OK" : "FAIL");
+    CHECK_FLOAT_EQ_TOL(det, -306.0f, 1e-4f);
 
     mat_free_mat(A);
-    return err < 1e-4f ? 0 : 1;
+
+    TEST_END();
 }
 
-static int test_det_identity(void) {
+static void test_det_identity(void) {
+    TEST_BEGIN("det_identity_5x5");
+
     // det(I) = 1
     Mat *I = mat_reye(5);
 
     mat_elem_t det = mat_det(I);
-    mat_elem_t expected = 1.0f;
-    mat_elem_t err = fabsf(det - expected);
-
-    printf("5x5 identity: det = %.4f, expected = %.4f, error = %e %s\n",
-           det, expected, err, err < 1e-5f ? "OK" : "FAIL");
+    CHECK_FLOAT_EQ_TOL(det, 1.0f, 1e-5f);
 
     mat_free_mat(I);
-    return err < 1e-5f ? 0 : 1;
+
+    TEST_END();
 }
 
-static int test_det_singular(void) {
+static void test_det_singular(void) {
+    TEST_BEGIN("det_singular_3x3");
+
     // Singular matrix (row 3 = row 1 + row 2), det = 0
     Mat *A = mat_from(3, 3, (mat_elem_t[]){
         1, 2, 3,
@@ -64,16 +64,16 @@ static int test_det_singular(void) {
     });
 
     mat_elem_t det = mat_det(A);
-    mat_elem_t err = fabsf(det);
-
-    printf("3x3 singular: det = %.4f, expected = 0, error = %e %s\n",
-           det, err, err < 1e-5f ? "OK" : "FAIL");
+    CHECK_FLOAT_EQ_TOL(det, 0.0f, 1e-5f);
 
     mat_free_mat(A);
-    return err < 1e-5f ? 0 : 1;
+
+    TEST_END();
 }
 
-static int test_det_4x4(void) {
+static void test_det_4x4(void) {
+    TEST_BEGIN("det_4x4");
+
     // det([[1,2,3,4], [5,6,7,8], [2,6,4,8], [3,1,1,2]]) = 72
     Mat *A = mat_from(4, 4, (mat_elem_t[]){
         1, 2, 3, 4,
@@ -83,25 +83,19 @@ static int test_det_4x4(void) {
     });
 
     mat_elem_t det = mat_det(A);
-    mat_elem_t expected = 72.0f;
-    mat_elem_t err = fabsf(det - expected);
-
-    printf("4x4: det = %.4f, expected = %.4f, error = %e %s\n",
-           det, expected, err, err < 1e-4f ? "OK" : "FAIL");
+    CHECK_FLOAT_EQ_TOL(det, 72.0f, 1e-4f);
 
     mat_free_mat(A);
-    return err < 1e-4f ? 0 : 1;
+
+    TEST_END();
 }
 
 int main(void) {
-    int failures = 0;
+    test_det_2x2();
+    test_det_3x3();
+    test_det_identity();
+    test_det_singular();
+    test_det_4x4();
 
-    failures += test_det_2x2();
-    failures += test_det_3x3();
-    failures += test_det_identity();
-    failures += test_det_singular();
-    failures += test_det_4x4();
-
-    printf("\n%s\n", failures == 0 ? "All tests passed!" : "Some tests failed!");
-    return failures;
+    TEST_SUMMARY();
 }
