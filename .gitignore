@@ -1,4 +1,5 @@
 build/
+deps/
 
 # Tests
 tests/**/*
@@ -10,3 +11,6 @@ tests/**/*
 # Example binaries (ignore all, keep .c)
 examples/*
 !examples/*.c
+
+# clangd
+compile_flags.txt
