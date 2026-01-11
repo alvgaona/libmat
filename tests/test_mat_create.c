@@ -46,7 +46,7 @@ void test_mat_ones(void) {
 
 void test_mat_eye_diagonal(void) {
     TEST_BEGIN("mat_eye diagonal ones");
-    Mat *eye = mat_eye(3);
+    Mat *eye = mat_reye(3);
     Mat *expected = mat_from(3, 3, (mat_elem_t[]){
         1, 0, 0,
         0, 1, 0,
@@ -62,7 +62,7 @@ void test_mat_eye_diagonal(void) {
 
 void test_mat_eye_square(void) {
     TEST_BEGIN("mat_eye is square");
-    Mat *eye = mat_eye(4);
+    Mat *eye = mat_reye(4);
 
     CHECK(eye->rows == 4 && eye->cols == 4);
 
@@ -73,7 +73,7 @@ void test_mat_eye_square(void) {
 void test_mat_eye_mul_identity(void) {
     TEST_BEGIN("mat_eye * A = A");
     Mat *a = mat_from(3, 3, (mat_elem_t[]){1, 2, 3, 4, 5, 6, 7, 8, 9});
-    Mat *eye = mat_eye(3);
+    Mat *eye = mat_reye(3);
 
     Mat *result = mat_rmul(eye, a);
     CHECK(mat_equals(result, a));

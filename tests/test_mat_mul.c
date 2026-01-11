@@ -23,7 +23,7 @@ void test_mat_rmul_basic(void) {
 void test_mat_rmul_identity(void) {
     TEST_BEGIN("mat_rmul with identity");
     Mat *a = mat_from(2, 2, (mat_elem_t[]){1, 2, 3, 4});
-    Mat *eye = mat_eye(2);
+    Mat *eye = mat_reye(2);
 
     Mat *result = mat_rmul(a, eye);
     CHECK(mat_equals(result, a));

@@ -38,7 +38,7 @@ void test_mat_diag_from_basic(void) {
 
 void test_mat_diag_from_eye(void) {
     TEST_BEGIN("mat_diag_from with ones equals eye");
-    Mat *eye = mat_eye(3);
+    Mat *eye = mat_reye(3);
 
     Mat *diag = mat_diag_from(3, (mat_elem_t[]){1, 1, 1});
     CHECK(mat_equals(diag, eye));
@@ -66,7 +66,7 @@ void test_mat_diag_roundtrip(void) {
 
 void test_mat_diag_eye(void) {
     TEST_BEGIN("mat_diag of eye equals ones vector");
-    Mat *eye = mat_eye(3);
+    Mat *eye = mat_reye(3);
     Vec *expected = mat_vec_from(3, (mat_elem_t[]){1, 1, 1});
 
     Vec *diag = mat_diag(eye);

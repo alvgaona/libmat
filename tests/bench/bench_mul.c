@@ -25,12 +25,14 @@ void init_timer(void) {
   ns_per_tick = (double)info.numer / info.denom;
 }
 
-double bench_mul(void (*fn)(Mat*, const Mat*, const Mat*), Mat *out, const Mat *a, const Mat *b, int iters) {
+typedef void (*gemm_fn)(Mat*, mat_elem_t, const Mat*, const Mat*, mat_elem_t);
+
+double bench_gemm(gemm_fn fn, Mat *out, const Mat *a, const Mat *b, int iters) {
   double best = DBL_MAX;
   for (int r = 0; r < ROUNDS; r++) {
     uint64_t start = mach_absolute_time();
     for (int i = 0; i < iters; i++) {
-      fn(out, a, b);
+      fn(out, 1, a, b, 0);
     }
     uint64_t end = mach_absolute_time();
     double t = (end - start) * ns_per_tick / iters;
@@ -44,7 +46,7 @@ int main() {
 
   int sizes[] = {4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048};
 
-  printf("## mat_mul\n\n| Size | Scalar | NEON | Speedup |\n|------|--------|------|--------|\n");
+  printf("## mat_gemm (C = alpha*A*B + beta*C)\n\n| Size | Scalar | NEON | Speedup |\n|------|--------|------|--------|\n");
 
   for (int i = 0; i < 10; i++) {
     int n = sizes[i];
@@ -55,9 +57,9 @@ int main() {
     // Fewer iterations for large matrices
     int iters = (n <= 64) ? 100 : (n <= 256) ? 10 : 3;
 
-    double scalar = bench_mul(mat_mul_scalar_impl, out, a, b, iters);
+    double scalar = bench_gemm(mat_gemm_scalar_impl, out, a, b, iters);
 #ifdef __ARM_NEON
-    double neon = bench_mul(mat_mul_neon_impl, out, a, b, iters);
+    double neon = bench_gemm(mat_gemm_neon_impl, out, a, b, iters);
     printf("| %dx%d | %.0f us | %.0f us | %.2fx |\n", n, n, scalar/1000, neon/1000, scalar/neon);
 #else
     printf("| %dx%d | %.0f us | N/A | N/A |\n", n, n, scalar/1000);

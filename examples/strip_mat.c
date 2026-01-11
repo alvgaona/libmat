@@ -15,7 +15,7 @@ int main() {
   // ones() instead of mat_ones()
   Mat *o = ones(2, 2);
 
-  // eye() instead of mat_eye()
+  // eye() instead of mat_reye()
   Mat *i = eye(3);
 
   printf("mat(2, 2):\n");
