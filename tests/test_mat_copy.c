@@ -15,10 +15,10 @@ void test_mat_copy_dimensions(void) {
 }
 
 void test_mat_deep_copy_values(void) {
-    TEST_BEGIN("mat_deep_copy copies values");
+    TEST_BEGIN("mat_rdeep_copy copies values");
     Mat *a = mat_from(2, 2, (mat_elem_t[]){1, 2, 3, 4});
 
-    Mat *copy = mat_deep_copy(a);
+    Mat *copy = mat_rdeep_copy(a);
     CHECK(mat_equals(copy, a));
 
     mat_free_mat(a);
@@ -27,11 +27,11 @@ void test_mat_deep_copy_values(void) {
 }
 
 void test_mat_deep_copy_independent(void) {
-    TEST_BEGIN("mat_deep_copy is independent");
+    TEST_BEGIN("mat_rdeep_copy is independent");
     Mat *a = mat_from(2, 2, (mat_elem_t[]){1, 2, 3, 4});
     Mat *original = mat_from(2, 2, (mat_elem_t[]){1, 2, 3, 4});
 
-    Mat *copy = mat_deep_copy(a);
+    Mat *copy = mat_rdeep_copy(a);
     // Modify original
     a->data[0] = 999;
 
@@ -45,10 +45,10 @@ void test_mat_deep_copy_independent(void) {
 }
 
 void test_mat_deep_copy_rectangular(void) {
-    TEST_BEGIN("mat_deep_copy rectangular");
+    TEST_BEGIN("mat_rdeep_copy rectangular");
     Mat *a = mat_from(2, 3, (mat_elem_t[]){1, 2, 3, 4, 5, 6});
 
-    Mat *copy = mat_deep_copy(a);
+    Mat *copy = mat_rdeep_copy(a);
     CHECK(mat_equals(copy, a));
     CHECK(copy->rows == 2 && copy->cols == 3);
 
