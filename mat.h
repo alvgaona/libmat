@@ -128,11 +128,15 @@ typedef struct {
   #ifndef MAT_DEFAULT_EPSILON
     #define MAT_DEFAULT_EPSILON 1e-9
   #endif
+  #define MAT_FABS fabs
+  #define MAT_SQRT sqrt
 #else
   typedef float mat_elem_t;
   #ifndef MAT_DEFAULT_EPSILON
     #define MAT_DEFAULT_EPSILON 1e-6f
   #endif
+  #define MAT_FABS fabsf
+  #define MAT_SQRT sqrtf
 #endif
 
 // NEON SIMD macros (only defined when targeting ARM with NEON)
@@ -2261,40 +2265,39 @@ MAT_INTERNAL_STATIC void mat_t_neon_impl(Mat *out, const Mat *m) {
   for (; ii + MAT_T_BLOCK <= rows; ii += MAT_T_BLOCK) {
     size_t jj = 0;
     for (; jj + MAT_T_BLOCK <= cols; jj += MAT_T_BLOCK) {
+#ifdef MAT_DOUBLE_PRECISION
+      // float64x2_t holds 2 doubles, process 2x2 blocks
+      for (size_t i = ii; i < ii + MAT_T_BLOCK; i += 2) {
+        for (size_t j = jj; j < jj + MAT_T_BLOCK; j += 2) {
+          float64x2_t r0 = vld1q_f64(&src[(i+0) * cols + j]);
+          float64x2_t r1 = vld1q_f64(&src[(i+1) * cols + j]);
+          float64x2_t t0 = vzip1q_f64(r0, r1);  // [r0[0], r1[0]]
+          float64x2_t t1 = vzip2q_f64(r0, r1);  // [r0[1], r1[1]]
+          vst1q_f64(&dst[(j+0) * rows + i], t0);
+          vst1q_f64(&dst[(j+1) * rows + i], t1);
+        }
+      }
+#else
+      // float32x4_t holds 4 floats, process 4x4 blocks
       for (size_t i = ii; i < ii + MAT_T_BLOCK; i += 4) {
         for (size_t j = jj; j < jj + MAT_T_BLOCK; j += 4) {
-          MAT_NEON_TYPE r0 = MAT_NEON_LOAD(&src[(i+0) * cols + j]);
-          MAT_NEON_TYPE r1 = MAT_NEON_LOAD(&src[(i+1) * cols + j]);
-          MAT_NEON_TYPE r2 = MAT_NEON_LOAD(&src[(i+2) * cols + j]);
-          MAT_NEON_TYPE r3 = MAT_NEON_LOAD(&src[(i+3) * cols + j]);
-
-          #ifdef MAT_DOUBLE_PRECISION
-          float64x2_t a0 = vget_low_f64(r0), a1 = vget_high_f64(r0);
-          float64x2_t b0 = vget_low_f64(r1), b1 = vget_high_f64(r1);
-          float64x2_t c0 = vget_low_f64(r2), c1 = vget_high_f64(r2);
-          float64x2_t d0 = vget_low_f64(r3), d1 = vget_high_f64(r3);
-          vst1_f64(&dst[(j+0) * rows + i], vzip1_f64(a0, b0));
-          vst1_f64(&dst[(j+0) * rows + i + 2], vzip1_f64(c0, d0));
-          vst1_f64(&dst[(j+1) * rows + i], vzip2_f64(a0, b0));
-          vst1_f64(&dst[(j+1) * rows + i + 2], vzip2_f64(c0, d0));
-          vst1_f64(&dst[(j+2) * rows + i], vzip1_f64(a1, b1));
-          vst1_f64(&dst[(j+2) * rows + i + 2], vzip1_f64(c1, d1));
-          vst1_f64(&dst[(j+3) * rows + i], vzip2_f64(a1, b1));
-          vst1_f64(&dst[(j+3) * rows + i + 2], vzip2_f64(c1, d1));
-          #else
+          float32x4_t r0 = vld1q_f32(&src[(i+0) * cols + j]);
+          float32x4_t r1 = vld1q_f32(&src[(i+1) * cols + j]);
+          float32x4_t r2 = vld1q_f32(&src[(i+2) * cols + j]);
+          float32x4_t r3 = vld1q_f32(&src[(i+3) * cols + j]);
           float32x4x2_t p01 = vtrnq_f32(r0, r1);
           float32x4x2_t p23 = vtrnq_f32(r2, r3);
           float32x4_t t0 = vcombine_f32(vget_low_f32(p01.val[0]), vget_low_f32(p23.val[0]));
           float32x4_t t1 = vcombine_f32(vget_low_f32(p01.val[1]), vget_low_f32(p23.val[1]));
           float32x4_t t2 = vcombine_f32(vget_high_f32(p01.val[0]), vget_high_f32(p23.val[0]));
           float32x4_t t3 = vcombine_f32(vget_high_f32(p01.val[1]), vget_high_f32(p23.val[1]));
-          MAT_NEON_STORE(&dst[(j+0) * rows + i], t0);
-          MAT_NEON_STORE(&dst[(j+1) * rows + i], t1);
-          MAT_NEON_STORE(&dst[(j+2) * rows + i], t2);
-          MAT_NEON_STORE(&dst[(j+3) * rows + i], t3);
-          #endif
+          vst1q_f32(&dst[(j+0) * rows + i], t0);
+          vst1q_f32(&dst[(j+1) * rows + i], t1);
+          vst1q_f32(&dst[(j+2) * rows + i], t2);
+          vst1q_f32(&dst[(j+3) * rows + i], t3);
         }
       }
+#endif
     }
     for (size_t i = ii; i < ii + MAT_T_BLOCK; i++) {
       for (size_t j = jj; j < cols; j++) {
@@ -2587,7 +2590,7 @@ MAT_INTERNAL_STATIC mat_elem_t mat_norm_fro_neon_impl(const Mat *a) {
     sum += v * v;
   }
 
-  return sqrt(sum);
+  return MAT_SQRT(sum);
 }
 #endif
 
@@ -2597,7 +2600,7 @@ MAT_INTERNAL_STATIC mat_elem_t mat_norm_fro_scalar_impl(const Mat *a) {
   for (size_t i = 0; i < len; i++) {
     sum += a->data[i] * a->data[i];
   }
-  return sqrt(sum);
+  return MAT_SQRT(sum);
 }
 
 MATDEF mat_elem_t mat_norm_fro(const Mat *a) {
@@ -2647,7 +2650,7 @@ MAT_INTERNAL_STATIC mat_elem_t mat_norm_fro_fast_neon_impl(const Mat *a) {
     sum += pa[i] * pa[i];
   }
 
-  return sqrt(sum);
+  return MAT_SQRT(sum);
 }
 #endif
 
@@ -3273,10 +3276,10 @@ MAT_INTERNAL_STATIC int mat_plu_blocked_impl(Mat *M, Perm *p) {
     // Panel factorization with pivoting
     for (size_t k = kb; k < k_end && k < n - 1; k++) {
       // Find pivot in column k
-      mat_elem_t max_val = fabsf(data[k * n + k]);
+      mat_elem_t max_val = MAT_FABS(data[k * n + k]);
       size_t pivot_row = k;
       for (size_t i = k + 1; i < n; i++) {
-        mat_elem_t val = fabsf(data[i * n + k]);
+        mat_elem_t val = MAT_FABS(data[i * n + k]);
         if (val > max_val) {
           max_val = val;
           pivot_row = i;
@@ -3298,7 +3301,7 @@ MAT_INTERNAL_STATIC int mat_plu_blocked_impl(Mat *M, Perm *p) {
         swap_count++;
       }
 
-      if (fabsf(data[k * n + k]) < MAT_DEFAULT_EPSILON) continue;
+      if (MAT_FABS(data[k * n + k]) < MAT_DEFAULT_EPSILON) continue;
 
       mat_elem_t pivot_inv = 1.0f / data[k * n + k];
       mat_elem_t *row_k = &data[k * n];
@@ -3351,7 +3354,7 @@ MAT_INTERNAL_STATIC int mat_lu_scalar_impl(Mat *M, Perm *p, Perm *q) {
 
     for (size_t i = k; i < n; i++) {
       for (size_t j = k; j < n; j++) {
-        mat_elem_t val = fabsf(data[i * n + j]);
+        mat_elem_t val = MAT_FABS(data[i * n + j]);
         if (val > max_val) {
           max_val = val;
           pivot_row = i;
@@ -3387,7 +3390,7 @@ MAT_INTERNAL_STATIC int mat_lu_scalar_impl(Mat *M, Perm *p, Perm *q) {
     }
 
     // Skip if pivot is zero (matrix is singular)
-    if (fabsf(data[k * n + k]) < MAT_DEFAULT_EPSILON) {
+    if (MAT_FABS(data[k * n + k]) < MAT_DEFAULT_EPSILON) {
       continue;
     }
 
@@ -3438,7 +3441,7 @@ MAT_INTERNAL_STATIC int mat_lu_neon_impl(Mat *M, Perm *p, Perm *q) {
 
       // Scalar remainder
       for (; j < n; j++) {
-        mat_elem_t val = fabsf(row[j]);
+        mat_elem_t val = MAT_FABS(row[j]);
         if (val > row_max) row_max = val;
       }
 
@@ -3448,7 +3451,7 @@ MAT_INTERNAL_STATIC int mat_lu_neon_impl(Mat *M, Perm *p, Perm *q) {
         pivot_row = i;
         // Find the column with max value in this row
         for (size_t jj = k; jj < n; jj++) {
-          if (fabsf(row[jj]) == row_max) {
+          if (MAT_FABS(row[jj]) == row_max) {
             pivot_col = jj;
             break;
           }
@@ -3494,7 +3497,7 @@ MAT_INTERNAL_STATIC int mat_lu_neon_impl(Mat *M, Perm *p, Perm *q) {
     }
 
     // Skip if pivot is zero
-    if (fabsf(data[k * n + k]) < MAT_DEFAULT_EPSILON) {
+    if (MAT_FABS(data[k * n + k]) < MAT_DEFAULT_EPSILON) {
       continue;
     }
 
