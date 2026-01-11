@@ -3,8 +3,8 @@
 #include <Eigen/Dense>
 
 #define BENCH_ITERATIONS 1
-#define BENCH_ROUNDS 1
-#define BENCH_WARMUP 1
+#define BENCH_ROUNDS 10
+#define BENCH_WARMUP 3
 #define BENCH_IMPLEMENTATION
 #include "bench.h"
 

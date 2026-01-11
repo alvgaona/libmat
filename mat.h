@@ -2558,13 +2558,94 @@ MATDEF mat_elem_t mat_std(const Mat *a) {
 #endif
 }
 
-// TODO: QR Decomposition using Householder reflections
+// QR Decomposition using Householder reflections
+// A (m x n) = Q (m x m) * R (m x n), requires m >= n
 MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R) {
   MAT_ASSERT_MAT(A);
   MAT_ASSERT_MAT(Q);
   MAT_ASSERT_MAT(R);
-  (void)A; (void)Q; (void)R;
-  MAT_ASSERT(0 && "mat_qr not implemented");
+
+  size_t m = A->rows;
+  size_t n = A->cols;
+  MAT_ASSERT(m >= n && "mat_qr requires m >= n");
+  MAT_ASSERT(Q->rows == m && Q->cols == m);
+  MAT_ASSERT(R->rows == m && R->cols == n);
+
+  // Copy A to R (we transform R in-place)
+  mat_deep_copy(R, A);
+
+  // Initialize Q to identity
+  mat_eye(Q);
+
+  // Temporary storage for Householder vector
+  mat_elem_t *v = (mat_elem_t *)MAT_MALLOC(m * sizeof(mat_elem_t));
+  MAT_ASSERT(v != NULL);
+
+  for (size_t k = 0; k < n; k++) {
+    size_t len = m - k;  // length of the Householder vector
+
+    // Compute norm of R[k:m, k]
+    mat_elem_t norm_x = 0;
+    for (size_t i = 0; i < len; i++) {
+      mat_elem_t val = R->data[(k + i) * n + k];
+      norm_x += val * val;
+    }
+#ifdef MAT_DOUBLE_PRECISION
+    norm_x = sqrt(norm_x);
+#else
+    norm_x = sqrtf(norm_x);
+#endif
+
+    if (norm_x < MAT_DEFAULT_EPSILON) continue;  // skip zero columns
+
+    // Form Householder vector v
+    mat_elem_t x0 = R->data[k * n + k];
+    mat_elem_t sign = (x0 >= 0) ? 1 : -1;
+    v[0] = x0 + sign * norm_x;
+    for (size_t i = 1; i < len; i++) {
+      v[i] = R->data[(k + i) * n + k];
+    }
+
+    // Compute tau = 2 / (v^T v)
+    mat_elem_t vtv = 0;
+    for (size_t i = 0; i < len; i++) vtv += v[i] * v[i];
+    mat_elem_t tau = 2 / vtv;
+
+    // Apply H = I - tau * v * v^T to R[k:m, k:n]
+    // R[k:m, j] -= tau * v * (v^T * R[k:m, j]) for each column j
+    for (size_t j = k; j < n; j++) {
+      mat_elem_t dot = 0;
+      for (size_t i = 0; i < len; i++) {
+        dot += v[i] * R->data[(k + i) * n + j];
+      }
+      dot *= tau;
+      for (size_t i = 0; i < len; i++) {
+        R->data[(k + i) * n + j] -= dot * v[i];
+      }
+    }
+
+    // Apply H to Q[:, k:m] (Q = Q * H, so we update columns k:m of Q)
+    // Q[:, k:m] -= tau * (Q[:, k:m] * v) * v^T
+    for (size_t i = 0; i < m; i++) {
+      mat_elem_t dot = 0;
+      for (size_t j = 0; j < len; j++) {
+        dot += Q->data[i * m + (k + j)] * v[j];
+      }
+      dot *= tau;
+      for (size_t j = 0; j < len; j++) {
+        Q->data[i * m + (k + j)] -= dot * v[j];
+      }
+    }
+  }
+
+  // Zero out lower triangular part of R
+  for (size_t i = 1; i < m; i++) {
+    for (size_t j = 0; j < i && j < n; j++) {
+      R->data[i * n + j] = 0;
+    }
+  }
+
+  MAT_FREE(v);
 }
 
 #endif // MAT_IMPLEMENTATION
