@@ -218,7 +218,11 @@ typedef struct {
 #ifdef MAT_EXPOSE_INTERNALS
   #define MAT_INTERNAL_STATIC
 #else
-  #define MAT_INTERNAL_STATIC static
+  #ifdef __GNUC__
+    #define MAT_INTERNAL_STATIC static __attribute__((unused))
+  #else
+    #define MAT_INTERNAL_STATIC static
+  #endif
 #endif
 
 #define identity reye
@@ -599,7 +603,7 @@ MATDEF mat_elem_t mat_norm_fro_fast(const Mat *a);
 MATDEF mat_elem_t mat_trace(const Mat *a);
 
 // Return determinant. Matrix must be square. Uses LU decomposition.
-MAT_EXPERIMENTAL MATDEF mat_elem_t mat_det(const Mat *a);
+MATDEF mat_elem_t mat_det(const Mat *a);
 
 // Return numerical rank via SVD.
 MAT_NOT_IMPLEMENTED MATDEF mat_elem_t mat_rank(const Mat *a);
@@ -628,7 +632,7 @@ MATDEF int mat_lu(const Mat *A, Mat *L, Mat *U, Perm *p, Perm *q);
 // P * A = L * U where P is row permutation (partial pivoting).
 // Faster than mat_lu, sufficient for determinant, solve, and inverse.
 // Returns the number of row swaps (useful for determinant sign).
-MAT_EXPERIMENTAL MATDEF int mat_plu(const Mat *A, Mat *L, Mat *U, Perm *p);
+MATDEF int mat_plu(const Mat *A, Mat *L, Mat *U, Perm *p);
 
 // Cholesky decomposition (A = L * L^T, A must be symmetric positive definite).
 MAT_NOT_IMPLEMENTED MATDEF void mat_chol(const Mat *A, Mat *L);
@@ -637,7 +641,7 @@ MAT_NOT_IMPLEMENTED MATDEF void mat_chol(const Mat *A, Mat *L);
 MAT_NOT_IMPLEMENTED MATDEF void mat_svd(const Mat *A, Mat *U, Vec *S, Mat *Vt);
 
 // Matrix inverse using LU decomposition.
-MAT_EXPERIMENTAL MATDEF void mat_inv(Mat *out, const Mat *A);
+MATDEF void mat_inv(Mat *out, const Mat *A);
 
 // Moore-Penrose pseudoinverse via SVD.
 MAT_NOT_IMPLEMENTED MATDEF void mat_pinv(Mat *out, const Mat *A);
@@ -3550,7 +3554,7 @@ MAT_INTERNAL_STATIC int mat_lu_neon_impl(Mat *M, Perm *p, Perm *q) {
 }
 #endif
 
-MAT_EXPERIMENTAL MATDEF int mat_plu(const Mat *A, Mat *L, Mat *U, Perm *p) {
+MATDEF int mat_plu(const Mat *A, Mat *L, Mat *U, Perm *p) {
   MAT_ASSERT_MAT(A);
   MAT_ASSERT_MAT(L);
   MAT_ASSERT_MAT(U);
@@ -3628,7 +3632,7 @@ MATDEF int mat_lu(const Mat *A, Mat *L, Mat *U, Perm *p, Perm *q) {
   return swap_count;
 }
 
-MAT_EXPERIMENTAL MATDEF void mat_inv(Mat *out, const Mat *A) {
+MATDEF void mat_inv(Mat *out, const Mat *A) {
   MAT_ASSERT_MAT(A);
   MAT_ASSERT_MAT(out);
   MAT_ASSERT_SQUARE(A);
@@ -3733,7 +3737,7 @@ MAT_EXPERIMENTAL MATDEF void mat_inv(Mat *out, const Mat *A) {
   PROFILE_END("free");
 }
 
-MAT_EXPERIMENTAL MATDEF mat_elem_t mat_det(const Mat *A) {
+MATDEF mat_elem_t mat_det(const Mat *A) {
   MAT_ASSERT_MAT(A);
   MAT_ASSERT_SQUARE(A);
   size_t n = A->rows;

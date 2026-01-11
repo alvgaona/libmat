@@ -49,6 +49,20 @@ static const char *current_test_name = NULL;
     } \
 } while(0)
 
+#define CHECK_FLOAT_EQ_TOL(a, b, tol) do { \
+    if (fabsf((a) - (b)) >= (tol)) { \
+        if (!current_test_failed) { \
+            printf("  %s... FAILED\n", current_test_name); \
+            printf("    -> %s:%d: CHECK_FLOAT_EQ_TOL(%s, %s, %s) [%g != %g, tol=%g]\n", \
+                   __FILE__, __LINE__, #a, #b, #tol, (double)(a), (double)(b), (double)(tol)); \
+        } else { \
+            printf("    -> %s:%d: CHECK_FLOAT_EQ_TOL(%s, %s, %s) [%g != %g, tol=%g]\n", \
+                   __FILE__, __LINE__, #a, #b, #tol, (double)(a), (double)(b), (double)(tol)); \
+        } \
+        current_test_failed = 1; \
+    } \
+} while(0)
+
 #define TEST_SUMMARY() do { \
     printf("\n%d passed, %d failed\n", tests_passed, tests_failed); \
     return tests_failed > 0 ? 1 : 0; \

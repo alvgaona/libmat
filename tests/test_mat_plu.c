@@ -1,6 +1,8 @@
+#define MATDEF static inline
 #define MAT_IMPLEMENTATION
 #include "mat.h"
-#include <stdio.h>
+#include "test.h"
+#include <stdlib.h>
 
 // Helper to compute P * A where P is a permutation
 static void apply_row_perm(Mat *out, const Mat *A, const Perm *p) {
@@ -12,7 +14,9 @@ static void apply_row_perm(Mat *out, const Mat *A, const Perm *p) {
     }
 }
 
-static int test_plu_2x2(void) {
+static void test_plu_2x2(void) {
+    TEST_BEGIN("plu_2x2");
+
     Mat *A = mat_from(2, 2, (mat_elem_t[]){
         4, 3,
         6, 3
@@ -30,13 +34,9 @@ static int test_plu_2x2(void) {
 
     Mat *LU = mat_rmul(L, U);
 
-    mat_elem_t max_err = 0;
     for (size_t i = 0; i < 4; i++) {
-        mat_elem_t err = fabsf(PA->data[i] - LU->data[i]);
-        if (err > max_err) max_err = err;
+        CHECK_FLOAT_EQ_TOL(PA->data[i], LU->data[i], 1e-5f);
     }
-
-    printf("2x2: P * A = L * U, max error = %e %s\n", max_err, max_err < 1e-5f ? "OK" : "FAIL");
 
     mat_free_mat(A);
     mat_free_mat(L);
@@ -45,10 +45,12 @@ static int test_plu_2x2(void) {
     mat_free_mat(LU);
     mat_free_perm(p);
 
-    return max_err < 1e-5f ? 0 : 1;
+    TEST_END();
 }
 
-static int test_plu_3x3(void) {
+static void test_plu_3x3(void) {
+    TEST_BEGIN("plu_3x3");
+
     Mat *A = mat_from(3, 3, (mat_elem_t[]){
         1, 2, 3,
         0, 1, 4,
@@ -67,13 +69,9 @@ static int test_plu_3x3(void) {
 
     Mat *LU = mat_rmul(L, U);
 
-    mat_elem_t max_err = 0;
     for (size_t i = 0; i < 9; i++) {
-        mat_elem_t err = fabsf(PA->data[i] - LU->data[i]);
-        if (err > max_err) max_err = err;
+        CHECK_FLOAT_EQ_TOL(PA->data[i], LU->data[i], 1e-5f);
     }
-
-    printf("3x3: P * A = L * U, max error = %e %s\n", max_err, max_err < 1e-5f ? "OK" : "FAIL");
 
     mat_free_mat(A);
     mat_free_mat(L);
@@ -82,10 +80,12 @@ static int test_plu_3x3(void) {
     mat_free_mat(LU);
     mat_free_perm(p);
 
-    return max_err < 1e-5f ? 0 : 1;
+    TEST_END();
 }
 
-static int test_plu_random(size_t n) {
+static void test_plu_random(size_t n, const char *name, mat_elem_t tol) {
+    TEST_BEGIN(name);
+
     Mat *A = mat_mat(n, n);
     // Make diagonally dominant to ensure good conditioning
     for (size_t i = 0; i < n; i++) {
@@ -110,15 +110,9 @@ static int test_plu_random(size_t n) {
 
     Mat *LU = mat_rmul(L, U);
 
-    mat_elem_t max_err = 0;
     for (size_t i = 0; i < n * n; i++) {
-        mat_elem_t err = fabsf(PA->data[i] - LU->data[i]);
-        if (err > max_err) max_err = err;
+        CHECK_FLOAT_EQ_TOL(PA->data[i], LU->data[i], tol);
     }
-
-    // Tolerance scales with matrix size for single precision
-    mat_elem_t tol = (n <= 50) ? 1e-4f : 1e-3f;
-    printf("%zux%zu random: P * A = L * U, max error = %e %s\n", n, n, max_err, max_err < tol ? "OK" : "FAIL");
 
     mat_free_mat(A);
     mat_free_mat(L);
@@ -127,10 +121,12 @@ static int test_plu_random(size_t n) {
     mat_free_mat(LU);
     mat_free_perm(p);
 
-    return max_err < tol ? 0 : 1;
+    TEST_END();
 }
 
-static int test_det_consistency(void) {
+static void test_det_consistency(void) {
+    TEST_BEGIN("det_consistency");
+
     // Verify mat_det (using mat_plu) gives same result as manual computation via mat_lu
     Mat *A = mat_from(3, 3, (mat_elem_t[]){
         6, 1, 1,
@@ -153,9 +149,7 @@ static int test_det_consistency(void) {
         det_lu *= U->data[i * 3 + i];
     }
 
-    mat_elem_t err = fabsf(det_plu - det_lu);
-    printf("det consistency: plu=%.4f, lu=%.4f, error = %e %s\n",
-           det_plu, det_lu, err, err < 1e-4f ? "OK" : "FAIL");
+    CHECK_FLOAT_EQ_TOL(det_plu, det_lu, 1e-4f);
 
     mat_free_mat(A);
     mat_free_mat(L);
@@ -163,20 +157,18 @@ static int test_det_consistency(void) {
     mat_free_perm(p);
     mat_free_perm(q);
 
-    return err < 1e-4f ? 0 : 1;
+    TEST_END();
 }
 
 int main(void) {
     srand(42);
-    int failures = 0;
 
-    failures += test_plu_2x2();
-    failures += test_plu_3x3();
-    failures += test_plu_random(10);
-    failures += test_plu_random(50);
-    failures += test_plu_random(100);
-    failures += test_det_consistency();
+    test_plu_2x2();
+    test_plu_3x3();
+    test_plu_random(10, "plu_random_10x10", 1e-4f);
+    test_plu_random(50, "plu_random_50x50", 1e-4f);
+    test_plu_random(100, "plu_random_100x100", 1e-3f);
+    test_det_consistency();
 
-    printf("\n%s\n", failures == 0 ? "All tests passed!" : "Some tests failed!");
-    return failures;
+    TEST_SUMMARY();
 }

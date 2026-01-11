@@ -1,3 +1,4 @@
+#define MATDEF static inline
 #define MAT_IMPLEMENTATION
 #include "mat.h"
 #include "test.h"
