@@ -5,7 +5,7 @@
 
 #define MAT_EXPOSE_INTERNALS
 #define MAT_IMPLEMENTATION
-#include "../../mat.h"
+#include "mat.h"
 
 #define MATRIX_SIZE 1024
 #define ITERATIONS 1000
