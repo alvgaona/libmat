@@ -5,6 +5,9 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+// Optional profiling support (macros are no-ops when PROFILE_ENABLED not defined)
+#include "profile.h"
+
 // ARM NEON detection
 #if defined(__ARM_NEON) || defined(__ARM_NEON__) || defined(_M_ARM64)
   #define MAT_HAS_ARM_NEON
@@ -596,7 +599,7 @@ MATDEF mat_elem_t mat_norm_fro_fast(const Mat *a);
 MATDEF mat_elem_t mat_trace(const Mat *a);
 
 // Return determinant. Matrix must be square. Uses LU decomposition.
-MATDEF mat_elem_t mat_det(const Mat *a);
+MAT_EXPERIMENTAL MATDEF mat_elem_t mat_det(const Mat *a);
 
 // Return numerical rank via SVD.
 MAT_NOT_IMPLEMENTED MATDEF mat_elem_t mat_rank(const Mat *a);
@@ -615,12 +618,17 @@ MATDEF mat_elem_t mat_nnz(const Mat *a);
 MAT_EXPERIMENTAL MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R);
 
 // LU decomposition with full pivoting.
-// P * A * Q = L * U where P, Q are permutations.
+// P * A * Q = L * U where P, Q are permutations (full pivoting).
 // L is lower triangular with 1s on diagonal, U is upper triangular.
 // L and U must be pre-allocated with dimensions n x n.
 // P and Q must be pre-allocated permutations of size n.
 // Returns the number of row+column swaps (useful for determinant sign).
 MATDEF int mat_lu(const Mat *A, Mat *L, Mat *U, Perm *p, Perm *q);
+
+// P * A = L * U where P is row permutation (partial pivoting).
+// Faster than mat_lu, sufficient for determinant, solve, and inverse.
+// Returns the number of row swaps (useful for determinant sign).
+MAT_EXPERIMENTAL MATDEF int mat_plu(const Mat *A, Mat *L, Mat *U, Perm *p);
 
 // Cholesky decomposition (A = L * L^T, A must be symmetric positive definite).
 MAT_NOT_IMPLEMENTED MATDEF void mat_chol(const Mat *A, Mat *L);
@@ -629,7 +637,7 @@ MAT_NOT_IMPLEMENTED MATDEF void mat_chol(const Mat *A, Mat *L);
 MAT_NOT_IMPLEMENTED MATDEF void mat_svd(const Mat *A, Mat *U, Vec *S, Mat *Vt);
 
 // Matrix inverse using LU decomposition.
-MAT_NOT_IMPLEMENTED MATDEF void mat_inv(Mat *out, const Mat *A);
+MAT_EXPERIMENTAL MATDEF void mat_inv(Mat *out, const Mat *A);
 
 // Moore-Penrose pseudoinverse via SVD.
 MAT_NOT_IMPLEMENTED MATDEF void mat_pinv(Mat *out, const Mat *A);
@@ -1670,6 +1678,171 @@ MATDEF void mat_ger(Mat *A, mat_elem_t alpha, const Vec *x, const Vec *y) {
   mat_ger_neon_impl(A, alpha, x, y);
 #else
   mat_ger_scalar_impl(A, alpha, x, y);
+#endif
+}
+
+// Strided GEMM: C = alpha * A * B + beta * C
+// For submatrix operations where matrices have leading dimensions != their logical width
+// A is M x K with stride lda, B is K x N with stride ldb, C is M x N with stride ldc
+#ifdef MAT_HAS_ARM_NEON
+MAT_INTERNAL_STATIC void mat_gemm_strided_neon_impl(
+    mat_elem_t *C, size_t ldc,
+    mat_elem_t alpha,
+    const mat_elem_t *A, size_t lda, size_t M, size_t K,
+    const mat_elem_t *B, size_t ldb, size_t N,
+    mat_elem_t beta) {
+
+  // Scale C by beta first
+  if (beta == 0) {
+    for (size_t i = 0; i < M; i++)
+      memset(&C[i * ldc], 0, N * sizeof(mat_elem_t));
+  } else if (beta != 1) {
+    for (size_t i = 0; i < M; i++) {
+      mat_elem_t *Ci = &C[i * ldc];
+      for (size_t j = 0; j < N; j++)
+        Ci[j] *= beta;
+    }
+  }
+
+  // Transpose B for cache-friendly access
+  mat_elem_t *bt = (mat_elem_t *)mat_scratch_alloc_(K * N * sizeof(mat_elem_t));
+  for (size_t j = 0; j < N; j++) {
+    for (size_t k = 0; k < K; k++) {
+      bt[j * K + k] = B[k * ldb + j];
+    }
+  }
+
+  // 4x4 micro-kernel with strided access
+  size_t i = 0;
+  for (; i + 4 <= M; i += 4) {
+    size_t j = 0;
+    for (; j + 4 <= N; j += 4) {
+      MAT_NEON_TYPE acc00 = MAT_NEON_DUP(0), acc01 = MAT_NEON_DUP(0);
+      MAT_NEON_TYPE acc02 = MAT_NEON_DUP(0), acc03 = MAT_NEON_DUP(0);
+      MAT_NEON_TYPE acc10 = MAT_NEON_DUP(0), acc11 = MAT_NEON_DUP(0);
+      MAT_NEON_TYPE acc12 = MAT_NEON_DUP(0), acc13 = MAT_NEON_DUP(0);
+      MAT_NEON_TYPE acc20 = MAT_NEON_DUP(0), acc21 = MAT_NEON_DUP(0);
+      MAT_NEON_TYPE acc22 = MAT_NEON_DUP(0), acc23 = MAT_NEON_DUP(0);
+      MAT_NEON_TYPE acc30 = MAT_NEON_DUP(0), acc31 = MAT_NEON_DUP(0);
+      MAT_NEON_TYPE acc32 = MAT_NEON_DUP(0), acc33 = MAT_NEON_DUP(0);
+
+      size_t k = 0;
+      for (; k + MAT_NEON_WIDTH <= K; k += MAT_NEON_WIDTH) {
+        MAT_NEON_TYPE a0 = MAT_NEON_LOAD(&A[(i+0)*lda + k]);
+        MAT_NEON_TYPE a1 = MAT_NEON_LOAD(&A[(i+1)*lda + k]);
+        MAT_NEON_TYPE a2 = MAT_NEON_LOAD(&A[(i+2)*lda + k]);
+        MAT_NEON_TYPE a3 = MAT_NEON_LOAD(&A[(i+3)*lda + k]);
+        MAT_NEON_TYPE b0 = MAT_NEON_LOAD(&bt[(j+0)*K + k]);
+        MAT_NEON_TYPE b1 = MAT_NEON_LOAD(&bt[(j+1)*K + k]);
+        MAT_NEON_TYPE b2 = MAT_NEON_LOAD(&bt[(j+2)*K + k]);
+        MAT_NEON_TYPE b3 = MAT_NEON_LOAD(&bt[(j+3)*K + k]);
+        acc00 = MAT_NEON_FMA(acc00, a0, b0); acc01 = MAT_NEON_FMA(acc01, a0, b1);
+        acc02 = MAT_NEON_FMA(acc02, a0, b2); acc03 = MAT_NEON_FMA(acc03, a0, b3);
+        acc10 = MAT_NEON_FMA(acc10, a1, b0); acc11 = MAT_NEON_FMA(acc11, a1, b1);
+        acc12 = MAT_NEON_FMA(acc12, a1, b2); acc13 = MAT_NEON_FMA(acc13, a1, b3);
+        acc20 = MAT_NEON_FMA(acc20, a2, b0); acc21 = MAT_NEON_FMA(acc21, a2, b1);
+        acc22 = MAT_NEON_FMA(acc22, a2, b2); acc23 = MAT_NEON_FMA(acc23, a2, b3);
+        acc30 = MAT_NEON_FMA(acc30, a3, b0); acc31 = MAT_NEON_FMA(acc31, a3, b1);
+        acc32 = MAT_NEON_FMA(acc32, a3, b2); acc33 = MAT_NEON_FMA(acc33, a3, b3);
+      }
+
+      // Horizontal sum and add to C with alpha scaling
+      C[(i+0)*ldc+(j+0)] += alpha * MAT_NEON_ADDV(acc00);
+      C[(i+0)*ldc+(j+1)] += alpha * MAT_NEON_ADDV(acc01);
+      C[(i+0)*ldc+(j+2)] += alpha * MAT_NEON_ADDV(acc02);
+      C[(i+0)*ldc+(j+3)] += alpha * MAT_NEON_ADDV(acc03);
+      C[(i+1)*ldc+(j+0)] += alpha * MAT_NEON_ADDV(acc10);
+      C[(i+1)*ldc+(j+1)] += alpha * MAT_NEON_ADDV(acc11);
+      C[(i+1)*ldc+(j+2)] += alpha * MAT_NEON_ADDV(acc12);
+      C[(i+1)*ldc+(j+3)] += alpha * MAT_NEON_ADDV(acc13);
+      C[(i+2)*ldc+(j+0)] += alpha * MAT_NEON_ADDV(acc20);
+      C[(i+2)*ldc+(j+1)] += alpha * MAT_NEON_ADDV(acc21);
+      C[(i+2)*ldc+(j+2)] += alpha * MAT_NEON_ADDV(acc22);
+      C[(i+2)*ldc+(j+3)] += alpha * MAT_NEON_ADDV(acc23);
+      C[(i+3)*ldc+(j+0)] += alpha * MAT_NEON_ADDV(acc30);
+      C[(i+3)*ldc+(j+1)] += alpha * MAT_NEON_ADDV(acc31);
+      C[(i+3)*ldc+(j+2)] += alpha * MAT_NEON_ADDV(acc32);
+      C[(i+3)*ldc+(j+3)] += alpha * MAT_NEON_ADDV(acc33);
+
+      // Scalar remainder k
+      for (; k < K; k++) {
+        mat_elem_t a0s = A[(i+0)*lda + k], a1s = A[(i+1)*lda + k];
+        mat_elem_t a2s = A[(i+2)*lda + k], a3s = A[(i+3)*lda + k];
+        for (size_t jj = 0; jj < 4; jj++) {
+          mat_elem_t bval = bt[(j+jj)*K + k];
+          C[(i+0)*ldc+(j+jj)] += alpha * a0s * bval;
+          C[(i+1)*ldc+(j+jj)] += alpha * a1s * bval;
+          C[(i+2)*ldc+(j+jj)] += alpha * a2s * bval;
+          C[(i+3)*ldc+(j+jj)] += alpha * a3s * bval;
+        }
+      }
+    }
+
+    // Remainder j columns
+    for (; j < N; j++) {
+      for (size_t ii = 0; ii < 4; ii++) {
+        mat_elem_t sum = 0;
+        for (size_t k = 0; k < K; k++)
+          sum += A[(i+ii)*lda + k] * bt[j*K + k];
+        C[(i+ii)*ldc + j] += alpha * sum;
+      }
+    }
+  }
+
+  // Remainder i rows
+  for (; i < M; i++) {
+    for (size_t j = 0; j < N; j++) {
+      mat_elem_t sum = 0;
+      for (size_t k = 0; k < K; k++)
+        sum += A[i*lda + k] * bt[j*K + k];
+      C[i*ldc + j] += alpha * sum;
+    }
+  }
+
+#ifndef MAT_NO_SCRATCH
+  mat_scratch_reset_();
+#else
+  mat_scratch_free_(bt);
+#endif
+}
+#endif
+
+MAT_INTERNAL_STATIC void mat_gemm_strided_scalar_impl(
+    mat_elem_t *C, size_t ldc,
+    mat_elem_t alpha,
+    const mat_elem_t *A, size_t lda, size_t M, size_t K,
+    const mat_elem_t *B, size_t ldb, size_t N,
+    mat_elem_t beta) {
+
+  // Scale C by beta first
+  for (size_t i = 0; i < M; i++) {
+    mat_elem_t *Ci = &C[i * ldc];
+    for (size_t j = 0; j < N; j++)
+      Ci[j] *= beta;
+  }
+
+  // ikj loop order for cache-friendly access
+  for (size_t i = 0; i < M; i++) {
+    for (size_t k = 0; k < K; k++) {
+      mat_elem_t aik = alpha * A[i * lda + k];
+      mat_elem_t *Ci = &C[i * ldc];
+      const mat_elem_t *Bk = &B[k * ldb];
+      for (size_t j = 0; j < N; j++)
+        Ci[j] += aik * Bk[j];
+    }
+  }
+}
+
+MAT_INTERNAL_STATIC void mat_gemm_strided(
+    mat_elem_t *C, size_t ldc,
+    mat_elem_t alpha,
+    const mat_elem_t *A, size_t lda, size_t M, size_t K,
+    const mat_elem_t *B, size_t ldb, size_t N,
+    mat_elem_t beta) {
+#ifdef MAT_HAS_ARM_NEON
+  mat_gemm_strided_neon_impl(C, ldc, alpha, A, lda, M, K, B, ldb, N, beta);
+#else
+  mat_gemm_strided_scalar_impl(C, ldc, alpha, A, lda, M, K, B, ldb, N, beta);
 #endif
 }
 
@@ -2883,7 +3056,84 @@ MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R) {
   MAT_FREE(tau_arr);
 }
 
-// Scalar implementation of LU
+// Blocked partial pivoting LU (P * A = L * U)
+// Uses cache-friendly blocking; compiler auto-vectorizes inner loops
+#define MAT_PLU_BLOCK_SIZE 64
+
+MAT_INTERNAL_STATIC int mat_plu_blocked_impl(Mat *M, Perm *p) {
+  size_t n = M->rows;
+  mat_elem_t *data = M->data;
+  size_t *row_perm = p->data;
+  int swap_count = 0;
+
+  for (size_t kb = 0; kb < n; kb += MAT_PLU_BLOCK_SIZE) {
+    size_t k_end = (kb + MAT_PLU_BLOCK_SIZE < n) ? kb + MAT_PLU_BLOCK_SIZE : n;
+
+    // Panel factorization with pivoting
+    for (size_t k = kb; k < k_end && k < n - 1; k++) {
+      // Find pivot in column k
+      mat_elem_t max_val = fabsf(data[k * n + k]);
+      size_t pivot_row = k;
+      for (size_t i = k + 1; i < n; i++) {
+        mat_elem_t val = fabsf(data[i * n + k]);
+        if (val > max_val) {
+          max_val = val;
+          pivot_row = i;
+        }
+      }
+
+      // Swap full rows
+      if (pivot_row != k) {
+        mat_elem_t *row_k_ptr = &data[k * n];
+        mat_elem_t *row_p_ptr = &data[pivot_row * n];
+        for (size_t j = 0; j < n; j++) {
+          mat_elem_t tmp = row_k_ptr[j];
+          row_k_ptr[j] = row_p_ptr[j];
+          row_p_ptr[j] = tmp;
+        }
+        size_t tmp = row_perm[k];
+        row_perm[k] = row_perm[pivot_row];
+        row_perm[pivot_row] = tmp;
+        swap_count++;
+      }
+
+      if (fabsf(data[k * n + k]) < MAT_DEFAULT_EPSILON) continue;
+
+      mat_elem_t pivot_inv = 1.0f / data[k * n + k];
+      mat_elem_t *row_k = &data[k * n];
+
+      // Compute L column and update rows
+      // Panel rows (i < k_end): full row update for correct U
+      // Trailing rows (i >= k_end): panel-only update
+      for (size_t i = k + 1; i < n; i++) {
+        mat_elem_t *row_i = &data[i * n];
+        mat_elem_t l_ik = row_i[k] * pivot_inv;
+        row_i[k] = l_ik;
+
+        size_t j_end = (i < k_end) ? n : k_end;
+        for (size_t j = k + 1; j < j_end; j++)
+          row_i[j] -= l_ik * row_k[j];
+      }
+    }
+
+    // Trailing matrix update
+    if (k_end < n) {
+      for (size_t i = k_end; i < n; i++) {
+        mat_elem_t *row_i = &data[i * n];
+        for (size_t k = kb; k < k_end; k++) {
+          mat_elem_t l_ik = row_i[k];
+          mat_elem_t *row_k = &data[k * n];
+          for (size_t j = k_end; j < n; j++)
+            row_i[j] -= l_ik * row_k[j];
+        }
+      }
+    }
+  }
+
+  return swap_count;
+}
+
+// Scalar implementation of full pivoting LU (P * A * Q = L * U)
 MAT_INTERNAL_STATIC int mat_lu_scalar_impl(Mat *M, Perm *p, Perm *q) {
   size_t n = M->rows;
   mat_elem_t *data = M->data;
@@ -3098,6 +3348,39 @@ MAT_INTERNAL_STATIC int mat_lu_neon_impl(Mat *M, Perm *p, Perm *q) {
 }
 #endif
 
+MAT_EXPERIMENTAL MATDEF int mat_plu(const Mat *A, Mat *L, Mat *U, Perm *p) {
+  MAT_ASSERT_MAT(A);
+  MAT_ASSERT_MAT(L);
+  MAT_ASSERT_MAT(U);
+  MAT_ASSERT(p != NULL);
+  MAT_ASSERT_SQUARE(A);
+
+  size_t n = A->rows;
+  MAT_ASSERT(L->rows == n && L->cols == n);
+  MAT_ASSERT(U->rows == n && U->cols == n);
+  MAT_ASSERT(p->size == n);
+
+  Mat *M = mat_rdeep_copy(A);
+  mat_perm_identity(p);
+
+  int swap_count = mat_plu_blocked_impl(M, p);
+
+  // Extract L (lower triangular with 1s on diagonal) and U (upper triangular) from M
+  mat_eye(L);
+  memset(U->data, 0, n * n * sizeof(mat_elem_t));
+
+  mat_elem_t *data = M->data;
+  for (size_t i = 0; i < n; i++) {
+    for (size_t j = 0; j < i; j++)
+      L->data[i * n + j] = data[i * n + j];
+    for (size_t j = i; j < n; j++)
+      U->data[i * n + j] = data[i * n + j];
+  }
+
+  MAT_FREE_MAT(M);
+  return swap_count;
+}
+
 MATDEF int mat_lu(const Mat *A, Mat *L, Mat *U, Perm *p, Perm *q) {
   MAT_ASSERT_MAT(A);
   MAT_ASSERT_MAT(L);
@@ -3141,6 +3424,135 @@ MATDEF int mat_lu(const Mat *A, Mat *L, Mat *U, Perm *p, Perm *q) {
 
   MAT_FREE_MAT(M);
   return swap_count;
+}
+
+MAT_EXPERIMENTAL MATDEF void mat_inv(Mat *out, const Mat *A) {
+  MAT_ASSERT_MAT(A);
+  MAT_ASSERT_MAT(out);
+  MAT_ASSERT_SQUARE(A);
+  size_t n = A->rows;
+  MAT_ASSERT(out->rows == n && out->cols == n);
+
+  PROFILE_START("alloc");
+  Mat *L = mat_mat(n, n);
+  Mat *U = mat_mat(n, n);
+  Perm *p = mat_perm(n);
+  PROFILE_END("alloc");
+
+  PROFILE_START("plu");
+  mat_plu(A, L, U, p);
+  PROFILE_END("plu");
+
+  // Y = L^-1 * P * I (forward substitution on permuted identity)
+  // out stores Y, then X = U^-1 * Y
+  mat_elem_t *Y = out->data;
+  mat_elem_t *Ldata = L->data;
+  mat_elem_t *Udata = U->data;
+
+  PROFILE_START("init_Y");
+  // Initialize Y = P * I (permuted identity)
+  memset(Y, 0, n * n * sizeof(mat_elem_t));
+  for (size_t i = 0; i < n; i++)
+    Y[i * n + p->data[i]] = 1;
+  PROFILE_END("init_Y");
+
+  PROFILE_START("forward_subst");
+  // Blocked forward substitution: L * Z = Y => Z = L^-1 * Y
+  // Use strided GEMM for block updates
+#define MAT_INV_BLOCK_SIZE 64
+  for (size_t ib = 0; ib < n; ib += MAT_INV_BLOCK_SIZE) {
+    size_t ie = (ib + MAT_INV_BLOCK_SIZE < n) ? ib + MAT_INV_BLOCK_SIZE : n;
+    size_t block_m = ie - ib;
+
+    // GEMM update: Y[ib:ie, :] -= L[ib:ie, 0:ib] @ Y[0:ib, :]
+    if (ib > 0) {
+      mat_gemm_strided(
+          &Y[ib * n], n,           // C: Y[ib:ie, :], stride n
+          -1.0f,                   // alpha = -1
+          &Ldata[ib * n], n,       // A: L[ib:ie, 0:ib], stride n
+          block_m, ib,             // M = block_m, K = ib
+          Y, n, n,                 // B: Y[0:ib, :], stride n, N = n
+          1.0f);                   // beta = 1
+    }
+
+    // Small triangular solve within block
+    for (size_t i = ib + 1; i < ie; i++) {
+      mat_elem_t *Yi = &Y[i * n];
+      for (size_t j = ib; j < i; j++) {
+        mat_elem_t l_ij = Ldata[i * n + j];
+        mat_elem_t *Yj = &Y[j * n];
+        for (size_t k = 0; k < n; k++)
+          Yi[k] -= l_ij * Yj[k];
+      }
+    }
+  }
+  PROFILE_END("forward_subst");
+
+  PROFILE_START("backward_subst");
+  // Blocked backward substitution: U * X = Y => X = U^-1 * Y
+  // Use strided GEMM for block updates
+  for (size_t ib = n; ib > 0;) {
+    size_t is = (ib > MAT_INV_BLOCK_SIZE) ? ib - MAT_INV_BLOCK_SIZE : 0;
+    size_t ie = ib;
+    ib = is;
+    size_t block_m = ie - is;
+
+    // GEMM update: Y[is:ie, :] -= U[is:ie, ie:n] @ Y[ie:n, :]
+    if (ie < n) {
+      mat_gemm_strided(
+          &Y[is * n], n,           // C: Y[is:ie, :], stride n
+          -1.0f,                   // alpha = -1
+          &Udata[is * n + ie], n,  // A: U[is:ie, ie:n], stride n
+          block_m, n - ie,         // M = block_m, K = n - ie
+          &Y[ie * n], n, n,        // B: Y[ie:n, :], stride n, N = n
+          1.0f);                   // beta = 1
+    }
+
+    // Small triangular solve within block (backward)
+    for (size_t i = ie; i-- > is;) {
+      mat_elem_t *Yi = &Y[i * n];
+      mat_elem_t u_ii_inv = 1.0f / Udata[i * n + i];
+      for (size_t j = i + 1; j < ie; j++) {
+        mat_elem_t u_ij = Udata[i * n + j];
+        mat_elem_t *Yj = &Y[j * n];
+        for (size_t k = 0; k < n; k++)
+          Yi[k] -= u_ij * Yj[k];
+      }
+      for (size_t k = 0; k < n; k++)
+        Yi[k] *= u_ii_inv;
+    }
+  }
+  PROFILE_END("backward_subst");
+
+  PROFILE_START("free");
+  MAT_FREE_MAT(L);
+  MAT_FREE_MAT(U);
+  MAT_FREE_PERM(p);
+  PROFILE_END("free");
+}
+
+MAT_EXPERIMENTAL MATDEF mat_elem_t mat_det(const Mat *A) {
+  MAT_ASSERT_MAT(A);
+  MAT_ASSERT_SQUARE(A);
+  size_t n = A->rows;
+
+  Mat *L = mat_mat(n, n);
+  Mat *U = mat_mat(n, n);
+  Perm *p = mat_perm(n);
+
+  int swaps = mat_plu(A, L, U, p);
+
+  // det = (-1)^swaps * product of U diagonal
+  mat_elem_t det = (swaps % 2 == 0) ? 1 : -1;
+  for (size_t i = 0; i < n; i++) {
+    det *= U->data[i * n + i];
+  }
+
+  MAT_FREE_MAT(L);
+  MAT_FREE_MAT(U);
+  MAT_FREE_PERM(p);
+
+  return det;
 }
 
 #endif // MAT_IMPLEMENTATION
