@@ -438,6 +438,12 @@ MATDEF void mat_cross(Vec *out, const Vec *v1, const Vec *v2);
 // out = v1 * v2^T (outer product). out(m,n) where v1 is m-dim, v2 is n-dim. SIMD-optimized.
 MATDEF void mat_outer(Mat *out, const Vec *v1, const Vec *v2);
 
+// Return x^T * A * y (bilinear form). x is m-dim, A is m x n, y is n-dim.
+MATDEF mat_elem_t mat_bilinear(const Vec *x, const Mat *A, const Vec *y);
+
+// Return x^T * A * x (quadratic form). x is n-dim, A is n x n.
+MATDEF mat_elem_t mat_quadform(const Vec *x, const Mat *A);
+
 // Fused Operations (BLAS-like)
 
 // y = alpha * x + y (AXPY). SIMD-optimized.
@@ -1316,6 +1322,34 @@ MATDEF void mat_outer(Mat *out, const Vec *v1, const Vec *v2) {
 #else
   mat_outer_scalar_impl(out, v1, v2);
 #endif
+}
+
+MATDEF mat_elem_t mat_bilinear(const Vec *x, const Mat *A, const Vec *y) {
+  MAT_ASSERT_MAT(x);
+  MAT_ASSERT_MAT(A);
+  MAT_ASSERT_MAT(y);
+
+  size_t m = x->rows * x->cols;
+  size_t n = y->rows * y->cols;
+  MAT_ASSERT(A->rows == m && A->cols == n);
+
+  // temp = A * y, result = x^T * temp
+  Vec *temp = mat_vec(m);
+  mat_gemv(temp, 1, A, y, 0);
+  mat_elem_t result = mat_dot(x, temp);
+  mat_free_mat(temp);
+  return result;
+}
+
+MATDEF mat_elem_t mat_quadform(const Vec *x, const Mat *A) {
+  MAT_ASSERT_MAT(x);
+  MAT_ASSERT_MAT(A);
+  MAT_ASSERT(A->rows == A->cols);
+
+  size_t n = x->rows * x->cols;
+  MAT_ASSERT(A->rows == n);
+
+  return mat_bilinear(x, A, x);
 }
 
 /* Fused Operations (BLAS-like) */
