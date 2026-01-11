@@ -277,145 +277,247 @@ typedef struct {
 
 typedef Mat Vec;
 
-// Construction & Memory
+/* Construction & Memory */
 
+// Allocate matrix struct without data buffer. Use for custom memory management.
 MATDEF Mat *mat_empty(size_t rows, size_t cols);
+
+// Allocate zero-initialized matrix.
 MATDEF Mat *mat_mat(size_t rows, size_t cols);
+
+// Create matrix from array of values (row-major order).
 MATDEF Mat *mat_from(size_t rows, size_t cols, const mat_elem_t *values);
+
+// Initialize existing matrix with values (row-major order).
 MATDEF void mat_init(Mat *out, const mat_elem_t *values);
+
+// Free matrix and its data buffer.
 MATDEF void mat_free_mat(Mat *m);
 
+// Create matrix filled with zeros.
 MATDEF Mat *mat_zeros(size_t rows, size_t cols);
+
+// Create matrix filled with ones.
 MATDEF Mat *mat_ones(size_t rows, size_t cols);
+
+// Set matrix to identity (must be square).
 MATDEF void mat_eye(Mat *out);
+
+// Create identity matrix of given dimension.
 MATDEF Mat *mat_reye(size_t dim);
 
+// Allocate zero-initialized column vector.
 MATDEF Vec *mat_vec(size_t dim);
+
+// Create column vector from array of values.
 MATDEF Vec *mat_vec_from(size_t dim, const mat_elem_t *values);
 
+// Shallow copy (copies struct, shares data pointer). Use mat_rdeep_copy for full copy.
 MATDEF Mat *mat_copy(const Mat *m);
+
+// Deep copy src into pre-allocated out.
 MATDEF void mat_deep_copy(Mat *out, const Mat *src);
+
+// Allocate and return deep copy.
 MATDEF Mat *mat_rdeep_copy(const Mat *m);
 
-// Accessors & Info
+/* Accessors & Info */
 
+// Get element at (row, col). Bounds checked via MAT_ASSERT.
 MATDEF mat_elem_t mat_at(const Mat *mat, size_t row, size_t col);
+
+// Get matrix dimensions as {rows, cols} struct.
 MATDEF MatSize mat_size(const Mat *m);
+
+// Print matrix to stdout in MATLAB-like format.
 MATDEF void mat_print(const Mat *m);
 
-// Comparison
+/* Comparison */
 
+// Exact equality. Returns true if all elements are bitwise equal.
 MATDEF bool mat_equals(const Mat *a, const Mat *b);
+
+// Approximate equality. Returns true if max|a-b| < epsilon.
 MATDEF bool mat_equals_tol(const Mat *a, const Mat *b, mat_elem_t epsilon);
 
-// Element-wise Unary
+/* Element-wise Unary */
 
-// NOTE: the trascedental functions require further optimization (SIMD vectorization)
-// as the current implementations are just scalar ones.
-// These are not production-ready. In other words, do not match
-// performance of well-known libraries (e.g. Eigen, OpenBLAS).
+// NOTE: Transcendental functions (exp, log, sin, cos, atan2) use scalar libc
+// calls. For SIMD-optimized versions, consider libraries like SLEEF or Eigen.
 
-
-// Element-wise absolute value
+// out[i] = |a[i]|
 MATDEF void mat_abs(Mat *out, const Mat *a);
 
-// Element-wise square-root
+// out[i] = sqrt(a[i]). Undefined for negative inputs.
 MATDEF void mat_sqrt(Mat *out, const Mat *a);
 
-// Element-wise exponential
+// out[i] = e^a[i]
 MATDEF void mat_exp(Mat *out, const Mat *a);
 
-// Element-wise natural logarithm
+// out[i] = ln(a[i]). Undefined for non-positive inputs.
 MATDEF void mat_log(Mat *out, const Mat *a);
 
-// Element-wise logarithm base 10
+// out[i] = log10(a[i]). Undefined for non-positive inputs.
 MATDEF void mat_log10(Mat *out, const Mat *a);
 
-// Element-wise sin function
+// out[i] = sin(a[i]), a in radians.
 MATDEF void mat_sin(Mat *out, const Mat *a);
 
-// Element-wise cos function
+// out[i] = cos(a[i]), a in radians.
 MATDEF void mat_cos(Mat *out, const Mat *a);
 
-// Element-wise power function
+// out[i] = a[i]^exp. Undefined for negative base with fractional exponent.
 MATDEF void mat_pow(Mat *out, const Mat *a, mat_elem_t exp);
 
-// Element-wise clip function
+// out[i] = clamp(a[i], min_val, max_val).
 MATDEF void mat_clip(Mat *out, const Mat *a, mat_elem_t min_val, mat_elem_t max_val);
 
 // Element-wise Binary
 
+// out[i] = a[i] / b[i]. No division-by-zero check.
 MATDEF void mat_div(Mat *out, const Mat *a, const Mat *b);
+
+// out[i] = atan2(y[i], x[i]). Result in radians, range [-pi, pi].
 MATDEF void mat_atan2(Mat *out, const Mat *y, const Mat *x);
 
-// Scalar Operations
+/* Scalar Operations */
 
+// out[i] *= k. In-place scaling. SIMD-optimized.
 MATDEF void mat_scale(Mat *out, mat_elem_t k);
+
+// Return m scaled by k. Allocates new matrix.
 MATDEF Mat *mat_rscale(const Mat *m, mat_elem_t k);
+
+// out[i] += k. In-place scalar addition.
 MATDEF void mat_add_scalar(Mat *out, mat_elem_t k);
+
+// Return m + k. Allocates new matrix.
 MATDEF Mat *mat_radd_scalar(const Mat *m, mat_elem_t k);
 
 // Matrix Arithmetic
 
+// out = a + b. SIMD-optimized.
 MATDEF void mat_add(Mat *out, const Mat *a, const Mat *b);
+
+// Return a + b. Allocates new matrix.
 MATDEF Mat *mat_radd(const Mat *a, const Mat *b);
+
+// out = a - b. SIMD-optimized.
 MATDEF void mat_sub(Mat *out, const Mat *a, const Mat *b);
+
+// Return a - b. Allocates new matrix.
 MATDEF Mat *mat_rsub(const Mat *a, const Mat *b);
+
+// out = sum of count matrices (variadic). Modifies out in-place.
 MATDEF void mat_add_many(Mat *out, size_t count, ...);
+
+// Return sum of count matrices (variadic). Allocates new matrix.
 MATDEF Mat *mat_radd_many(size_t count, ...);
 
 // Matrix Products
-// TODO: mat_cross, mat_outer
 
+// out = a * b (matrix multiplication). SIMD-optimized.
+// Dimensions: a(m,k) * b(k,n) = out(m,n).
 MATDEF void mat_mul(Mat *out, const Mat *a, const Mat *b);
+
+// Return a * b. Allocates new matrix.
 MATDEF Mat *mat_rmul(const Mat *a, const Mat *b);
+
+// out[i] = a[i] * b[i] (element-wise/Hadamard product). SIMD-optimized.
 MATDEF void mat_hadamard(Mat *out, const Mat *a, const Mat *b);
+
+// Return element-wise a * b. Allocates new matrix.
 MATDEF Mat *mat_rhadamard(const Mat *a, const Mat *b);
+
+// Return sum(v1[i] * v2[i]) (dot/inner product). SIMD-optimized.
 MATDEF mat_elem_t mat_dot(const Vec *v1, const Vec *v2);
+
+// out = v1 x v2 (cross product). Vectors must be 3D.
 MATDEF void mat_cross(Vec *out, const Vec *v1, const Vec *v2);
+
+// out = v1 * v2^T (outer product). out(m,n) where v1 is m-dim, v2 is n-dim. SIMD-optimized.
 MATDEF void mat_outer(Mat *out, const Vec *v1, const Vec *v2);
 
 // Fused Operations (BLAS-like)
 
-// Scalar and vector addition: y = α * x + y
+// y = alpha * x + y (AXPY). SIMD-optimized.
 MATDEF void mat_axpy(Vec *y, mat_elem_t alpha, const Vec *x);
 
-// General Matrix-vector Multiplication: y = α * A * x + β * y 
-MATDEF void mat_gemv(Vec *y, mat_elem_t alpha, const Mat *A, const Vec *x, mat_elem_t beta);  // y = alpha * A * x + beta * y
+// y = alpha * A * x + beta * y (GEMV). SIMD-optimized.
+MATDEF void mat_gemv(Vec *y, mat_elem_t alpha, const Mat *A, const Vec *x, mat_elem_t beta);
 
-// General Matrix Rank-1:  A = A +  α * x * y^T
+// A = A + alpha * x * y^T (GER/rank-1 update).
 MATDEF void mat_ger(Mat *A, mat_elem_t alpha, const Vec *x, const Vec *y);
 
-// General Matrix Multiplication form:  C = alpha * A * B + beta * C
+// C = alpha * A * B + beta * C (GEMM). SIMD-optimized.
 MATDEF void mat_gemm(Mat *C, mat_elem_t alpha, const Mat *A, const Mat *B, mat_elem_t beta);
 
 // Structure Operations
 
+// out = m^T (transpose). out must be pre-allocated with swapped dimensions.
 MATDEF void mat_t(Mat *out, const Mat *m);
+
+// Return m^T. Allocates new matrix.
 MATDEF Mat *mat_rt(const Mat *m);
+
+// Reshape out in-place. Total elements must remain constant.
 MATDEF void mat_reshape(Mat *out, size_t rows, size_t cols);
+
+// Return reshaped copy of m. Allocates new matrix.
 MATDEF Mat *mat_rreshape(const Mat *m, size_t rows, size_t cols);
+
+// out = [a, b] (horizontal concatenation). a and b must have same row count.
 MATDEF void mat_hcat(Mat *out, const Mat *a, const Mat *b);
+
+// out = [a; b] (vertical concatenation). a and b must have same column count.
 MATDEF void mat_vcat(Mat *out, const Mat *a, const Mat *b);
+
+// Extract row as column vector. Allocates new vector.
 MATDEF Vec *mat_row(const Mat *m, size_t row);
+
+// Extract column as column vector. Allocates new vector.
 MATDEF Vec *mat_col(const Mat *m, size_t col);
+
+// Extract submatrix m[row_start:row_end, col_start:col_end]. Allocates new matrix.
+// Indices are inclusive start, exclusive end.
 MATDEF Mat *mat_slice(const Mat *m, size_t row_start, size_t row_end, size_t col_start, size_t col_end);
+
+// Copy src into m starting at (row_start, col_start).
 MATDEF void mat_slice_set(Mat *m, size_t row_start, size_t col_start, const Mat *src);
 
 // Diagonal Operations
 
+// Extract main diagonal as column vector. Allocates new vector.
 MATDEF Vec *mat_diag(const Mat *m);
+
+// Create diagonal matrix from values. Returns dim x dim matrix.
 MATDEF Mat *mat_diag_from(size_t dim, const mat_elem_t *values);
 
 // Reduction Operations
 
+// Return sum of all elements. SIMD-optimized.
 MATDEF mat_elem_t mat_sum(const Mat *a);
+
+// Return mean of all elements.
 MATDEF mat_elem_t mat_mean(const Mat *a);
+
+// Return minimum element value. SIMD-optimized.
 MATDEF mat_elem_t mat_min(const Mat *a);
+
+// Return maximum element value. SIMD-optimized.
 MATDEF mat_elem_t mat_max(const Mat *a);
-MATDEF void mat_sum_axis(Vec *out, const Mat *a, int axis);  // axis=0: sum cols (result rows), axis=1: sum rows (result cols)
+
+// Sum along axis. axis=0: sum columns (out has rows elements).
+// axis=1: sum rows (out has cols elements).
+MATDEF void mat_sum_axis(Vec *out, const Mat *a, int axis);
+
+// Return flat index of minimum element.
 MATDEF size_t mat_argmin(const Mat *a);
+
+// Return flat index of maximum element.
 MATDEF size_t mat_argmax(const Mat *a);
+
+// Return population standard deviation.
 MATDEF mat_elem_t mat_std(const Mat *a);
 
 // Norms
@@ -426,40 +528,44 @@ MATDEF mat_elem_t mat_norm(const Mat *a, size_t p);
 // L2 norm. Alias for mat_norm_fro.
 MATDEF mat_elem_t mat_norm2(const Mat *a);
 
-// Infinity norm: max |a_ij|. NEON-optimized.
+// Infinity norm: max |a_ij|. SIMD-optimized.
 MATDEF mat_elem_t mat_norm_max(const Mat *a);
 
-// Frobenius norm: sqrt(sum a_ij^2). NEON-optimized.
+// Frobenius norm: sqrt(sum a_ij^2). SIMD-optimized.
 // For float32: accumulates in double to prevent overflow/underflow.
 // For float64: no overflow protection (same as fast). Blue's scaling may be
 // added in the future to handle extreme values.
 MATDEF mat_elem_t mat_norm_fro(const Mat *a);
 
-// Frobenius norm, fast version. NEON-optimized.
+// Frobenius norm, fast version. SIMD-optimized.
 // For float32: ~2x faster than safe, but no overflow protection.
 // For float64: same as safe (no higher precision available).
 // Overflows if any |a_ij|^2 exceeds type max (~1e19 for float, ~1e154 for double).
 MATDEF mat_elem_t mat_norm_fro_fast(const Mat *a);
 
 // Matrix Properties
-// TODO: mat_det, mat_rank, mat_cond, mat_inv, mat_pinv
 
+// Return trace (sum of diagonal elements). Matrix must be square.
 MATDEF mat_elem_t mat_trace(const Mat *a);
+
+// Return determinant. Matrix must be square. Uses LU decomposition.
 MATDEF mat_elem_t mat_det(const Mat *a);
+
+// Return numerical rank via SVD (not yet implemented).
 MATDEF mat_elem_t mat_rank(const Mat *a);
+
+// Return condition number (not yet implemented).
 MATDEF mat_elem_t mat_cond(const Mat *a);
+
+// Return count of non-zero elements.
 MATDEF mat_elem_t mat_nnz(const Mat *a);
 
 // Decomposition
-// TODO: mat_lu, mat_chol, mat_svd
 
-// QR decomposition using Householder reflections
-// A = Q * R where Q is orthogonal (m x m) and R is upper triangular (m x n)
-// Q and R must be pre-allocated with correct dimensions
+// QR decomposition via Householder reflections.
+// A = Q * R where Q is orthogonal (m x m), R is upper triangular (m x n).
+// Q and R must be pre-allocated with correct dimensions.
 MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R);
-
-// Eigenvalue
-// TODO: mat_eig, mat_eigvals
 
 #ifdef __cplusplus
 }
@@ -734,7 +840,7 @@ MATDEF bool mat_equals_tol(const Mat *a, const Mat *b, mat_elem_t epsilon) {
 #endif
 }
 
-// Element-wise Unary
+/* Element-wise Unary */
 
 MATDEF void mat_abs(Mat *out, const Mat *a) {
   MAT_ASSERT_MAT(out);
@@ -841,7 +947,7 @@ MATDEF void mat_clip(Mat *out, const Mat *a, mat_elem_t min_val, mat_elem_t max_
   }
 }
 
-// Element-wise Binary
+/* Element-wise Binary */
 
 MATDEF void mat_div(Mat *out, const Mat *a, const Mat *b) {
   MAT_ASSERT_MAT(out);
@@ -869,7 +975,7 @@ MATDEF void mat_atan2(Mat *out, const Mat *y, const Mat *x) {
 #endif
 }
 
-// Scalar Operations
+/* Scalar Operations */
 
 MATDEF void mat_scale(Mat *out, mat_elem_t k) {
   MAT_ASSERT_MAT(out);
@@ -903,7 +1009,7 @@ MATDEF Mat *mat_radd_scalar(const Mat *m, mat_elem_t k) {
   return result;
 }
 
-// Matrix Arithmetic
+/* Matrix Arithmetic */
 
 MATDEF void mat_add(Mat *out, const Mat *a, const Mat *b) {
   MAT_ASSERT_MAT(out);
@@ -1001,7 +1107,7 @@ MATDEF Mat *mat_radd_many(size_t count, ...) {
   return result;
 }
 
-// Matrix Products
+ /* Matrix Products */
 
 MATDEF void mat_mul(Mat *out, const Mat *a, const Mat *b) {
   MAT_ASSERT_MAT(out);
@@ -1117,7 +1223,102 @@ MATDEF mat_elem_t mat_dot(const Vec *v1, const Vec *v2) {
 #endif
 }
 
-// Fused Operations (BLAS-like)
+MATDEF void mat_cross(Vec *out, const Vec *v1, const Vec *v2) {
+  MAT_ASSERT_MAT(out);
+  MAT_ASSERT_MAT(v1);
+  MAT_ASSERT_MAT(v2);
+  MAT_ASSERT(v1->rows * v1->cols == 3);
+  MAT_ASSERT(v2->rows * v2->cols == 3);
+  MAT_ASSERT(out->rows * out->cols == 3);
+
+  const mat_elem_t *a = v1->data;
+  const mat_elem_t *b = v2->data;
+  mat_elem_t *c = out->data;
+
+  c[0] = a[1] * b[2] - a[2] * b[1];
+  c[1] = a[2] * b[0] - a[0] * b[2];
+  c[2] = a[0] * b[1] - a[1] * b[0];
+}
+
+#ifdef MAT_HAS_ARM_NEON
+MAT_INTERNAL_STATIC void mat_outer_neon_impl(Mat *out, const Vec *v1, const Vec *v2) {
+  size_t m = v1->rows * v1->cols;
+  size_t n = v2->rows * v2->cols;
+
+  const mat_elem_t *a = v1->data;
+  const mat_elem_t *b = v2->data;
+  mat_elem_t *c = out->data;
+
+  for (size_t i = 0; i < m; i++) {
+    MAT_NEON_TYPE va = MAT_NEON_DUP(a[i]);
+    mat_elem_t *row = &c[i * n];
+    size_t j = 0;
+
+    for (; j + MAT_NEON_WIDTH * 4 <= n; j += MAT_NEON_WIDTH * 4) {
+      MAT_NEON_TYPE vb0 = MAT_NEON_LOAD(&b[j]);
+      MAT_NEON_TYPE vb1 = MAT_NEON_LOAD(&b[j + MAT_NEON_WIDTH]);
+      MAT_NEON_TYPE vb2 = MAT_NEON_LOAD(&b[j + MAT_NEON_WIDTH * 2]);
+      MAT_NEON_TYPE vb3 = MAT_NEON_LOAD(&b[j + MAT_NEON_WIDTH * 3]);
+#ifdef MAT_DOUBLE_PRECISION
+      MAT_NEON_STORE(&row[j], vmulq_f64(va, vb0));
+      MAT_NEON_STORE(&row[j + MAT_NEON_WIDTH], vmulq_f64(va, vb1));
+      MAT_NEON_STORE(&row[j + MAT_NEON_WIDTH * 2], vmulq_f64(va, vb2));
+      MAT_NEON_STORE(&row[j + MAT_NEON_WIDTH * 3], vmulq_f64(va, vb3));
+#else
+      MAT_NEON_STORE(&row[j], vmulq_f32(va, vb0));
+      MAT_NEON_STORE(&row[j + MAT_NEON_WIDTH], vmulq_f32(va, vb1));
+      MAT_NEON_STORE(&row[j + MAT_NEON_WIDTH * 2], vmulq_f32(va, vb2));
+      MAT_NEON_STORE(&row[j + MAT_NEON_WIDTH * 3], vmulq_f32(va, vb3));
+#endif
+    }
+
+    for (; j + MAT_NEON_WIDTH <= n; j += MAT_NEON_WIDTH) {
+      MAT_NEON_TYPE vb = MAT_NEON_LOAD(&b[j]);
+#ifdef MAT_DOUBLE_PRECISION
+      MAT_NEON_STORE(&row[j], vmulq_f64(va, vb));
+#else
+      MAT_NEON_STORE(&row[j], vmulq_f32(va, vb));
+#endif
+    }
+
+    for (; j < n; j++) {
+      row[j] = a[i] * b[j];
+    }
+  }
+}
+#endif
+
+MAT_INTERNAL_STATIC void mat_outer_scalar_impl(Mat *out, const Vec *v1, const Vec *v2) {
+  size_t m = v1->rows * v1->cols;
+  size_t n = v2->rows * v2->cols;
+
+  const mat_elem_t *a = v1->data;
+  const mat_elem_t *b = v2->data;
+
+  for (size_t i = 0; i < m; i++) {
+    for (size_t j = 0; j < n; j++) {
+      out->data[i * n + j] = a[i] * b[j];
+    }
+  }
+}
+
+MATDEF void mat_outer(Mat *out, const Vec *v1, const Vec *v2) {
+  MAT_ASSERT_MAT(out);
+  MAT_ASSERT_MAT(v1);
+  MAT_ASSERT_MAT(v2);
+
+  size_t m = v1->rows * v1->cols;
+  size_t n = v2->rows * v2->cols;
+  MAT_ASSERT(out->rows == m && out->cols == n);
+
+#ifdef MAT_HAS_ARM_NEON
+  mat_outer_neon_impl(out, v1, v2);
+#else
+  mat_outer_scalar_impl(out, v1, v2);
+#endif
+}
+
+/* Fused Operations (BLAS-like) */
 
 // y += alpha * x (BLAS Level-1: axpy)
 #ifdef MAT_HAS_ARM_NEON
@@ -1522,7 +1723,7 @@ MATDEF void mat_gemm(Mat *C, mat_elem_t alpha, const Mat *A, const Mat *B, mat_e
 #endif
 }
 
-// Structure Operations
+/* Structure Operations */
 
 #define MAT_T_BLOCK 32
 
@@ -1722,7 +1923,7 @@ MATDEF Vec *mat_col(const Mat *m, size_t col) {
   return v;
 }
 
-// Diagonal Operations
+/* Diagonal Operations */
 
 MATDEF Vec *mat_diag(const Mat *m) {
   MAT_ASSERT_SQUARE(m);
@@ -1937,7 +2138,7 @@ MATDEF mat_elem_t mat_norm_fro_fast(const Mat *a) {
 #endif
 }
 
-// Matrix Properties
+/* Matrix Properties */
 
 MATDEF mat_elem_t mat_trace(const Mat *a) {
   MAT_ASSERT_MAT(a);
@@ -2029,7 +2230,7 @@ MATDEF mat_elem_t mat_nnz(const Mat *a) {
 #endif
 }
 
-// Reduction Operations
+/* Reduction Operations */
 
 #ifdef MAT_HAS_ARM_NEON
 MAT_INTERNAL_STATIC mat_elem_t mat_sum_neon_impl(const Mat *a) {
