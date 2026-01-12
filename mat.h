@@ -2097,11 +2097,15 @@ MAT_INTERNAL_STATIC void mat_gemm_neon_impl(Mat *C, mat_elem_t alpha, const Mat 
   Mat Bt_storage = { .rows = N, .cols = K, .data = bt };
   mat_t(&Bt_storage, B);
 
-  // 4x4 micro-kernel
-  size_t i = 0;
-  for (; i + 4 <= M; i += 4) {
-    size_t j = 0;
-    for (; j + 4 <= N; j += 4) {
+  // 4x4 micro-kernel with OpenMP parallelization on outer loop
+  size_t M4 = (M / 4) * 4;  // Round down to multiple of 4
+  size_t N4 = (N / 4) * 4;
+
+#ifdef MAT_HAS_OPENMP
+  #pragma omp parallel for schedule(static) if(M * N * K >= MAT_OMP_THRESHOLD)
+#endif
+  for (size_t i = 0; i < M4; i += 4) {
+    for (size_t j = 0; j < N4; j += 4) {
       MAT_NEON_TYPE acc00 = MAT_NEON_DUP(0), acc01 = MAT_NEON_DUP(0);
       MAT_NEON_TYPE acc02 = MAT_NEON_DUP(0), acc03 = MAT_NEON_DUP(0);
       MAT_NEON_TYPE acc10 = MAT_NEON_DUP(0), acc11 = MAT_NEON_DUP(0);
@@ -2191,20 +2195,20 @@ MAT_INTERNAL_STATIC void mat_gemm_neon_impl(Mat *C, mat_elem_t alpha, const Mat 
       }
     }
 
-    // Remainder j columns
-    for (; j < N; j++) {
+    // Remainder j columns (within this row block)
+    for (size_t jj = N4; jj < N; jj++) {
       for (size_t ii = 0; ii < 4; ii++) {
         mat_elem_t sum = 0;
         for (size_t k = 0; k < K; k++) {
-          sum += A->data[(i+ii)*K + k] * bt[j*K + k];
+          sum += A->data[(i+ii)*K + k] * bt[jj*K + k];
         }
-        C->data[(i+ii)*N + j] += alpha * sum;
+        C->data[(i+ii)*N + jj] += alpha * sum;
       }
     }
   }
 
-  // Remainder i rows
-  for (; i < M; i++) {
+  // Remainder i rows (after parallel region)
+  for (size_t i = M4; i < M; i++) {
     for (size_t j = 0; j < N; j++) {
       mat_elem_t sum = 0;
       for (size_t k = 0; k < K; k++) {
@@ -2235,6 +2239,9 @@ MAT_INTERNAL_STATIC void mat_gemm_scalar_impl(Mat *C, mat_elem_t alpha, const Ma
   }
 
   // ikj loop order for cache-friendly access
+#ifdef MAT_HAS_OPENMP
+  #pragma omp parallel for schedule(static) if(M * N * K >= MAT_OMP_THRESHOLD)
+#endif
   for (size_t i = 0; i < M; i++) {
     for (size_t k = 0; k < K; k++) {
       mat_elem_t aik = alpha * A->data[i * K + k];
@@ -2339,7 +2346,7 @@ MAT_INTERNAL_STATIC void mat_t_scalar_impl(Mat *out, const Mat *m) {
   const mat_elem_t *src = m->data;
   mat_elem_t *dst = out->data;
 
-#if defined(MAT_HAS_OPENMP) && MAT_HAS_OPENMP
+#ifdef MAT_HAS_OPENMP
   #pragma omp parallel for collapse(2) schedule(static) if(rows * cols >= MAT_OMP_THRESHOLD)
 #endif
   for (size_t ii = 0; ii < rows; ii += MAT_T_BLOCK) {
