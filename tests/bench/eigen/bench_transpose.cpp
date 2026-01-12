@@ -20,6 +20,14 @@
   #define BENCH_FILL bench_fill_random_f
 #endif
 
+#ifdef MAT_HAS_OPENMP
+  #define OMP_STATUS "ENABLED"
+  #define OMP_THREADS omp_get_max_threads()
+#else
+  #define OMP_STATUS "DISABLED"
+  #define OMP_THREADS 1
+#endif
+
 void bench_speed(size_t m, size_t n, int iterations) {
   printf("\n--- %zux%zu ---\n", m, n);
 
@@ -72,10 +80,14 @@ int main() {
   srand(42);
   bench_init();
 
-  Eigen::setNbThreads(1);
-
   printf("=== TRANSPOSE BENCHMARK: libmat vs Eigen [%s] ===\n", PRECISION_NAME);
   printf("B = A^T\n");
+  printf("libmat OpenMP: %s", OMP_STATUS);
+#ifdef MAT_HAS_OPENMP
+  printf(" (threads: %d, threshold: %d)", OMP_THREADS, MAT_OMP_THRESHOLD);
+#endif
+  printf("\n");
+  printf("Eigen threads: %d\n", Eigen::nbThreads());
 
   bench_speed(64, 64, 10000);
   bench_speed(128, 128, 5000);
@@ -83,6 +95,7 @@ int main() {
   bench_speed(512, 512, 500);
   bench_speed(1024, 1024, 100);
   bench_speed(2048, 2048, 20);
+  bench_speed(4096, 4096, 5);
 
   return 0;
 }

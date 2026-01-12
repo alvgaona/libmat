@@ -11,6 +11,15 @@
   #include <arm_neon.h>
 #endif
 
+// OpenMP detection (auto-enabled when compiled with -fopenmp)
+#if defined(_OPENMP)
+  #include <omp.h>
+  #define MAT_HAS_OPENMP
+  #ifndef MAT_OMP_THRESHOLD
+    #define MAT_OMP_THRESHOLD (1024 * 1024)  // Skip parallelization for small matrices
+  #endif
+#endif
+
 #ifndef MATDEF
 #define MATDEF
 #endif
@@ -2261,18 +2270,23 @@ MAT_INTERNAL_STATIC void mat_t_neon_impl(Mat *out, const Mat *m) {
   const mat_elem_t *src = m->data;
   mat_elem_t *dst = out->data;
 
-  size_t ii = 0;
-  for (; ii + MAT_T_BLOCK <= rows; ii += MAT_T_BLOCK) {
-    size_t jj = 0;
-    for (; jj + MAT_T_BLOCK <= cols; jj += MAT_T_BLOCK) {
+  size_t full_rows = (rows / MAT_T_BLOCK) * MAT_T_BLOCK;
+  size_t full_cols = (cols / MAT_T_BLOCK) * MAT_T_BLOCK;
+
+  // Main blocked loop - parallelizable
+#if defined(MAT_HAS_OPENMP)
+  #pragma omp parallel for collapse(2) schedule(static) if(rows * cols >= MAT_OMP_THRESHOLD)
+#endif
+  for (size_t ii = 0; ii < full_rows; ii += MAT_T_BLOCK) {
+    for (size_t jj = 0; jj < full_cols; jj += MAT_T_BLOCK) {
 #ifdef MAT_DOUBLE_PRECISION
       // float64x2_t holds 2 doubles, process 2x2 blocks
       for (size_t i = ii; i < ii + MAT_T_BLOCK; i += 2) {
         for (size_t j = jj; j < jj + MAT_T_BLOCK; j += 2) {
           float64x2_t r0 = vld1q_f64(&src[(i+0) * cols + j]);
           float64x2_t r1 = vld1q_f64(&src[(i+1) * cols + j]);
-          float64x2_t t0 = vzip1q_f64(r0, r1);  // [r0[0], r1[0]]
-          float64x2_t t1 = vzip2q_f64(r0, r1);  // [r0[1], r1[1]]
+          float64x2_t t0 = vzip1q_f64(r0, r1);
+          float64x2_t t1 = vzip2q_f64(r0, r1);
           vst1q_f64(&dst[(j+0) * rows + i], t0);
           vst1q_f64(&dst[(j+1) * rows + i], t1);
         }
@@ -2299,13 +2313,19 @@ MAT_INTERNAL_STATIC void mat_t_neon_impl(Mat *out, const Mat *m) {
       }
 #endif
     }
+  }
+
+  // Edge cases: right edge (cols not multiple of block)
+  for (size_t ii = 0; ii < full_rows; ii += MAT_T_BLOCK) {
     for (size_t i = ii; i < ii + MAT_T_BLOCK; i++) {
-      for (size_t j = jj; j < cols; j++) {
+      for (size_t j = full_cols; j < cols; j++) {
         dst[j * rows + i] = src[i * cols + j];
       }
     }
   }
-  for (size_t i = ii; i < rows; i++) {
+
+  // Edge cases: bottom edge (rows not multiple of block)
+  for (size_t i = full_rows; i < rows; i++) {
     for (size_t j = 0; j < cols; j++) {
       dst[j * rows + i] = src[i * cols + j];
     }
@@ -2319,6 +2339,9 @@ MAT_INTERNAL_STATIC void mat_t_scalar_impl(Mat *out, const Mat *m) {
   const mat_elem_t *src = m->data;
   mat_elem_t *dst = out->data;
 
+#if defined(MAT_HAS_OPENMP) && MAT_HAS_OPENMP
+  #pragma omp parallel for collapse(2) schedule(static) if(rows * cols >= MAT_OMP_THRESHOLD)
+#endif
   for (size_t ii = 0; ii < rows; ii += MAT_T_BLOCK) {
     for (size_t jj = 0; jj < cols; jj += MAT_T_BLOCK) {
       size_t i_end = (ii + MAT_T_BLOCK < rows) ? ii + MAT_T_BLOCK : rows;
