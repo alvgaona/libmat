@@ -29,7 +29,7 @@ void bench_speed(size_t n) {
   Mat *out = mat_mat(1, n);
   BENCH_FILL(A->data, n);
   BENCH_FILL(B->data, n);
-  for (size_t i = 0; i < n; i++) B->data[i] = fabsf(B->data[i]) + 0.1f;
+  for (size_t i = 0; i < n; i++) B->data[i] = MAT_FABS(B->data[i]) + 0.1f;
 
   Eigen::Map<EigenArray> eA(A->data, n);
   Eigen::Map<EigenArray> eB(B->data, n);
