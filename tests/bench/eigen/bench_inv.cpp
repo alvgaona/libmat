@@ -33,7 +33,7 @@ void bench_speed(size_t n) {
     for (size_t j = 0; j < n; j++) {
       mat_elem_t val = (mat_elem_t)(rand() % 100) / 10.0f - 5.0f;
       A->data[i * n + j] = val;
-      if (i != j) row_sum += fabsf(val);
+      if (i != j) row_sum += MAT_FABS(val);
     }
     A->data[i * n + i] = row_sum + 1.0f;
   }

@@ -161,7 +161,7 @@ static void test_bilinear_vs_gemv_dot(void) {
     mat_elem_t result = mat_bilinear(x, A, y);
 
     // Use relative tolerance
-    CHECK(fabsf(result - expected) / fabsf(expected) < 1e-4f);
+    CHECK(MAT_FABS(result - expected) / MAT_FABS(expected) < 1e-4f);
 
     mat_free_mat(x);
     mat_free_mat(A);
