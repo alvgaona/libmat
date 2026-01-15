@@ -648,7 +648,10 @@ MATDEF int mat_plu(const Mat *A, Mat *L, Mat *U, Perm *p);
 MAT_NOT_IMPLEMENTED MATDEF void mat_chol(const Mat *A, Mat *L);
 
 // Singular value decomposition (A = U * S * Vt).
-MAT_NOT_IMPLEMENTED MATDEF void mat_svd(const Mat *A, Mat *U, Vec *S, Mat *Vt);
+// Uses one-sided Jacobi algorithm.
+// U is m x m orthogonal, S is min(m,n) vector of singular values (descending),
+// Vt is n x n orthogonal (V transposed).
+MATDEF void mat_svd(const Mat *A, Mat *U, Vec *S, Mat *Vt);
 
 // Matrix inverse using LU decomposition.
 MATDEF void mat_inv(Mat *out, const Mat *A);
@@ -3777,6 +3780,321 @@ MATDEF mat_elem_t mat_det(const Mat *A) {
   MAT_FREE_PERM(p);
 
   return det;
+}
+
+// ============================================================================
+// SVD: One-sided Jacobi algorithm
+// ============================================================================
+
+// Compute Jacobi rotation parameters to zero out off-diagonal element.
+// Given symmetric 2x2 matrix [[a, c], [c, b]], compute cos and sin such that
+// the rotation diagonalizes it.
+static void mat_svd_jacobi_rotation(mat_elem_t a, mat_elem_t b, mat_elem_t c,
+                                    mat_elem_t *cs, mat_elem_t *sn) {
+  if (MAT_FABS(c) < MAT_DEFAULT_EPSILON) {
+    *cs = 1;
+    *sn = 0;
+    return;
+  }
+
+  mat_elem_t tau = (b - a) / (2 * c);
+  mat_elem_t t;
+
+  // Choose the smaller root for numerical stability
+  if (tau >= 0) {
+    t = 1 / (tau + MAT_SQRT(1 + tau * tau));
+  } else {
+    t = 1 / (tau - MAT_SQRT(1 + tau * tau));
+  }
+
+  *cs = 1 / MAT_SQRT(1 + t * t);
+  *sn = t * (*cs);
+}
+
+// Apply Jacobi rotation to columns i and j of matrix W (m x n, row-major)
+static void mat_svd_rotate_cols(mat_elem_t *W, size_t m, size_t n,
+                                size_t i, size_t j,
+                                mat_elem_t cs, mat_elem_t sn) {
+  for (size_t row = 0; row < m; row++) {
+    mat_elem_t wi = W[row * n + i];
+    mat_elem_t wj = W[row * n + j];
+    W[row * n + i] = cs * wi - sn * wj;
+    W[row * n + j] = sn * wi + cs * wj;
+  }
+}
+
+MATDEF void mat_svd(const Mat *A, Mat *U, Vec *S, Mat *Vt) {
+  MAT_ASSERT_MAT(A);
+  MAT_ASSERT_MAT(U);
+  MAT_ASSERT_MAT(S);
+  MAT_ASSERT_MAT(Vt);
+
+  size_t m = A->rows;
+  size_t n = A->cols;
+  size_t k = (m < n) ? m : n;  // number of singular values
+
+  MAT_ASSERT(U->rows == m && U->cols == m);
+  MAT_ASSERT(S->rows == k && S->cols == 1);
+  MAT_ASSERT(Vt->rows == n && Vt->cols == n);
+
+  // Handle m < n by working on A^T
+  // SVD(A) = U * S * Vt  =>  SVD(A^T) = V * S * Ut
+  if (m < n) {
+    Mat *At = mat_rt(A);
+    Mat *Ut_temp = mat_mat(n, n);
+    Mat *V_temp = mat_mat(m, m);
+
+    mat_svd(At, Ut_temp, S, V_temp);
+
+    // U = V_temp^T, Vt = Ut_temp^T
+    mat_t(U, V_temp);
+    mat_t(Vt, Ut_temp);
+
+    MAT_FREE_MAT(At);
+    MAT_FREE_MAT(Ut_temp);
+    MAT_FREE_MAT(V_temp);
+    return;
+  }
+
+  // Now m >= n
+  // Working matrix W starts as a copy of A
+  mat_elem_t *W = (mat_elem_t *)MAT_MALLOC(m * n * sizeof(mat_elem_t));
+  MAT_ASSERT(W);
+  for (size_t i = 0; i < m * n; i++) {
+    W[i] = A->data[i];
+  }
+
+  // V starts as identity (we accumulate rotations here, then transpose to Vt)
+  mat_elem_t *V = (mat_elem_t *)MAT_MALLOC(n * n * sizeof(mat_elem_t));
+  MAT_ASSERT(V);
+  for (size_t i = 0; i < n * n; i++) {
+    V[i] = 0;
+  }
+  for (size_t i = 0; i < n; i++) {
+    V[i * n + i] = 1;
+  }
+
+  // Jacobi iteration: rotate pairs of columns until they're orthogonal
+  const int max_sweeps = 30;
+  const mat_elem_t tol = MAT_DEFAULT_EPSILON;
+
+  for (int sweep = 0; sweep < max_sweeps; sweep++) {
+    mat_elem_t max_off = 0;
+
+    // One sweep: process all pairs (i, j) with i < j
+    for (size_t i = 0; i < n - 1; i++) {
+      for (size_t j = i + 1; j < n; j++) {
+        // Compute elements of 2x2 Gram matrix for columns i and j
+        // G = W[:,i:j]^T * W[:,i:j] = [[a, c], [c, b]]
+        mat_elem_t a = 0, b = 0, c = 0;
+        for (size_t row = 0; row < m; row++) {
+          mat_elem_t wi = W[row * n + i];
+          mat_elem_t wj = W[row * n + j];
+          a += wi * wi;
+          b += wj * wj;
+          c += wi * wj;
+        }
+
+        // Track convergence
+        mat_elem_t off = MAT_FABS(c);
+        if (off > max_off) max_off = off;
+
+        // Skip if already orthogonal
+        if (off < tol * MAT_SQRT(a * b + tol)) {
+          continue;
+        }
+
+        // Compute rotation that orthogonalizes columns i and j
+        mat_elem_t cs, sn;
+        mat_svd_jacobi_rotation(a, b, c, &cs, &sn);
+
+        // Apply rotation to W
+        mat_svd_rotate_cols(W, m, n, i, j, cs, sn);
+
+        // Apply same rotation to V (accumulate)
+        mat_svd_rotate_cols(V, n, n, i, j, cs, sn);
+      }
+    }
+
+    // Check convergence
+    if (max_off < tol) {
+      break;
+    }
+  }
+
+  // Extract singular values (column norms of W) and normalize columns for U
+  // We'll store indices for sorting
+  size_t *order = (size_t *)MAT_MALLOC(n * sizeof(size_t));
+  mat_elem_t *sigma = (mat_elem_t *)MAT_MALLOC(n * sizeof(mat_elem_t));
+  MAT_ASSERT(order && sigma);
+
+  for (size_t j = 0; j < n; j++) {
+    mat_elem_t norm_sq = 0;
+    for (size_t i = 0; i < m; i++) {
+      norm_sq += W[i * n + j] * W[i * n + j];
+    }
+    sigma[j] = MAT_SQRT(norm_sq);
+    order[j] = j;
+  }
+
+  // Sort singular values in descending order (simple bubble sort for small n)
+  for (size_t i = 0; i < n - 1; i++) {
+    for (size_t j = i + 1; j < n; j++) {
+      if (sigma[order[j]] > sigma[order[i]]) {
+        size_t tmp = order[i];
+        order[i] = order[j];
+        order[j] = tmp;
+      }
+    }
+  }
+
+  // Build U: columns are normalized columns of W (in sorted order)
+  // Initialize U to zero
+  for (size_t i = 0; i < m * m; i++) {
+    U->data[i] = 0;
+  }
+
+  // Track how many columns of U we've properly filled
+  size_t u_col = 0;
+  for (size_t j = 0; j < n; j++) {
+    size_t src = order[j];
+    mat_elem_t s = sigma[src];
+    if (s > tol) {
+      for (size_t i = 0; i < m; i++) {
+        U->data[i * m + u_col] = W[i * n + src] / s;
+      }
+      u_col++;
+    }
+  }
+
+  // Complete U to full orthonormal basis using Modified Gram-Schmidt with
+  // reorthogonalization. We need to reorthogonalize the existing columns too
+  // because the Jacobi iteration only produces approximately orthogonal columns.
+  mat_elem_t *v = (mat_elem_t *)MAT_MALLOC(m * sizeof(mat_elem_t));
+  MAT_ASSERT(v);
+
+  // First, reorthogonalize the columns we got from W
+  for (size_t col = 0; col < u_col; col++) {
+    // Copy column to v
+    for (size_t i = 0; i < m; i++) {
+      v[i] = U->data[i * m + col];
+    }
+
+    // Orthogonalize against previous columns (twice for stability)
+    for (int pass = 0; pass < 2; pass++) {
+      for (size_t j = 0; j < col; j++) {
+        mat_elem_t dot = 0;
+        for (size_t i = 0; i < m; i++) {
+          dot += v[i] * U->data[i * m + j];
+        }
+        for (size_t i = 0; i < m; i++) {
+          v[i] -= dot * U->data[i * m + j];
+        }
+      }
+    }
+
+    // Normalize
+    mat_elem_t norm_sq = 0;
+    for (size_t i = 0; i < m; i++) {
+      norm_sq += v[i] * v[i];
+    }
+    mat_elem_t norm = MAT_SQRT(norm_sq);
+    if (norm > tol) {
+      for (size_t i = 0; i < m; i++) {
+        U->data[i * m + col] = v[i] / norm;
+      }
+    }
+  }
+
+  // Now complete the basis with additional columns from standard basis vectors
+  for (size_t basis = 0; basis < m && u_col < m; basis++) {
+    // Start with e_basis (standard basis vector)
+    for (size_t i = 0; i < m; i++) {
+      v[i] = (i == basis) ? 1 : 0;
+    }
+
+    // Orthogonalize against all existing columns (twice for stability)
+    for (int pass = 0; pass < 2; pass++) {
+      for (size_t j = 0; j < u_col; j++) {
+        mat_elem_t dot = 0;
+        for (size_t i = 0; i < m; i++) {
+          dot += v[i] * U->data[i * m + j];
+        }
+        for (size_t i = 0; i < m; i++) {
+          v[i] -= dot * U->data[i * m + j];
+        }
+      }
+    }
+
+    // Compute norm
+    mat_elem_t norm_sq = 0;
+    for (size_t i = 0; i < m; i++) {
+      norm_sq += v[i] * v[i];
+    }
+    mat_elem_t norm = MAT_SQRT(norm_sq);
+
+    // If norm is significant, add as new column
+    if (norm > tol) {
+      for (size_t i = 0; i < m; i++) {
+        U->data[i * m + u_col] = v[i] / norm;
+      }
+      u_col++;
+    }
+  }
+
+  // Copy singular values to S (first k = min(m,n) = n since m >= n)
+  for (size_t i = 0; i < k; i++) {
+    S->data[i] = sigma[order[i]];
+  }
+
+  // Reorthogonalize V (accumulated rotations can drift for large matrices)
+  // Reuse v buffer (already allocated with size m, but n <= m so it's fine)
+  for (size_t col = 0; col < n; col++) {
+    // Copy column to v
+    for (size_t i = 0; i < n; i++) {
+      v[i] = V[i * n + col];
+    }
+
+    // Orthogonalize against previous columns (twice for stability)
+    for (int pass = 0; pass < 2; pass++) {
+      for (size_t j = 0; j < col; j++) {
+        mat_elem_t dot = 0;
+        for (size_t i = 0; i < n; i++) {
+          dot += v[i] * V[i * n + j];
+        }
+        for (size_t i = 0; i < n; i++) {
+          v[i] -= dot * V[i * n + j];
+        }
+      }
+    }
+
+    // Normalize
+    mat_elem_t norm_sq = 0;
+    for (size_t i = 0; i < n; i++) {
+      norm_sq += v[i] * v[i];
+    }
+    mat_elem_t norm = MAT_SQRT(norm_sq);
+    if (norm > tol) {
+      for (size_t i = 0; i < n; i++) {
+        V[i * n + col] = v[i] / norm;
+      }
+    }
+  }
+
+  MAT_FREE(v);
+
+  // Build Vt by transposing V with column reordering
+  for (size_t i = 0; i < n; i++) {
+    for (size_t j = 0; j < n; j++) {
+      // Vt[i, j] = V[j, order[i]]
+      Vt->data[i * n + j] = V[j * n + order[i]];
+    }
+  }
+
+  MAT_FREE(W);
+  MAT_FREE(V);
+  MAT_FREE(order);
+  MAT_FREE(sigma);
 }
 
 #endif // MAT_IMPLEMENTATION
