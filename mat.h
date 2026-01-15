@@ -4294,11 +4294,11 @@ MATDEF void mat_svd(const Mat *A, Mat *U, Vec *S, Mat *Vt) {
     size_t src = order->data[j];
     mat_elem_t s = sigma->data[src];
     if (s > tol) {
-      // Copy column src from W->data (column-major) to column u_col of U
-      // (row-major)
+      // Copy column src from W (column-major) to column u_col of U (row-major)
+      Vec w_col = mat_row_view(W, src);
       mat_elem_t inv_s = 1 / s;
       for (size_t row = 0; row < m; row++) {
-        U->data[row * m + u_col] = W->data[row + src * m] * inv_s;
+        mat_set_at(U, row, u_col, w_col.data[row] * inv_s);
       }
       u_col++;
     }
@@ -4314,7 +4314,7 @@ MATDEF void mat_svd(const Mat *A, Mat *U, Vec *S, Mat *Vt) {
   for (size_t col = 0; col < u_col; col++) {
     // Copy column to v
     for (size_t i = 0; i < m; i++) {
-      v->data[i] = U->data[i * m + col];
+      mat_set_at(v, i, 0, mat_at(U, i, col));
     }
 
     // Orthogonalize against previous columns (twice for stability)
@@ -4333,7 +4333,7 @@ MATDEF void mat_svd(const Mat *A, Mat *U, Vec *S, Mat *Vt) {
     // Normalize and copy back to U
     if (mat_normalize(v) > tol) {
       for (size_t i = 0; i < m; i++) {
-        U->data[i * m + col] = v->data[i];
+        mat_set_at(U, i, col, mat_at(v, i, 0));
       }
     }
   }
@@ -4342,7 +4342,7 @@ MATDEF void mat_svd(const Mat *A, Mat *U, Vec *S, Mat *Vt) {
   for (size_t basis = 0; basis < m && u_col < m; basis++) {
     // Start with e_basis (standard basis vector)
     memset(v->data, 0, m * sizeof(mat_elem_t));
-    v->data[basis] = 1;
+    mat_set_at(v, basis, 0, 1);
 
     // Orthogonalize against all existing columns (twice for stability)
     for (int pass = 0; pass < 2; pass++) {
@@ -4360,7 +4360,7 @@ MATDEF void mat_svd(const Mat *A, Mat *U, Vec *S, Mat *Vt) {
     // Normalize and add as new column if norm is significant
     if (mat_normalize(v) > tol) {
       for (size_t i = 0; i < m; i++) {
-        U->data[i * m + u_col] = v->data[i];
+        mat_set_at(U, i, u_col, mat_at(v, i, 0));
       }
       u_col++;
     }
@@ -4391,11 +4391,12 @@ MATDEF void mat_svd(const Mat *A, Mat *U, Vec *S, Mat *Vt) {
 
   MAT_FREE_MAT(v);
 
-  // Build Vt (row-major) from V->data (column-major) with column reordering
-  // Vt[i, j] = V[j, order->data[i]] = V->data[j + order->data[i]*n]
+  // Build Vt (row-major) from V (column-major) with column reordering
+  // Vt[i, j] = V[j, order->data[i]]
   for (size_t i = 0; i < n; i++) {
+    Vec v_col = mat_row_view(V, order->data[i]);
     for (size_t j = 0; j < n; j++) {
-      Vt->data[i * n + j] = V->data[j + order->data[i] * n];
+      mat_set_at(Vt, i, j, v_col.data[j]);
     }
   }
 
