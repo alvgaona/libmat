@@ -4346,62 +4346,120 @@ MATDEF void mat_svd(const Mat *A, Mat *U, Vec *S, Mat *Vt) {
   MAT_FREE(sigma);
 }
 
-// Moore-Penrose pseudoinverse via SVD
-// A+ = V * diag(1/S) * U^T = sum_i (1/S[i]) * V[:,i] * U[:,i]^T
+// Moore-Penrose pseudoinverse via thin SVD (Jacobi)
+// Computes A+ = V * diag(1/S) * U^T directly from Jacobi iteration
+// without building full U basis (much faster for tall/wide matrices)
 MATDEF void mat_pinv(Mat *out, const Mat *A) {
   MAT_ASSERT_MAT(out);
   MAT_ASSERT_MAT(A);
 
   size_t m = A->rows;
   size_t n = A->cols;
-  size_t k = m < n ? m : n;
 
   MAT_ASSERT(out->rows == n);
   MAT_ASSERT(out->cols == m);
 
-  // Allocate for SVD
-  Mat *U = mat_mat(m, m);
-  Vec *S = mat_vec(k);
-  Mat *Vt = mat_mat(n, n);
+  // Handle wide matrices by transposing: pinv(A) = pinv(A^T)^T
+  if (m < n) {
+    Mat *At = mat_rt(A);
+    Mat *pinv_At = mat_mat(m, n);
+    mat_pinv(pinv_At, At);
+    mat_t(out, pinv_At);
+    MAT_FREE_MAT(At);
+    MAT_FREE_MAT(pinv_At);
+    return;
+  }
 
-  // Compute SVD: A = U * diag(S) * Vt
-  mat_svd(A, U, S, Vt);
+  // Now m >= n
+  const mat_elem_t tol = MAT_DEFAULT_EPSILON;
 
-  // Tolerance for rank determination (MATLAB-style)
+  // W stored column-major: column j at W->data[j * m]
+  // After Jacobi, W[:,j] = σ_j * u_j
+  Mat *W = mat_rt(A);
+
+  // V stored column-major: column j at V->data[j * n]
+  Mat *V = mat_mat(n, n);
+  mat_eye(V);
+
+  // Cache column norms
+  mat_elem_t *col_norms = (mat_elem_t *)MAT_MALLOC(n * sizeof(mat_elem_t));
+  for (size_t j = 0; j < n; j++) {
+    Vec v = {.rows = m, .cols = 1, .data = &W->data[j * m]};
+    col_norms[j] = mat_dot(&v, &v);
+  }
+
+  // Jacobi iteration
+  const int max_sweeps = 30;
+  for (int sweep = 0; sweep < max_sweeps; sweep++) {
+    int rotations = 0;
+
+    for (size_t i = 0; i < n - 1; i++) {
+      for (size_t j = i + 1; j < n; j++) {
+        mat_elem_t a = col_norms[i];
+        mat_elem_t b = col_norms[j];
+        Vec vi = {.rows = m, .cols = 1, .data = &W->data[i * m]};
+        Vec vj = {.rows = m, .cols = 1, .data = &W->data[j * m]};
+        mat_elem_t c = mat_dot(&vi, &vj);
+
+        if (MAT_FABS(c) < tol * MAT_SQRT(a * b + tol)) continue;
+
+        rotations++;
+        mat_elem_t cs, sn;
+        mat_svd_jacobi_rotation(a, b, c, &cs, &sn);
+
+#ifdef MAT_HAS_ARM_NEON
+        mat_svd_rotate_cols_neon_impl(W->data, m, i, j, cs, sn);
+        mat_svd_rotate_cols_neon_impl(V->data, n, i, j, cs, sn);
+#else
+        mat_svd_rotate_cols_scalar_impl(W->data, m, i, j, cs, sn);
+        mat_svd_rotate_cols_scalar_impl(V->data, n, i, j, cs, sn);
+#endif
+
+        col_norms[i] = cs * cs * a + sn * sn * b - 2 * cs * sn * c;
+        col_norms[j] = sn * sn * a + cs * cs * b + 2 * cs * sn * c;
+      }
+    }
+
+    if (rotations == 0) break;
+  }
+
+  MAT_FREE(col_norms);
+
+  // Extract singular values and compute pinv using rank-1 updates
+  // W[:,j] = σ_j * u_j, so u_j = W[:,j] / σ_j
+  // pinv = Σ (1/σ_j) * v_j * u_j^T = Σ (1/σ_j²) * v_j * W[:,j]^T
+
+  // Find max singular value for tolerance
+  mat_elem_t max_sigma = 0;
+  for (size_t j = 0; j < n; j++) {
+    Vec wj = {.rows = m, .cols = 1, .data = &W->data[j * m]};
+    mat_elem_t sigma = MAT_SQRT(mat_dot(&wj, &wj));
+    if (sigma > max_sigma) max_sigma = sigma;
+  }
+
   size_t max_dim = m > n ? m : n;
-  mat_elem_t tol = (mat_elem_t)max_dim * S->data[0] * MAT_DEFAULT_EPSILON;
+  mat_elem_t pinv_tol = (mat_elem_t)max_dim * max_sigma * MAT_DEFAULT_EPSILON;
 
-  // Zero the output
+  // Zero output
   memset(out->data, 0, n * m * sizeof(mat_elem_t));
 
-  // Temp buffer for column of U (since U is row-major, columns are strided)
-  mat_elem_t *u_col = (mat_elem_t *)MAT_MALLOC(m * sizeof(mat_elem_t));
+  // Build pinv via rank-1 updates
+  for (size_t j = 0; j < n; j++) {
+    Vec wj = {.rows = m, .cols = 1, .data = &W->data[j * m]};
+    mat_elem_t sigma_sq = mat_dot(&wj, &wj);
+    mat_elem_t sigma = MAT_SQRT(sigma_sq);
 
-  // out = V * diag(S^+) * U^T = sum_i (1/S[i]) * V[:,i] * U[:,i]^T
-  // V[:,i] = Vt[i,:] (row i of Vt, contiguous)
-  // U[:,i] = column i of U (strided, needs copy)
-  for (size_t i = 0; i < k; i++) {
-    if (S->data[i] > tol) {
-      mat_elem_t inv_s = 1 / S->data[i];
+    if (sigma > pinv_tol) {
+      // v_j = V[:,j] (column j of V, contiguous)
+      Vec vj = {.rows = n, .cols = 1, .data = &V->data[j * n]};
 
-      // V[:,i] = row i of Vt (contiguous in memory)
-      Vec vi = {.rows = n, .cols = 1, .data = &Vt->data[i * n]};
-
-      // Copy column i of U to temp buffer
-      for (size_t j = 0; j < m; j++) {
-        u_col[j] = U->data[j * m + i];
-      }
-      Vec ui = {.rows = m, .cols = 1, .data = u_col};
-
-      // out += inv_s * vi * ui^T
-      mat_ger(out, inv_s, &vi, &ui);
+      // out += (1/σ²) * v_j * W[:,j]^T
+      mat_ger(out, 1 / sigma_sq, &vj, &wj);
     }
   }
 
-  MAT_FREE(u_col);
-  MAT_FREE_MAT(U);
-  MAT_FREE_MAT(S);
-  MAT_FREE_MAT(Vt);
+  MAT_FREE_MAT(W);
+  MAT_FREE_MAT(V);
 }
 
 #endif // MAT_IMPLEMENTATION
