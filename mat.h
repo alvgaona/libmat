@@ -3786,6 +3786,236 @@ MATDEF mat_elem_t mat_det(const Mat *A) {
 // SVD: One-sided Jacobi algorithm
 // ============================================================================
 
+// Column-major SVD helpers - columns are contiguous for efficient SIMD
+// W_cm is column-major: W_cm[row + col*m] = W[row, col]
+
+#ifdef MAT_HAS_ARM_NEON
+// NEON: Compute Gram matrix elements for columns i and j (column-major W)
+// Returns a = ||col_i||^2, b = ||col_j||^2, c = col_i . col_j
+MAT_INTERNAL_STATIC void mat_svd_gram_neon_impl(
+    const mat_elem_t *W_cm, size_t m, size_t i, size_t j,
+    mat_elem_t *a_out, mat_elem_t *b_out, mat_elem_t *c_out) {
+
+  const mat_elem_t *col_i = &W_cm[i * m];
+  const mat_elem_t *col_j = &W_cm[j * m];
+
+  MAT_NEON_TYPE va0 = MAT_NEON_DUP(0), va1 = MAT_NEON_DUP(0);
+  MAT_NEON_TYPE vb0 = MAT_NEON_DUP(0), vb1 = MAT_NEON_DUP(0);
+  MAT_NEON_TYPE vc0 = MAT_NEON_DUP(0), vc1 = MAT_NEON_DUP(0);
+  MAT_NEON_TYPE va2 = MAT_NEON_DUP(0), va3 = MAT_NEON_DUP(0);
+  MAT_NEON_TYPE vb2 = MAT_NEON_DUP(0), vb3 = MAT_NEON_DUP(0);
+  MAT_NEON_TYPE vc2 = MAT_NEON_DUP(0), vc3 = MAT_NEON_DUP(0);
+
+  size_t k = 0;
+  for (; k + MAT_NEON_WIDTH * 4 <= m; k += MAT_NEON_WIDTH * 4) {
+    MAT_NEON_TYPE wi0 = MAT_NEON_LOAD(&col_i[k]);
+    MAT_NEON_TYPE wj0 = MAT_NEON_LOAD(&col_j[k]);
+    MAT_NEON_TYPE wi1 = MAT_NEON_LOAD(&col_i[k + MAT_NEON_WIDTH]);
+    MAT_NEON_TYPE wj1 = MAT_NEON_LOAD(&col_j[k + MAT_NEON_WIDTH]);
+    MAT_NEON_TYPE wi2 = MAT_NEON_LOAD(&col_i[k + MAT_NEON_WIDTH * 2]);
+    MAT_NEON_TYPE wj2 = MAT_NEON_LOAD(&col_j[k + MAT_NEON_WIDTH * 2]);
+    MAT_NEON_TYPE wi3 = MAT_NEON_LOAD(&col_i[k + MAT_NEON_WIDTH * 3]);
+    MAT_NEON_TYPE wj3 = MAT_NEON_LOAD(&col_j[k + MAT_NEON_WIDTH * 3]);
+
+    va0 = MAT_NEON_FMA(va0, wi0, wi0); vb0 = MAT_NEON_FMA(vb0, wj0, wj0); vc0 = MAT_NEON_FMA(vc0, wi0, wj0);
+    va1 = MAT_NEON_FMA(va1, wi1, wi1); vb1 = MAT_NEON_FMA(vb1, wj1, wj1); vc1 = MAT_NEON_FMA(vc1, wi1, wj1);
+    va2 = MAT_NEON_FMA(va2, wi2, wi2); vb2 = MAT_NEON_FMA(vb2, wj2, wj2); vc2 = MAT_NEON_FMA(vc2, wi2, wj2);
+    va3 = MAT_NEON_FMA(va3, wi3, wi3); vb3 = MAT_NEON_FMA(vb3, wj3, wj3); vc3 = MAT_NEON_FMA(vc3, wi3, wj3);
+  }
+
+  for (; k + MAT_NEON_WIDTH <= m; k += MAT_NEON_WIDTH) {
+    MAT_NEON_TYPE wi = MAT_NEON_LOAD(&col_i[k]);
+    MAT_NEON_TYPE wj = MAT_NEON_LOAD(&col_j[k]);
+    va0 = MAT_NEON_FMA(va0, wi, wi);
+    vb0 = MAT_NEON_FMA(vb0, wj, wj);
+    vc0 = MAT_NEON_FMA(vc0, wi, wj);
+  }
+
+  va0 = MAT_NEON_ADD(MAT_NEON_ADD(va0, va1), MAT_NEON_ADD(va2, va3));
+  vb0 = MAT_NEON_ADD(MAT_NEON_ADD(vb0, vb1), MAT_NEON_ADD(vb2, vb3));
+  vc0 = MAT_NEON_ADD(MAT_NEON_ADD(vc0, vc1), MAT_NEON_ADD(vc2, vc3));
+
+  mat_elem_t a = MAT_NEON_ADDV(va0);
+  mat_elem_t b = MAT_NEON_ADDV(vb0);
+  mat_elem_t c = MAT_NEON_ADDV(vc0);
+
+  for (; k < m; k++) {
+    a += col_i[k] * col_i[k];
+    b += col_j[k] * col_j[k];
+    c += col_i[k] * col_j[k];
+  }
+
+  *a_out = a; *b_out = b; *c_out = c;
+}
+
+// NEON: Apply Jacobi rotation to columns i and j (column-major W)
+MAT_INTERNAL_STATIC void mat_svd_rotate_cols_neon_impl(
+    mat_elem_t *W_cm, size_t m, size_t i, size_t j,
+    mat_elem_t cs, mat_elem_t sn) {
+
+  mat_elem_t *col_i = &W_cm[i * m];
+  mat_elem_t *col_j = &W_cm[j * m];
+
+  MAT_NEON_TYPE vcs = MAT_NEON_DUP(cs);
+  MAT_NEON_TYPE vsn = MAT_NEON_DUP(sn);
+
+  size_t k = 0;
+  for (; k + MAT_NEON_WIDTH <= m; k += MAT_NEON_WIDTH) {
+    MAT_NEON_TYPE wi = MAT_NEON_LOAD(&col_i[k]);
+    MAT_NEON_TYPE wj = MAT_NEON_LOAD(&col_j[k]);
+
+    // new_i = cs * wi - sn * wj
+    // new_j = sn * wi + cs * wj
+    MAT_NEON_TYPE new_i = MAT_NEON_FMS(MAT_NEON_DUP(0), vsn, wj);
+    new_i = MAT_NEON_FMA(new_i, vcs, wi);
+    MAT_NEON_TYPE new_j = MAT_NEON_FMA(MAT_NEON_DUP(0), vsn, wi);
+    new_j = MAT_NEON_FMA(new_j, vcs, wj);
+
+    MAT_NEON_STORE(&col_i[k], new_i);
+    MAT_NEON_STORE(&col_j[k], new_j);
+  }
+
+  for (; k < m; k++) {
+    mat_elem_t wi = col_i[k];
+    mat_elem_t wj = col_j[k];
+    col_i[k] = cs * wi - sn * wj;
+    col_j[k] = sn * wi + cs * wj;
+  }
+}
+
+// NEON: Compute column norm squared (column-major W)
+MAT_INTERNAL_STATIC mat_elem_t mat_svd_col_norm_sq_neon_impl(
+    const mat_elem_t *W_cm, size_t m, size_t col) {
+
+  const mat_elem_t *c = &W_cm[col * m];
+
+  MAT_NEON_TYPE vsum0 = MAT_NEON_DUP(0), vsum1 = MAT_NEON_DUP(0);
+  MAT_NEON_TYPE vsum2 = MAT_NEON_DUP(0), vsum3 = MAT_NEON_DUP(0);
+
+  size_t k = 0;
+  for (; k + MAT_NEON_WIDTH * 4 <= m; k += MAT_NEON_WIDTH * 4) {
+    MAT_NEON_TYPE v0 = MAT_NEON_LOAD(&c[k]);
+    MAT_NEON_TYPE v1 = MAT_NEON_LOAD(&c[k + MAT_NEON_WIDTH]);
+    MAT_NEON_TYPE v2 = MAT_NEON_LOAD(&c[k + MAT_NEON_WIDTH * 2]);
+    MAT_NEON_TYPE v3 = MAT_NEON_LOAD(&c[k + MAT_NEON_WIDTH * 3]);
+    vsum0 = MAT_NEON_FMA(vsum0, v0, v0);
+    vsum1 = MAT_NEON_FMA(vsum1, v1, v1);
+    vsum2 = MAT_NEON_FMA(vsum2, v2, v2);
+    vsum3 = MAT_NEON_FMA(vsum3, v3, v3);
+  }
+
+  for (; k + MAT_NEON_WIDTH <= m; k += MAT_NEON_WIDTH) {
+    MAT_NEON_TYPE v = MAT_NEON_LOAD(&c[k]);
+    vsum0 = MAT_NEON_FMA(vsum0, v, v);
+  }
+
+  vsum0 = MAT_NEON_ADD(MAT_NEON_ADD(vsum0, vsum1), MAT_NEON_ADD(vsum2, vsum3));
+  mat_elem_t sum = MAT_NEON_ADDV(vsum0);
+
+  for (; k < m; k++) {
+    sum += c[k] * c[k];
+  }
+
+  return sum;
+}
+#endif // MAT_HAS_ARM_NEON
+
+// Scalar: Compute Gram matrix elements (column-major W)
+MAT_INTERNAL_STATIC void mat_svd_gram_scalar_impl(
+    const mat_elem_t *W_cm, size_t m, size_t i, size_t j,
+    mat_elem_t *a_out, mat_elem_t *b_out, mat_elem_t *c_out) {
+  const mat_elem_t *col_i = &W_cm[i * m];
+  const mat_elem_t *col_j = &W_cm[j * m];
+  mat_elem_t a = 0, b = 0, c = 0;
+  for (size_t k = 0; k < m; k++) {
+    a += col_i[k] * col_i[k];
+    b += col_j[k] * col_j[k];
+    c += col_i[k] * col_j[k];
+  }
+  *a_out = a; *b_out = b; *c_out = c;
+}
+
+// Scalar: Apply Jacobi rotation (column-major W)
+MAT_INTERNAL_STATIC void mat_svd_rotate_cols_scalar_impl(
+    mat_elem_t *W_cm, size_t m, size_t i, size_t j,
+    mat_elem_t cs, mat_elem_t sn) {
+  mat_elem_t *col_i = &W_cm[i * m];
+  mat_elem_t *col_j = &W_cm[j * m];
+  for (size_t k = 0; k < m; k++) {
+    mat_elem_t wi = col_i[k];
+    mat_elem_t wj = col_j[k];
+    col_i[k] = cs * wi - sn * wj;
+    col_j[k] = sn * wi + cs * wj;
+  }
+}
+
+// Scalar: Compute column norm squared (column-major W)
+MAT_INTERNAL_STATIC mat_elem_t mat_svd_col_norm_sq_scalar_impl(
+    const mat_elem_t *W_cm, size_t m, size_t col) {
+  const mat_elem_t *c = &W_cm[col * m];
+  mat_elem_t sum = 0;
+  for (size_t k = 0; k < m; k++) {
+    sum += c[k] * c[k];
+  }
+  return sum;
+}
+
+#ifdef MAT_HAS_ARM_NEON
+// NEON: Compute dot product of columns i and j (column-major W)
+MAT_INTERNAL_STATIC mat_elem_t mat_svd_dot_neon_impl(
+    const mat_elem_t *W_cm, size_t m, size_t i, size_t j) {
+  const mat_elem_t *col_i = &W_cm[i * m];
+  const mat_elem_t *col_j = &W_cm[j * m];
+
+  MAT_NEON_TYPE vc0 = MAT_NEON_DUP(0), vc1 = MAT_NEON_DUP(0);
+  MAT_NEON_TYPE vc2 = MAT_NEON_DUP(0), vc3 = MAT_NEON_DUP(0);
+
+  size_t k = 0;
+  for (; k + MAT_NEON_WIDTH * 4 <= m; k += MAT_NEON_WIDTH * 4) {
+    MAT_NEON_TYPE wi0 = MAT_NEON_LOAD(&col_i[k]);
+    MAT_NEON_TYPE wj0 = MAT_NEON_LOAD(&col_j[k]);
+    MAT_NEON_TYPE wi1 = MAT_NEON_LOAD(&col_i[k + MAT_NEON_WIDTH]);
+    MAT_NEON_TYPE wj1 = MAT_NEON_LOAD(&col_j[k + MAT_NEON_WIDTH]);
+    MAT_NEON_TYPE wi2 = MAT_NEON_LOAD(&col_i[k + MAT_NEON_WIDTH * 2]);
+    MAT_NEON_TYPE wj2 = MAT_NEON_LOAD(&col_j[k + MAT_NEON_WIDTH * 2]);
+    MAT_NEON_TYPE wi3 = MAT_NEON_LOAD(&col_i[k + MAT_NEON_WIDTH * 3]);
+    MAT_NEON_TYPE wj3 = MAT_NEON_LOAD(&col_j[k + MAT_NEON_WIDTH * 3]);
+
+    vc0 = MAT_NEON_FMA(vc0, wi0, wj0);
+    vc1 = MAT_NEON_FMA(vc1, wi1, wj1);
+    vc2 = MAT_NEON_FMA(vc2, wi2, wj2);
+    vc3 = MAT_NEON_FMA(vc3, wi3, wj3);
+  }
+
+  for (; k + MAT_NEON_WIDTH <= m; k += MAT_NEON_WIDTH) {
+    MAT_NEON_TYPE wi = MAT_NEON_LOAD(&col_i[k]);
+    MAT_NEON_TYPE wj = MAT_NEON_LOAD(&col_j[k]);
+    vc0 = MAT_NEON_FMA(vc0, wi, wj);
+  }
+
+  vc0 = MAT_NEON_ADD(MAT_NEON_ADD(vc0, vc1), MAT_NEON_ADD(vc2, vc3));
+  mat_elem_t c = MAT_NEON_ADDV(vc0);
+
+  for (; k < m; k++) {
+    c += col_i[k] * col_j[k];
+  }
+
+  return c;
+}
+#endif
+
+// Scalar: Compute dot product of columns i and j (column-major W)
+MAT_INTERNAL_STATIC mat_elem_t mat_svd_dot_scalar_impl(
+    const mat_elem_t *W_cm, size_t m, size_t i, size_t j) {
+  const mat_elem_t *col_i = &W_cm[i * m];
+  const mat_elem_t *col_j = &W_cm[j * m];
+  mat_elem_t c = 0;
+  for (size_t k = 0; k < m; k++) {
+    c += col_i[k] * col_j[k];
+  }
+  return c;
+}
+
 // Compute Jacobi rotation parameters to zero out off-diagonal element.
 // Given symmetric 2x2 matrix [[a, c], [c, b]], compute cos and sin such that
 // the rotation diagonalizes it.
@@ -3809,18 +4039,6 @@ static void mat_svd_jacobi_rotation(mat_elem_t a, mat_elem_t b, mat_elem_t c,
 
   *cs = 1 / MAT_SQRT(1 + t * t);
   *sn = t * (*cs);
-}
-
-// Apply Jacobi rotation to columns i and j of matrix W (m x n, row-major)
-static void mat_svd_rotate_cols(mat_elem_t *W, size_t m, size_t n,
-                                size_t i, size_t j,
-                                mat_elem_t cs, mat_elem_t sn) {
-  for (size_t row = 0; row < m; row++) {
-    mat_elem_t wi = W[row * n + i];
-    mat_elem_t wj = W[row * n + j];
-    W[row * n + i] = cs * wi - sn * wj;
-    W[row * n + j] = sn * wi + cs * wj;
-  }
 }
 
 MATDEF void mat_svd(const Mat *A, Mat *U, Vec *S, Mat *Vt) {
@@ -3857,82 +4075,109 @@ MATDEF void mat_svd(const Mat *A, Mat *U, Vec *S, Mat *Vt) {
   }
 
   // Now m >= n
-  // Working matrix W starts as a copy of A
-  mat_elem_t *W = (mat_elem_t *)MAT_MALLOC(m * n * sizeof(mat_elem_t));
-  MAT_ASSERT(W);
-  for (size_t i = 0; i < m * n; i++) {
-    W[i] = A->data[i];
+  // Working matrix W in COLUMN-MAJOR order for efficient SIMD on columns
+  // W_cm[row + col*m] = A[row, col]
+  mat_elem_t *W_cm = (mat_elem_t *)MAT_MALLOC(m * n * sizeof(mat_elem_t));
+  MAT_ASSERT(W_cm);
+  for (size_t col = 0; col < n; col++) {
+    for (size_t row = 0; row < m; row++) {
+      W_cm[row + col * m] = A->data[row * n + col];
+    }
   }
 
-  // V starts as identity (we accumulate rotations here, then transpose to Vt)
-  mat_elem_t *V = (mat_elem_t *)MAT_MALLOC(n * n * sizeof(mat_elem_t));
-  MAT_ASSERT(V);
+  // V in COLUMN-MAJOR order (starts as identity)
+  // V_cm[row + col*n] = V[row, col]
+  mat_elem_t *V_cm = (mat_elem_t *)MAT_MALLOC(n * n * sizeof(mat_elem_t));
+  MAT_ASSERT(V_cm);
   for (size_t i = 0; i < n * n; i++) {
-    V[i] = 0;
+    V_cm[i] = 0;
   }
   for (size_t i = 0; i < n; i++) {
-    V[i * n + i] = 1;
+    V_cm[i + i * n] = 1;  // diagonal in column-major
   }
 
   // Jacobi iteration: rotate pairs of columns until they're orthogonal
   const int max_sweeps = 30;
   const mat_elem_t tol = MAT_DEFAULT_EPSILON;
 
+  // Cache column norms for efficiency - avoids recomputing in inner loop
+  mat_elem_t *col_norms = (mat_elem_t *)MAT_MALLOC(n * sizeof(mat_elem_t));
+  MAT_ASSERT(col_norms);
+
+  // Initialize column norms
+  for (size_t j = 0; j < n; j++) {
+#ifdef MAT_HAS_ARM_NEON
+    col_norms[j] = mat_svd_col_norm_sq_neon_impl(W_cm, m, j);
+#else
+    col_norms[j] = mat_svd_col_norm_sq_scalar_impl(W_cm, m, j);
+#endif
+  }
+
   for (int sweep = 0; sweep < max_sweeps; sweep++) {
-    mat_elem_t max_off = 0;
+    int rotations = 0;
 
     // One sweep: process all pairs (i, j) with i < j
     for (size_t i = 0; i < n - 1; i++) {
       for (size_t j = i + 1; j < n; j++) {
-        // Compute elements of 2x2 Gram matrix for columns i and j
-        // G = W[:,i:j]^T * W[:,i:j] = [[a, c], [c, b]]
-        mat_elem_t a = 0, b = 0, c = 0;
-        for (size_t row = 0; row < m; row++) {
-          mat_elem_t wi = W[row * n + i];
-          mat_elem_t wj = W[row * n + j];
-          a += wi * wi;
-          b += wj * wj;
-          c += wi * wj;
-        }
-
-        // Track convergence
-        mat_elem_t off = MAT_FABS(c);
-        if (off > max_off) max_off = off;
+        // Use cached norms, only compute dot product
+        mat_elem_t a = col_norms[i];
+        mat_elem_t b = col_norms[j];
+        mat_elem_t c;
+#ifdef MAT_HAS_ARM_NEON
+        c = mat_svd_dot_neon_impl(W_cm, m, i, j);
+#else
+        c = mat_svd_dot_scalar_impl(W_cm, m, i, j);
+#endif
 
         // Skip if already orthogonal
+        mat_elem_t off = MAT_FABS(c);
         if (off < tol * MAT_SQRT(a * b + tol)) {
           continue;
         }
+
+        rotations++;
 
         // Compute rotation that orthogonalizes columns i and j
         mat_elem_t cs, sn;
         mat_svd_jacobi_rotation(a, b, c, &cs, &sn);
 
-        // Apply rotation to W
-        mat_svd_rotate_cols(W, m, n, i, j, cs, sn);
+        // Apply rotation to W and V (both column-major)
+#ifdef MAT_HAS_ARM_NEON
+        mat_svd_rotate_cols_neon_impl(W_cm, m, i, j, cs, sn);
+        mat_svd_rotate_cols_neon_impl(V_cm, n, i, j, cs, sn);
+#else
+        mat_svd_rotate_cols_scalar_impl(W_cm, m, i, j, cs, sn);
+        mat_svd_rotate_cols_scalar_impl(V_cm, n, i, j, cs, sn);
+#endif
 
-        // Apply same rotation to V (accumulate)
-        mat_svd_rotate_cols(V, n, n, i, j, cs, sn);
+        // Update cached norms after rotation
+        // new_norm_i² = cs² * a + sn² * b - 2*cs*sn*c
+        // new_norm_j² = sn² * a + cs² * b + 2*cs*sn*c
+        mat_elem_t cs2 = cs * cs, sn2 = sn * sn, cs_sn = cs * sn;
+        col_norms[i] = cs2 * a + sn2 * b - 2 * cs_sn * c;
+        col_norms[j] = sn2 * a + cs2 * b + 2 * cs_sn * c;
       }
     }
 
-    // Check convergence
-    if (max_off < tol) {
+    // Converged when no rotations needed
+    if (rotations == 0) {
       break;
     }
   }
 
+  MAT_FREE(col_norms);
+
   // Extract singular values (column norms of W) and normalize columns for U
-  // We'll store indices for sorting
   size_t *order = (size_t *)MAT_MALLOC(n * sizeof(size_t));
   mat_elem_t *sigma = (mat_elem_t *)MAT_MALLOC(n * sizeof(mat_elem_t));
   MAT_ASSERT(order && sigma);
 
   for (size_t j = 0; j < n; j++) {
-    mat_elem_t norm_sq = 0;
-    for (size_t i = 0; i < m; i++) {
-      norm_sq += W[i * n + j] * W[i * n + j];
-    }
+#ifdef MAT_HAS_ARM_NEON
+    mat_elem_t norm_sq = mat_svd_col_norm_sq_neon_impl(W_cm, m, j);
+#else
+    mat_elem_t norm_sq = mat_svd_col_norm_sq_scalar_impl(W_cm, m, j);
+#endif
     sigma[j] = MAT_SQRT(norm_sq);
     order[j] = j;
   }
@@ -3949,7 +4194,7 @@ MATDEF void mat_svd(const Mat *A, Mat *U, Vec *S, Mat *Vt) {
   }
 
   // Build U: columns are normalized columns of W (in sorted order)
-  // Initialize U to zero
+  // U is row-major, W_cm is column-major
   for (size_t i = 0; i < m * m; i++) {
     U->data[i] = 0;
   }
@@ -3960,8 +4205,9 @@ MATDEF void mat_svd(const Mat *A, Mat *U, Vec *S, Mat *Vt) {
     size_t src = order[j];
     mat_elem_t s = sigma[src];
     if (s > tol) {
-      for (size_t i = 0; i < m; i++) {
-        U->data[i * m + u_col] = W[i * n + src] / s;
+      // Copy column src from W_cm (column-major) to column u_col of U (row-major)
+      for (size_t row = 0; row < m; row++) {
+        U->data[row * m + u_col] = W_cm[row + src * m] / s;
       }
       u_col++;
     }
@@ -4047,23 +4293,21 @@ MATDEF void mat_svd(const Mat *A, Mat *U, Vec *S, Mat *Vt) {
     S->data[i] = sigma[order[i]];
   }
 
-  // Reorthogonalize V (accumulated rotations can drift for large matrices)
-  // Reuse v buffer (already allocated with size m, but n <= m so it's fine)
+  // Reorthogonalize V_cm (accumulated rotations can drift for large matrices)
+  // V_cm is column-major, so column col is at &V_cm[col*n]
   for (size_t col = 0; col < n; col++) {
-    // Copy column to v
-    for (size_t i = 0; i < n; i++) {
-      v[i] = V[i * n + col];
-    }
+    mat_elem_t *vcol = &V_cm[col * n];
 
     // Orthogonalize against previous columns (twice for stability)
     for (int pass = 0; pass < 2; pass++) {
       for (size_t j = 0; j < col; j++) {
+        mat_elem_t *vcol_j = &V_cm[j * n];
         mat_elem_t dot = 0;
         for (size_t i = 0; i < n; i++) {
-          dot += v[i] * V[i * n + j];
+          dot += vcol[i] * vcol_j[i];
         }
         for (size_t i = 0; i < n; i++) {
-          v[i] -= dot * V[i * n + j];
+          vcol[i] -= dot * vcol_j[i];
         }
       }
     }
@@ -4071,28 +4315,28 @@ MATDEF void mat_svd(const Mat *A, Mat *U, Vec *S, Mat *Vt) {
     // Normalize
     mat_elem_t norm_sq = 0;
     for (size_t i = 0; i < n; i++) {
-      norm_sq += v[i] * v[i];
+      norm_sq += vcol[i] * vcol[i];
     }
     mat_elem_t norm = MAT_SQRT(norm_sq);
     if (norm > tol) {
       for (size_t i = 0; i < n; i++) {
-        V[i * n + col] = v[i] / norm;
+        vcol[i] /= norm;
       }
     }
   }
 
   MAT_FREE(v);
 
-  // Build Vt by transposing V with column reordering
+  // Build Vt (row-major) from V_cm (column-major) with column reordering
+  // Vt[i, j] = V[j, order[i]] = V_cm[j + order[i]*n]
   for (size_t i = 0; i < n; i++) {
     for (size_t j = 0; j < n; j++) {
-      // Vt[i, j] = V[j, order[i]]
-      Vt->data[i * n + j] = V[j * n + order[i]];
+      Vt->data[i * n + j] = V_cm[j + order[i] * n];
     }
   }
 
-  MAT_FREE(W);
-  MAT_FREE(V);
+  MAT_FREE(W_cm);
+  MAT_FREE(V_cm);
   MAT_FREE(order);
   MAT_FREE(sigma);
 }
