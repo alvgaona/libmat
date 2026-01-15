@@ -3866,6 +3866,98 @@ static void mat_svd_jacobi_rotation(mat_elem_t a, mat_elem_t b, mat_elem_t c,
   *sn = t * (*cs);
 }
 
+// y += alpha * x where y is contiguous but x is strided
+// Used for Gram-Schmidt on row-major matrices
+#ifdef MAT_HAS_ARM_NEON
+MAT_INTERNAL_STATIC void mat_svd_axpy_strided_neon_impl(
+    mat_elem_t *y, mat_elem_t alpha, const mat_elem_t *x, size_t x_stride, size_t n) {
+  MAT_NEON_TYPE valpha = MAT_NEON_DUP(alpha);
+  size_t i = 0;
+
+  // Process 4 elements at a time using gather for x
+  for (; i + MAT_NEON_WIDTH <= n; i += MAT_NEON_WIDTH) {
+    MAT_NEON_TYPE vy = MAT_NEON_LOAD(&y[i]);
+    // Gather strided x elements into vector
+#ifdef MAT_USE_DOUBLE
+    MAT_NEON_TYPE vx = {x[i * x_stride], x[(i + 1) * x_stride]};
+#else
+    MAT_NEON_TYPE vx = {x[i * x_stride], x[(i + 1) * x_stride],
+                        x[(i + 2) * x_stride], x[(i + 3) * x_stride]};
+#endif
+    vy = MAT_NEON_FMA(vy, vx, valpha);
+    MAT_NEON_STORE(&y[i], vy);
+  }
+
+  // Scalar cleanup
+  for (; i < n; i++) {
+    y[i] += alpha * x[i * x_stride];
+  }
+}
+#endif
+
+MAT_INTERNAL_STATIC void mat_svd_axpy_strided_scalar_impl(
+    mat_elem_t *y, mat_elem_t alpha, const mat_elem_t *x, size_t x_stride, size_t n) {
+  for (size_t i = 0; i < n; i++) {
+    y[i] += alpha * x[i * x_stride];
+  }
+}
+
+// dot(y, x) where y is contiguous but x is strided
+#ifdef MAT_HAS_ARM_NEON
+MAT_INTERNAL_STATIC mat_elem_t mat_svd_dot_strided_neon_impl(
+    const mat_elem_t *y, const mat_elem_t *x, size_t x_stride, size_t n) {
+  MAT_NEON_TYPE vsum0 = MAT_NEON_DUP(0);
+  MAT_NEON_TYPE vsum1 = MAT_NEON_DUP(0);
+  size_t i = 0;
+
+  // Process 4 elements at a time using gather for x
+  for (; i + MAT_NEON_WIDTH * 2 <= n; i += MAT_NEON_WIDTH * 2) {
+    MAT_NEON_TYPE vy0 = MAT_NEON_LOAD(&y[i]);
+    MAT_NEON_TYPE vy1 = MAT_NEON_LOAD(&y[i + MAT_NEON_WIDTH]);
+#ifdef MAT_USE_DOUBLE
+    MAT_NEON_TYPE vx0 = {x[i * x_stride], x[(i + 1) * x_stride]};
+    MAT_NEON_TYPE vx1 = {x[(i + 2) * x_stride], x[(i + 3) * x_stride]};
+#else
+    MAT_NEON_TYPE vx0 = {x[i * x_stride], x[(i + 1) * x_stride],
+                         x[(i + 2) * x_stride], x[(i + 3) * x_stride]};
+    MAT_NEON_TYPE vx1 = {x[(i + 4) * x_stride], x[(i + 5) * x_stride],
+                         x[(i + 6) * x_stride], x[(i + 7) * x_stride]};
+#endif
+    vsum0 = MAT_NEON_FMA(vsum0, vy0, vx0);
+    vsum1 = MAT_NEON_FMA(vsum1, vy1, vx1);
+  }
+
+  for (; i + MAT_NEON_WIDTH <= n; i += MAT_NEON_WIDTH) {
+    MAT_NEON_TYPE vy = MAT_NEON_LOAD(&y[i]);
+#ifdef MAT_USE_DOUBLE
+    MAT_NEON_TYPE vx = {x[i * x_stride], x[(i + 1) * x_stride]};
+#else
+    MAT_NEON_TYPE vx = {x[i * x_stride], x[(i + 1) * x_stride],
+                        x[(i + 2) * x_stride], x[(i + 3) * x_stride]};
+#endif
+    vsum0 = MAT_NEON_FMA(vsum0, vy, vx);
+  }
+
+  vsum0 = MAT_NEON_ADD(vsum0, vsum1);
+  mat_elem_t sum = MAT_NEON_ADDV(vsum0);
+
+  // Scalar cleanup
+  for (; i < n; i++) {
+    sum += y[i] * x[i * x_stride];
+  }
+  return sum;
+}
+#endif
+
+MAT_INTERNAL_STATIC mat_elem_t mat_svd_dot_strided_scalar_impl(
+    const mat_elem_t *y, const mat_elem_t *x, size_t x_stride, size_t n) {
+  mat_elem_t sum = 0;
+  for (size_t i = 0; i < n; i++) {
+    sum += y[i] * x[i * x_stride];
+  }
+  return sum;
+}
+
 MATDEF void mat_svd(const Mat *A, Mat *U, Vec *S, Mat *Vt) {
   MAT_ASSERT_MAT(A);
   MAT_ASSERT_MAT(U);
@@ -3998,9 +4090,7 @@ MATDEF void mat_svd(const Mat *A, Mat *U, Vec *S, Mat *Vt) {
 
   // Build U: columns are normalized columns of W (in sorted order)
   // U is row-major, W->data is column-major
-  for (size_t i = 0; i < m * m; i++) {
-    U->data[i] = 0;
-  }
+  memset(U->data, 0, m * m * sizeof(mat_elem_t));
 
   // Track how many columns of U we've properly filled
   size_t u_col = 0;
@@ -4009,8 +4099,9 @@ MATDEF void mat_svd(const Mat *A, Mat *U, Vec *S, Mat *Vt) {
     mat_elem_t s = sigma[src];
     if (s > tol) {
       // Copy column src from W->data (column-major) to column u_col of U (row-major)
+      mat_elem_t inv_s = 1 / s;
       for (size_t row = 0; row < m; row++) {
-        U->data[row * m + u_col] = W->data[row + src * m] / s;
+        U->data[row * m + u_col] = W->data[row + src * m] * inv_s;
       }
       u_col++;
     }
@@ -4032,25 +4123,24 @@ MATDEF void mat_svd(const Mat *A, Mat *U, Vec *S, Mat *Vt) {
     // Orthogonalize against previous columns (twice for stability)
     for (int pass = 0; pass < 2; pass++) {
       for (size_t j = 0; j < col; j++) {
-        mat_elem_t dot = 0;
-        for (size_t i = 0; i < m; i++) {
-          dot += v[i] * U->data[i * m + j];
-        }
-        for (size_t i = 0; i < m; i++) {
-          v[i] -= dot * U->data[i * m + j];
-        }
+#ifdef MAT_HAS_ARM_NEON
+        mat_elem_t dot = mat_svd_dot_strided_neon_impl(v, &U->data[j], m, m);
+        mat_svd_axpy_strided_neon_impl(v, -dot, &U->data[j], m, m);
+#else
+        mat_elem_t dot = mat_svd_dot_strided_scalar_impl(v, &U->data[j], m, m);
+        mat_svd_axpy_strided_scalar_impl(v, -dot, &U->data[j], m, m);
+#endif
       }
     }
 
     // Normalize
-    mat_elem_t norm_sq = 0;
-    for (size_t i = 0; i < m; i++) {
-      norm_sq += v[i] * v[i];
-    }
+    Vec vv = {.rows = m, .cols = 1, .data = v};
+    mat_elem_t norm_sq = mat_dot(&vv, &vv);
     mat_elem_t norm = MAT_SQRT(norm_sq);
     if (norm > tol) {
+      mat_elem_t inv_norm = 1 / norm;
       for (size_t i = 0; i < m; i++) {
-        U->data[i * m + col] = v[i] / norm;
+        U->data[i * m + col] = v[i] * inv_norm;
       }
     }
   }
@@ -4058,34 +4148,32 @@ MATDEF void mat_svd(const Mat *A, Mat *U, Vec *S, Mat *Vt) {
   // Now complete the basis with additional columns from standard basis vectors
   for (size_t basis = 0; basis < m && u_col < m; basis++) {
     // Start with e_basis (standard basis vector)
-    for (size_t i = 0; i < m; i++) {
-      v[i] = (i == basis) ? 1 : 0;
-    }
+    memset(v, 0, m * sizeof(mat_elem_t));
+    v[basis] = 1;
 
     // Orthogonalize against all existing columns (twice for stability)
     for (int pass = 0; pass < 2; pass++) {
       for (size_t j = 0; j < u_col; j++) {
-        mat_elem_t dot = 0;
-        for (size_t i = 0; i < m; i++) {
-          dot += v[i] * U->data[i * m + j];
-        }
-        for (size_t i = 0; i < m; i++) {
-          v[i] -= dot * U->data[i * m + j];
-        }
+#ifdef MAT_HAS_ARM_NEON
+        mat_elem_t dot = mat_svd_dot_strided_neon_impl(v, &U->data[j], m, m);
+        mat_svd_axpy_strided_neon_impl(v, -dot, &U->data[j], m, m);
+#else
+        mat_elem_t dot = mat_svd_dot_strided_scalar_impl(v, &U->data[j], m, m);
+        mat_svd_axpy_strided_scalar_impl(v, -dot, &U->data[j], m, m);
+#endif
       }
     }
 
     // Compute norm
-    mat_elem_t norm_sq = 0;
-    for (size_t i = 0; i < m; i++) {
-      norm_sq += v[i] * v[i];
-    }
+    Vec vv = {.rows = m, .cols = 1, .data = v};
+    mat_elem_t norm_sq = mat_dot(&vv, &vv);
     mat_elem_t norm = MAT_SQRT(norm_sq);
 
     // If norm is significant, add as new column
     if (norm > tol) {
+      mat_elem_t inv_norm = 1 / norm;
       for (size_t i = 0; i < m; i++) {
-        U->data[i * m + u_col] = v[i] / norm;
+        U->data[i * m + u_col] = v[i] * inv_norm;
       }
       u_col++;
     }
@@ -4102,29 +4190,20 @@ MATDEF void mat_svd(const Mat *A, Mat *U, Vec *S, Mat *Vt) {
     mat_elem_t *vcol = &V->data[col * n];
 
     // Orthogonalize against previous columns (twice for stability)
+    Vec vc = {.rows = n, .cols = 1, .data = vcol};
     for (int pass = 0; pass < 2; pass++) {
       for (size_t j = 0; j < col; j++) {
-        mat_elem_t *vcol_j = &V->data[j * n];
-        mat_elem_t dot = 0;
-        for (size_t i = 0; i < n; i++) {
-          dot += vcol[i] * vcol_j[i];
-        }
-        for (size_t i = 0; i < n; i++) {
-          vcol[i] -= dot * vcol_j[i];
-        }
+        Vec vj = {.rows = n, .cols = 1, .data = &V->data[j * n]};
+        mat_elem_t dot = mat_dot(&vc, &vj);
+        mat_axpy(&vc, -dot, &vj);  // vc -= dot * vj
       }
     }
 
     // Normalize
-    mat_elem_t norm_sq = 0;
-    for (size_t i = 0; i < n; i++) {
-      norm_sq += vcol[i] * vcol[i];
-    }
+    mat_elem_t norm_sq = mat_dot(&vc, &vc);
     mat_elem_t norm = MAT_SQRT(norm_sq);
     if (norm > tol) {
-      for (size_t i = 0; i < n; i++) {
-        vcol[i] /= norm;
-      }
+      mat_scale(&vc, 1 / norm);
     }
   }
 
