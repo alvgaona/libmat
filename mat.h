@@ -178,6 +178,7 @@ typedef float mat_elem_t;
 #define MAT_NEON_MAXV_U(x) (vgetq_lane_u64(x, 0) | vgetq_lane_u64(x, 1))
 #define MAT_NEON_ADDV_U(x) (vgetq_lane_u64(x, 0) + vgetq_lane_u64(x, 1))
 #define MAT_NEON_ADD_U vaddq_u64
+#define MAT_NEON_MUL vmulq_f64
 #else
 // NEON single precision (4 floats per 128-bit register)
 #define MAT_NEON_TYPE float32x4_t
@@ -203,6 +204,7 @@ typedef float mat_elem_t;
 #define MAT_NEON_MAXV_U(x) vmaxvq_u32(x)
 #define MAT_NEON_ADDV_U(x) vaddvq_u32(x)
 #define MAT_NEON_ADD_U vaddq_u32
+#define MAT_NEON_MUL vmulq_f32
 #endif
 
 // Accumulator macros for overflow-safe reductions (always use double)
@@ -389,6 +391,9 @@ MATDEF Mat *mat_rdeep_copy(const Mat *m);
 // Get element at (row, col). Bounds checked via MAT_ASSERT.
 MATDEF mat_elem_t mat_at(const Mat *mat, size_t row, size_t col);
 
+// Set element at (row, col). Bounds checked via MAT_ASSERT.
+MATDEF void mat_set_at(Mat *m, size_t row, size_t col, mat_elem_t value);
+
 // Get matrix dimensions as {rows, cols} struct.
 MATDEF MatSize mat_size(const Mat *m);
 
@@ -451,6 +456,11 @@ MATDEF void mat_scale(Mat *out, mat_elem_t k);
 
 // Return m scaled by k. Allocates new matrix.
 MATDEF Mat *mat_rscale(const Mat *m, mat_elem_t k);
+
+// Normalize vector in place: v = v / ||v||. Returns the norm.
+// If norm < MAT_DEFAULT_EPSILON, vector is unchanged and 0 is returned.
+// SIMD-optimized.
+MATDEF mat_elem_t mat_normalize(Mat *v);
 
 // out[i] += k. In-place scalar addition.
 MATDEF void mat_add_scalar(Mat *out, mat_elem_t k);
@@ -550,6 +560,10 @@ MATDEF Vec *mat_row(const Mat *m, size_t row);
 
 // Extract column as column vector. Allocates new vector.
 MATDEF Vec *mat_col(const Mat *m, size_t col);
+
+// Return a view of row as Vec (no allocation, no copy).
+// The returned Vec points to data owned by m; do not free it.
+MATDEF Vec mat_row_view(const Mat *m, size_t row);
 
 // Extract submatrix m[row_start:row_end, col_start:col_end]. Allocates new
 // matrix. Indices are inclusive start, exclusive end.
@@ -892,6 +906,11 @@ MATDEF mat_elem_t mat_at(const Mat *m, size_t row, size_t col) {
   return m->data[row * m->cols + col];
 }
 
+MATDEF void mat_set_at(Mat *m, size_t row, size_t col, mat_elem_t value) {
+  MAT_ASSERT_MAT(m);
+  m->data[row * m->cols + col] = value;
+}
+
 MATDEF MatSize mat_size(const Mat *m) {
   MatSize size = {m->rows, m->cols};
   return size;
@@ -1165,8 +1184,30 @@ MATDEF void mat_atan2(Mat *out, const Mat *y, const Mat *x) {
 MATDEF void mat_scale(Mat *out, mat_elem_t k) {
   MAT_ASSERT_MAT(out);
 
-  for (size_t i = 0; i < out->rows * out->cols; i++) {
-    out->data[i] *= k;
+  size_t len = out->rows * out->cols;
+  mat_elem_t *p = out->data;
+  size_t i = 0;
+
+#ifdef MAT_HAS_ARM_NEON
+  MAT_NEON_TYPE vk = MAT_NEON_DUP(k);
+  for (; i + MAT_NEON_WIDTH * 4 <= len; i += MAT_NEON_WIDTH * 4) {
+    MAT_NEON_TYPE v0 = MAT_NEON_LOAD(&p[i]);
+    MAT_NEON_TYPE v1 = MAT_NEON_LOAD(&p[i + MAT_NEON_WIDTH]);
+    MAT_NEON_TYPE v2 = MAT_NEON_LOAD(&p[i + MAT_NEON_WIDTH * 2]);
+    MAT_NEON_TYPE v3 = MAT_NEON_LOAD(&p[i + MAT_NEON_WIDTH * 3]);
+    MAT_NEON_STORE(&p[i], MAT_NEON_MUL(v0, vk));
+    MAT_NEON_STORE(&p[i + MAT_NEON_WIDTH], MAT_NEON_MUL(v1, vk));
+    MAT_NEON_STORE(&p[i + MAT_NEON_WIDTH * 2], MAT_NEON_MUL(v2, vk));
+    MAT_NEON_STORE(&p[i + MAT_NEON_WIDTH * 3], MAT_NEON_MUL(v3, vk));
+  }
+  for (; i + MAT_NEON_WIDTH <= len; i += MAT_NEON_WIDTH) {
+    MAT_NEON_TYPE v = MAT_NEON_LOAD(&p[i]);
+    MAT_NEON_STORE(&p[i], MAT_NEON_MUL(v, vk));
+  }
+#endif
+
+  for (; i < len; i++) {
+    p[i] *= k;
   }
 }
 
@@ -1176,6 +1217,16 @@ MATDEF Mat *mat_rscale(const Mat *m, mat_elem_t k) {
   mat_scale(result, k);
 
   return result;
+}
+
+MATDEF mat_elem_t mat_normalize(Mat *v) {
+  MAT_ASSERT_MAT(v);
+
+  mat_elem_t norm = mat_norm2(v);
+  if (norm > MAT_DEFAULT_EPSILON) {
+    mat_scale(v, 1 / norm);
+  }
+  return norm;
 }
 
 MATDEF void mat_add_scalar(Mat *out, mat_elem_t k) {
@@ -2575,6 +2626,14 @@ MATDEF Vec *mat_col(const Mat *m, size_t col) {
   for (size_t i = 0; i < m->rows; i++) {
     v->data[i] = m->data[i * m->cols + col];
   }
+  return v;
+}
+
+MATDEF Vec mat_row_view(const Mat *m, size_t row) {
+  MAT_ASSERT_MAT(m);
+  MAT_ASSERT(row < m->rows && "mat_row_view: row index out of bounds");
+
+  Vec v = {.rows = m->cols, .cols = 1, .data = &m->data[row * m->cols]};
   return v;
 }
 
@@ -3983,18 +4042,23 @@ static void mat_svd_jacobi_rotation(mat_elem_t a, mat_elem_t b, mat_elem_t c,
   *sn = t * (*cs);
 }
 
-// y += alpha * x where y is contiguous but x is strided
+// y += alpha * X[:,col] where y is contiguous Vec and X is row-major Mat
 // Used for Gram-Schmidt on row-major matrices
 #ifdef MAT_HAS_ARM_NEON
 MAT_INTERNAL_STATIC void
-mat_svd_axpy_strided_neon_impl(mat_elem_t *y, mat_elem_t alpha,
-                               const mat_elem_t *x, size_t x_stride, size_t n) {
+mat_svd_axpy_strided_neon_impl(Vec *y, mat_elem_t alpha,
+                               const Mat *X, size_t col) {
+  const mat_elem_t *x = &X->data[col];
+  size_t x_stride = X->cols;
+  size_t n = X->rows;
+  mat_elem_t *yp = y->data;
+
   MAT_NEON_TYPE valpha = MAT_NEON_DUP(alpha);
   size_t i = 0;
 
   // Process 4 elements at a time using gather for x
   for (; i + MAT_NEON_WIDTH <= n; i += MAT_NEON_WIDTH) {
-    MAT_NEON_TYPE vy = MAT_NEON_LOAD(&y[i]);
+    MAT_NEON_TYPE vy = MAT_NEON_LOAD(&yp[i]);
     // Gather strided x elements into vector
 #ifdef MAT_DOUBLE_PRECISION
     MAT_NEON_TYPE vx = {x[i * x_stride], x[(i + 1) * x_stride]};
@@ -4003,38 +4067,46 @@ mat_svd_axpy_strided_neon_impl(mat_elem_t *y, mat_elem_t alpha,
                         x[(i + 2) * x_stride], x[(i + 3) * x_stride]};
 #endif
     vy = MAT_NEON_FMA(vy, vx, valpha);
-    MAT_NEON_STORE(&y[i], vy);
+    MAT_NEON_STORE(&yp[i], vy);
   }
 
   // Scalar cleanup
   for (; i < n; i++) {
-    y[i] += alpha * x[i * x_stride];
+    yp[i] += alpha * x[i * x_stride];
   }
 }
 #endif
 
-MAT_INTERNAL_STATIC void mat_svd_axpy_strided_scalar_impl(mat_elem_t *y,
+MAT_INTERNAL_STATIC void mat_svd_axpy_strided_scalar_impl(Vec *y,
                                                           mat_elem_t alpha,
-                                                          const mat_elem_t *x,
-                                                          size_t x_stride,
-                                                          size_t n) {
+                                                          const Mat *X,
+                                                          size_t col) {
+  const mat_elem_t *x = &X->data[col];
+  size_t x_stride = X->cols;
+  size_t n = X->rows;
+
   for (size_t i = 0; i < n; i++) {
-    y[i] += alpha * x[i * x_stride];
+    y->data[i] += alpha * x[i * x_stride];
   }
 }
 
-// dot(y, x) where y is contiguous but x is strided
+// dot(y, X[:,col]) where y is contiguous Vec and X is row-major Mat
 #ifdef MAT_HAS_ARM_NEON
 MAT_INTERNAL_STATIC mat_elem_t mat_svd_dot_strided_neon_impl(
-    const mat_elem_t *y, const mat_elem_t *x, size_t x_stride, size_t n) {
+    const Vec *y, const Mat *X, size_t col) {
+  const mat_elem_t *yp = y->data;
+  const mat_elem_t *x = &X->data[col];
+  size_t x_stride = X->cols;
+  size_t n = X->rows;
+
   MAT_NEON_TYPE vsum0 = MAT_NEON_DUP(0);
   MAT_NEON_TYPE vsum1 = MAT_NEON_DUP(0);
   size_t i = 0;
 
   // Process 4 elements at a time using gather for x
   for (; i + MAT_NEON_WIDTH * 2 <= n; i += MAT_NEON_WIDTH * 2) {
-    MAT_NEON_TYPE vy0 = MAT_NEON_LOAD(&y[i]);
-    MAT_NEON_TYPE vy1 = MAT_NEON_LOAD(&y[i + MAT_NEON_WIDTH]);
+    MAT_NEON_TYPE vy0 = MAT_NEON_LOAD(&yp[i]);
+    MAT_NEON_TYPE vy1 = MAT_NEON_LOAD(&yp[i + MAT_NEON_WIDTH]);
 #ifdef MAT_DOUBLE_PRECISION
     MAT_NEON_TYPE vx0 = {x[i * x_stride], x[(i + 1) * x_stride]};
     MAT_NEON_TYPE vx1 = {x[(i + 2) * x_stride], x[(i + 3) * x_stride]};
@@ -4049,7 +4121,7 @@ MAT_INTERNAL_STATIC mat_elem_t mat_svd_dot_strided_neon_impl(
   }
 
   for (; i + MAT_NEON_WIDTH <= n; i += MAT_NEON_WIDTH) {
-    MAT_NEON_TYPE vy = MAT_NEON_LOAD(&y[i]);
+    MAT_NEON_TYPE vy = MAT_NEON_LOAD(&yp[i]);
 #ifdef MAT_DOUBLE_PRECISION
     MAT_NEON_TYPE vx = {x[i * x_stride], x[(i + 1) * x_stride]};
 #else
@@ -4064,19 +4136,87 @@ MAT_INTERNAL_STATIC mat_elem_t mat_svd_dot_strided_neon_impl(
 
   // Scalar cleanup
   for (; i < n; i++) {
-    sum += y[i] * x[i * x_stride];
+    sum += yp[i] * x[i * x_stride];
   }
   return sum;
 }
 #endif
 
 MAT_INTERNAL_STATIC mat_elem_t mat_svd_dot_strided_scalar_impl(
-    const mat_elem_t *y, const mat_elem_t *x, size_t x_stride, size_t n) {
+    const Vec *y, const Mat *X, size_t col) {
+  const mat_elem_t *x = &X->data[col];
+  size_t x_stride = X->cols;
+  size_t n = X->rows;
+
   mat_elem_t sum = 0;
   for (size_t i = 0; i < n; i++) {
-    sum += y[i] * x[i * x_stride];
+    sum += y->data[i] * x[i * x_stride];
   }
   return sum;
+}
+
+// Max column L2 norm for column-major matrix
+// Returns max_j ||data[:,j]||_2 where column j is at data[j*col_len]
+MAT_INTERNAL_STATIC mat_elem_t mat_max_col_norm_(
+    const mat_elem_t *data, size_t col_len, size_t n_cols) {
+  mat_elem_t max_norm_sq = 0;
+  for (size_t j = 0; j < n_cols; j++) {
+    Vec col = {.rows = col_len, .cols = 1, .data = (mat_elem_t *)&data[j * col_len]};
+    mat_elem_t norm_sq = mat_dot(&col, &col);
+    if (norm_sq > max_norm_sq) max_norm_sq = norm_sq;
+  }
+  return MAT_SQRT(max_norm_sq);
+}
+
+// Shared Jacobi iteration for SVD/pinv
+// W is n×m column-major (column j of A stored at W->data[j*m])
+// V is n×n column-major (accumulates right singular vectors)
+// After iteration: W[:,j] = σ_j * u_j, V[:,j] = v_j
+MAT_INTERNAL_STATIC void mat_svd_jacobi_iter_(Mat *W, Mat *V, size_t m, size_t n) {
+  const int max_sweeps = 30;
+  const mat_elem_t tol = MAT_DEFAULT_EPSILON;
+
+  mat_elem_t *col_norms = (mat_elem_t *)MAT_MALLOC(n * sizeof(mat_elem_t));
+  for (size_t j = 0; j < n; j++) {
+    Vec v = mat_row_view(W, j);
+    col_norms[j] = mat_dot(&v, &v);
+  }
+
+  for (int sweep = 0; sweep < max_sweeps; sweep++) {
+    int rotations = 0;
+
+    for (size_t i = 0; i < n - 1; i++) {
+      for (size_t j = i + 1; j < n; j++) {
+        mat_elem_t a = col_norms[i];
+        mat_elem_t b = col_norms[j];
+        Vec vi = mat_row_view(W, i);
+        Vec vj = mat_row_view(W, j);
+        mat_elem_t c = mat_dot(&vi, &vj);
+
+        if (MAT_FABS(c) < tol * MAT_SQRT(a * b + tol)) continue;
+
+        rotations++;
+        mat_elem_t cs, sn;
+        mat_svd_jacobi_rotation(a, b, c, &cs, &sn);
+
+#ifdef MAT_HAS_ARM_NEON
+        mat_svd_rotate_cols_neon_impl(W->data, m, i, j, cs, sn);
+        mat_svd_rotate_cols_neon_impl(V->data, n, i, j, cs, sn);
+#else
+        mat_svd_rotate_cols_scalar_impl(W->data, m, i, j, cs, sn);
+        mat_svd_rotate_cols_scalar_impl(V->data, n, i, j, cs, sn);
+#endif
+
+        mat_elem_t cs2 = cs * cs, sn2 = sn * sn, cs_sn = cs * sn;
+        col_norms[i] = cs2 * a + sn2 * b - 2 * cs_sn * c;
+        col_norms[j] = sn2 * a + cs2 * b + 2 * cs_sn * c;
+      }
+    }
+
+    if (rotations == 0) break;
+  }
+
+  MAT_FREE(col_norms);
 }
 
 MATDEF void mat_svd(const Mat *A, Mat *U, Vec *S, Mat *Vt) {
@@ -4113,98 +4253,33 @@ MATDEF void mat_svd(const Mat *A, Mat *U, Vec *S, Mat *Vt) {
   }
 
   // Now m >= n
-  // Working matrix W stored as transpose (n×m) so "columns" are contiguous rows
-  // W->data[j * m + row] = A[row, j] = column j of A
-  Mat *W = mat_rt(A); // n×m matrix: row j = column j of A
-
-  // V stored as transpose (n×n) starting as identity
-  // V->data[j * n + row] = V[row, j] = column j of V
+  Mat *W = mat_rt(A);
   Mat *V = mat_mat(n, n);
-  mat_eye(V); // identity: column j has 1 at position j
+  mat_eye(V);
 
-  // Jacobi iteration: rotate pairs of columns until they're orthogonal
-  const int max_sweeps = 30;
+  // Run Jacobi iteration
+  mat_svd_jacobi_iter_(W, V, m, n);
+
   const mat_elem_t tol = MAT_DEFAULT_EPSILON;
 
-  // Cache column norms for efficiency - avoids recomputing in inner loop
-  Vec *col_norms = mat_vec(n);
-
-  // Initialize column norms using mat_dot(v, v)
-  for (size_t j = 0; j < n; j++) {
-    Vec v = {.rows = m, .cols = 1, .data = &W->data[j * m]};
-    col_norms->data[j] = mat_dot(&v, &v);
-  }
-
-  for (int sweep = 0; sweep < max_sweeps; sweep++) {
-    int rotations = 0;
-
-    // One sweep: process all pairs (i, j) with i < j
-    for (size_t i = 0; i < n - 1; i++) {
-      for (size_t j = i + 1; j < n; j++) {
-        // Use cached norms, only compute dot product
-        mat_elem_t a = col_norms->data[i];
-        mat_elem_t b = col_norms->data[j];
-        // Use mat_dot with stack-allocated Vec wrappers (zero allocation)
-        Vec vi = {.rows = m, .cols = 1, .data = &W->data[i * m]};
-        Vec vj = {.rows = m, .cols = 1, .data = &W->data[j * m]};
-        mat_elem_t c = mat_dot(&vi, &vj);
-
-        // Skip if already orthogonal
-        mat_elem_t off = MAT_FABS(c);
-        if (off < tol * MAT_SQRT(a * b + tol)) {
-          continue;
-        }
-
-        rotations++;
-
-        // Compute rotation that orthogonalizes columns i and j
-        mat_elem_t cs, sn;
-        mat_svd_jacobi_rotation(a, b, c, &cs, &sn);
-
-        // Apply rotation to W and V (both column-major)
-#ifdef MAT_HAS_ARM_NEON
-        mat_svd_rotate_cols_neon_impl(W->data, m, i, j, cs, sn);
-        mat_svd_rotate_cols_neon_impl(V->data, n, i, j, cs, sn);
-#else
-        mat_svd_rotate_cols_scalar_impl(W->data, m, i, j, cs, sn);
-        mat_svd_rotate_cols_scalar_impl(V->data, n, i, j, cs, sn);
-#endif
-
-        // Update cached norms after rotation
-        // new_norm_i² = cs² * a + sn² * b - 2*cs*sn*c
-        // new_norm_j² = sn² * a + cs² * b + 2*cs*sn*c
-        mat_elem_t cs2 = cs * cs, sn2 = sn * sn, cs_sn = cs * sn;
-        col_norms->data[i] = cs2 * a + sn2 * b - 2 * cs_sn * c;
-        col_norms->data[j] = sn2 * a + cs2 * b + 2 * cs_sn * c;
-      }
-    }
-
-    // Converged when no rotations needed
-    if (rotations == 0) {
-      break;
-    }
-  }
-
-  MAT_FREE_MAT(col_norms);
-
   // Extract singular values (column norms of W) and normalize columns for U
-  size_t *order = (size_t *)MAT_MALLOC(n * sizeof(size_t));
-  mat_elem_t *sigma = (mat_elem_t *)MAT_MALLOC(n * sizeof(mat_elem_t));
+  Perm *order = mat_perm(n);
+  Vec *sigma = mat_vec(n);
   MAT_ASSERT(order && sigma);
 
   for (size_t j = 0; j < n; j++) {
-    Vec v = {.rows = m, .cols = 1, .data = &W->data[j * m]};
-    sigma[j] = MAT_SQRT(mat_dot(&v, &v));
-    order[j] = j;
+    Vec col = mat_row_view(W, j);
+    sigma->data[j] = mat_norm2(&col);
+    order->data[j] = j;
   }
 
   // Sort singular values in descending order (simple bubble sort for small n)
   for (size_t i = 0; i < n - 1; i++) {
     for (size_t j = i + 1; j < n; j++) {
-      if (sigma[order[j]] > sigma[order[i]]) {
-        size_t tmp = order[i];
-        order[i] = order[j];
-        order[j] = tmp;
+      if (sigma->data[order->data[j]] > sigma->data[order->data[i]]) {
+        size_t tmp = order->data[i];
+        order->data[i] = order->data[j];
+        order->data[j] = tmp;
       }
     }
   }
@@ -4216,8 +4291,8 @@ MATDEF void mat_svd(const Mat *A, Mat *U, Vec *S, Mat *Vt) {
   // Track how many columns of U we've properly filled
   size_t u_col = 0;
   for (size_t j = 0; j < n; j++) {
-    size_t src = order[j];
-    mat_elem_t s = sigma[src];
+    size_t src = order->data[j];
+    mat_elem_t s = sigma->data[src];
     if (s > tol) {
       // Copy column src from W->data (column-major) to column u_col of U
       // (row-major)
@@ -4233,37 +4308,32 @@ MATDEF void mat_svd(const Mat *A, Mat *U, Vec *S, Mat *Vt) {
   // reorthogonalization. We need to reorthogonalize the existing columns too
   // because the Jacobi iteration only produces approximately orthogonal
   // columns.
-  mat_elem_t *v = (mat_elem_t *)MAT_MALLOC(m * sizeof(mat_elem_t));
-  MAT_ASSERT(v);
+  Vec *v = mat_vec(m);
 
   // First, reorthogonalize the columns we got from W
   for (size_t col = 0; col < u_col; col++) {
     // Copy column to v
     for (size_t i = 0; i < m; i++) {
-      v[i] = U->data[i * m + col];
+      v->data[i] = U->data[i * m + col];
     }
 
     // Orthogonalize against previous columns (twice for stability)
     for (int pass = 0; pass < 2; pass++) {
       for (size_t j = 0; j < col; j++) {
 #ifdef MAT_HAS_ARM_NEON
-        mat_elem_t dot = mat_svd_dot_strided_neon_impl(v, &U->data[j], m, m);
-        mat_svd_axpy_strided_neon_impl(v, -dot, &U->data[j], m, m);
+        mat_elem_t dot = mat_svd_dot_strided_neon_impl(v, U, j);
+        mat_svd_axpy_strided_neon_impl(v, -dot, U, j);
 #else
-        mat_elem_t dot = mat_svd_dot_strided_scalar_impl(v, &U->data[j], m, m);
-        mat_svd_axpy_strided_scalar_impl(v, -dot, &U->data[j], m, m);
+        mat_elem_t dot = mat_svd_dot_strided_scalar_impl(v, U, j);
+        mat_svd_axpy_strided_scalar_impl(v, -dot, U, j);
 #endif
       }
     }
 
-    // Normalize
-    Vec vv = {.rows = m, .cols = 1, .data = v};
-    mat_elem_t norm_sq = mat_dot(&vv, &vv);
-    mat_elem_t norm = MAT_SQRT(norm_sq);
-    if (norm > tol) {
-      mat_elem_t inv_norm = 1 / norm;
+    // Normalize and copy back to U
+    if (mat_normalize(v) > tol) {
       for (size_t i = 0; i < m; i++) {
-        U->data[i * m + col] = v[i] * inv_norm;
+        U->data[i * m + col] = v->data[i];
       }
     }
   }
@@ -4271,32 +4341,26 @@ MATDEF void mat_svd(const Mat *A, Mat *U, Vec *S, Mat *Vt) {
   // Now complete the basis with additional columns from standard basis vectors
   for (size_t basis = 0; basis < m && u_col < m; basis++) {
     // Start with e_basis (standard basis vector)
-    memset(v, 0, m * sizeof(mat_elem_t));
-    v[basis] = 1;
+    memset(v->data, 0, m * sizeof(mat_elem_t));
+    v->data[basis] = 1;
 
     // Orthogonalize against all existing columns (twice for stability)
     for (int pass = 0; pass < 2; pass++) {
       for (size_t j = 0; j < u_col; j++) {
 #ifdef MAT_HAS_ARM_NEON
-        mat_elem_t dot = mat_svd_dot_strided_neon_impl(v, &U->data[j], m, m);
-        mat_svd_axpy_strided_neon_impl(v, -dot, &U->data[j], m, m);
+        mat_elem_t dot = mat_svd_dot_strided_neon_impl(v, U, j);
+        mat_svd_axpy_strided_neon_impl(v, -dot, U, j);
 #else
-        mat_elem_t dot = mat_svd_dot_strided_scalar_impl(v, &U->data[j], m, m);
-        mat_svd_axpy_strided_scalar_impl(v, -dot, &U->data[j], m, m);
+        mat_elem_t dot = mat_svd_dot_strided_scalar_impl(v, U, j);
+        mat_svd_axpy_strided_scalar_impl(v, -dot, U, j);
 #endif
       }
     }
 
-    // Compute norm
-    Vec vv = {.rows = m, .cols = 1, .data = v};
-    mat_elem_t norm_sq = mat_dot(&vv, &vv);
-    mat_elem_t norm = MAT_SQRT(norm_sq);
-
-    // If norm is significant, add as new column
-    if (norm > tol) {
-      mat_elem_t inv_norm = 1 / norm;
+    // Normalize and add as new column if norm is significant
+    if (mat_normalize(v) > tol) {
       for (size_t i = 0; i < m; i++) {
-        U->data[i * m + u_col] = v[i] * inv_norm;
+        U->data[i * m + u_col] = v->data[i];
       }
       u_col++;
     }
@@ -4304,46 +4368,41 @@ MATDEF void mat_svd(const Mat *A, Mat *U, Vec *S, Mat *Vt) {
 
   // Copy singular values to S (first k = min(m,n) = n since m >= n)
   for (size_t i = 0; i < k; i++) {
-    S->data[i] = sigma[order[i]];
+    S->data[i] = sigma->data[order->data[i]];
   }
 
-  // Reorthogonalize V->data (accumulated rotations can drift for large
-  // matrices) V->data is column-major, so column col is at &V->data[col*n]
+  // Reorthogonalize V (accumulated rotations can drift for large matrices)
+  // V is treated as column-major, so column col = row col in row-major storage
   for (size_t col = 0; col < n; col++) {
-    mat_elem_t *vcol = &V->data[col * n];
+    Vec vc = mat_row_view(V, col);
 
     // Orthogonalize against previous columns (twice for stability)
-    Vec vc = {.rows = n, .cols = 1, .data = vcol};
     for (int pass = 0; pass < 2; pass++) {
       for (size_t j = 0; j < col; j++) {
-        Vec vj = {.rows = n, .cols = 1, .data = &V->data[j * n]};
+        Vec vj = mat_row_view(V, j);
         mat_elem_t dot = mat_dot(&vc, &vj);
         mat_axpy(&vc, -dot, &vj); // vc -= dot * vj
       }
     }
 
     // Normalize
-    mat_elem_t norm_sq = mat_dot(&vc, &vc);
-    mat_elem_t norm = MAT_SQRT(norm_sq);
-    if (norm > tol) {
-      mat_scale(&vc, 1 / norm);
-    }
+    mat_normalize(&vc);
   }
 
-  MAT_FREE(v);
+  MAT_FREE_MAT(v);
 
   // Build Vt (row-major) from V->data (column-major) with column reordering
-  // Vt[i, j] = V[j, order[i]] = V->data[j + order[i]*n]
+  // Vt[i, j] = V[j, order->data[i]] = V->data[j + order->data[i]*n]
   for (size_t i = 0; i < n; i++) {
     for (size_t j = 0; j < n; j++) {
-      Vt->data[i * n + j] = V->data[j + order[i] * n];
+      Vt->data[i * n + j] = V->data[j + order->data[i] * n];
     }
   }
 
   MAT_FREE_MAT(W);
   MAT_FREE_MAT(V);
-  MAT_FREE(order);
-  MAT_FREE(sigma);
+  MAT_FREE_PERM(order);
+  MAT_FREE_MAT(sigma);
 }
 
 // Moore-Penrose pseudoinverse via thin SVD (Jacobi)
@@ -4371,89 +4430,31 @@ MATDEF void mat_pinv(Mat *out, const Mat *A) {
   }
 
   // Now m >= n
-  const mat_elem_t tol = MAT_DEFAULT_EPSILON;
-
-  // W stored column-major: column j at W->data[j * m]
-  // After Jacobi, W[:,j] = σ_j * u_j
   Mat *W = mat_rt(A);
-
-  // V stored column-major: column j at V->data[j * n]
   Mat *V = mat_mat(n, n);
   mat_eye(V);
 
-  // Cache column norms
-  mat_elem_t *col_norms = (mat_elem_t *)MAT_MALLOC(n * sizeof(mat_elem_t));
-  for (size_t j = 0; j < n; j++) {
-    Vec v = {.rows = m, .cols = 1, .data = &W->data[j * m]};
-    col_norms[j] = mat_dot(&v, &v);
-  }
-
-  // Jacobi iteration
-  const int max_sweeps = 30;
-  for (int sweep = 0; sweep < max_sweeps; sweep++) {
-    int rotations = 0;
-
-    for (size_t i = 0; i < n - 1; i++) {
-      for (size_t j = i + 1; j < n; j++) {
-        mat_elem_t a = col_norms[i];
-        mat_elem_t b = col_norms[j];
-        Vec vi = {.rows = m, .cols = 1, .data = &W->data[i * m]};
-        Vec vj = {.rows = m, .cols = 1, .data = &W->data[j * m]};
-        mat_elem_t c = mat_dot(&vi, &vj);
-
-        if (MAT_FABS(c) < tol * MAT_SQRT(a * b + tol)) continue;
-
-        rotations++;
-        mat_elem_t cs, sn;
-        mat_svd_jacobi_rotation(a, b, c, &cs, &sn);
-
-#ifdef MAT_HAS_ARM_NEON
-        mat_svd_rotate_cols_neon_impl(W->data, m, i, j, cs, sn);
-        mat_svd_rotate_cols_neon_impl(V->data, n, i, j, cs, sn);
-#else
-        mat_svd_rotate_cols_scalar_impl(W->data, m, i, j, cs, sn);
-        mat_svd_rotate_cols_scalar_impl(V->data, n, i, j, cs, sn);
-#endif
-
-        col_norms[i] = cs * cs * a + sn * sn * b - 2 * cs * sn * c;
-        col_norms[j] = sn * sn * a + cs * cs * b + 2 * cs * sn * c;
-      }
-    }
-
-    if (rotations == 0) break;
-  }
-
-  MAT_FREE(col_norms);
+  // Run Jacobi iteration
+  mat_svd_jacobi_iter_(W, V, m, n);
 
   // Extract singular values and compute pinv using rank-1 updates
   // W[:,j] = σ_j * u_j, so u_j = W[:,j] / σ_j
   // pinv = Σ (1/σ_j) * v_j * u_j^T = Σ (1/σ_j²) * v_j * W[:,j]^T
 
-  // Find max singular value for tolerance
-  mat_elem_t max_sigma = 0;
-  for (size_t j = 0; j < n; j++) {
-    Vec wj = {.rows = m, .cols = 1, .data = &W->data[j * m]};
-    mat_elem_t sigma = MAT_SQRT(mat_dot(&wj, &wj));
-    if (sigma > max_sigma) max_sigma = sigma;
-  }
-
-  size_t max_dim = m > n ? m : n;
-  mat_elem_t pinv_tol = (mat_elem_t)max_dim * max_sigma * MAT_DEFAULT_EPSILON;
+  // Tolerance based on max singular value
+  mat_elem_t max_sigma = mat_max_col_norm_(W->data, m, n);
+  mat_elem_t pinv_tol = (mat_elem_t)(m > n ? m : n) * max_sigma * MAT_DEFAULT_EPSILON;
 
   // Zero output
   memset(out->data, 0, n * m * sizeof(mat_elem_t));
 
   // Build pinv via rank-1 updates
   for (size_t j = 0; j < n; j++) {
-    Vec wj = {.rows = m, .cols = 1, .data = &W->data[j * m]};
+    Vec wj = mat_row_view(W, j);
     mat_elem_t sigma_sq = mat_dot(&wj, &wj);
-    mat_elem_t sigma = MAT_SQRT(sigma_sq);
 
-    if (sigma > pinv_tol) {
-      // v_j = V[:,j] (column j of V, contiguous)
-      Vec vj = {.rows = n, .cols = 1, .data = &V->data[j * n]};
-
-      // out += (1/σ²) * v_j * W[:,j]^T
+    if (sigma_sq > pinv_tol * pinv_tol) {
+      Vec vj = mat_row_view(V, j);
       mat_ger(out, 1 / sigma_sq, &vj, &wj);
     }
   }
