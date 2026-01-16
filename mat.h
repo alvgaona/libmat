@@ -4049,18 +4049,105 @@ mat_gemm_lower_strided_neon_impl(mat_elem_t *C, size_t ldc, mat_elem_t alpha,
 }
 #endif
 
+// SYRK 4x4 micro-kernel for off-diagonal blocks
+#ifdef MAT_HAS_ARM_NEON
+MAT_INTERNAL_STATIC void mat_syrk_kernel_4x4_neon(
+    mat_elem_t *C, size_t ldc, const mat_elem_t *A, size_t lda,
+    size_t i, size_t j, size_t k) {
+  MAT_NEON_TYPE acc00 = MAT_NEON_DUP(0), acc01 = MAT_NEON_DUP(0);
+  MAT_NEON_TYPE acc02 = MAT_NEON_DUP(0), acc03 = MAT_NEON_DUP(0);
+  MAT_NEON_TYPE acc10 = MAT_NEON_DUP(0), acc11 = MAT_NEON_DUP(0);
+  MAT_NEON_TYPE acc12 = MAT_NEON_DUP(0), acc13 = MAT_NEON_DUP(0);
+  MAT_NEON_TYPE acc20 = MAT_NEON_DUP(0), acc21 = MAT_NEON_DUP(0);
+  MAT_NEON_TYPE acc22 = MAT_NEON_DUP(0), acc23 = MAT_NEON_DUP(0);
+  MAT_NEON_TYPE acc30 = MAT_NEON_DUP(0), acc31 = MAT_NEON_DUP(0);
+  MAT_NEON_TYPE acc32 = MAT_NEON_DUP(0), acc33 = MAT_NEON_DUP(0);
+
+  size_t kk = 0;
+  for (; kk + MAT_NEON_WIDTH <= k; kk += MAT_NEON_WIDTH) {
+    MAT_NEON_TYPE a0 = MAT_NEON_LOAD(&A[(i + 0) * lda + kk]);
+    MAT_NEON_TYPE a1 = MAT_NEON_LOAD(&A[(i + 1) * lda + kk]);
+    MAT_NEON_TYPE a2 = MAT_NEON_LOAD(&A[(i + 2) * lda + kk]);
+    MAT_NEON_TYPE a3 = MAT_NEON_LOAD(&A[(i + 3) * lda + kk]);
+    MAT_NEON_TYPE b0 = MAT_NEON_LOAD(&A[(j + 0) * lda + kk]);
+    MAT_NEON_TYPE b1 = MAT_NEON_LOAD(&A[(j + 1) * lda + kk]);
+    MAT_NEON_TYPE b2 = MAT_NEON_LOAD(&A[(j + 2) * lda + kk]);
+    MAT_NEON_TYPE b3 = MAT_NEON_LOAD(&A[(j + 3) * lda + kk]);
+    acc00 = MAT_NEON_FMA(acc00, a0, b0);
+    acc01 = MAT_NEON_FMA(acc01, a0, b1);
+    acc02 = MAT_NEON_FMA(acc02, a0, b2);
+    acc03 = MAT_NEON_FMA(acc03, a0, b3);
+    acc10 = MAT_NEON_FMA(acc10, a1, b0);
+    acc11 = MAT_NEON_FMA(acc11, a1, b1);
+    acc12 = MAT_NEON_FMA(acc12, a1, b2);
+    acc13 = MAT_NEON_FMA(acc13, a1, b3);
+    acc20 = MAT_NEON_FMA(acc20, a2, b0);
+    acc21 = MAT_NEON_FMA(acc21, a2, b1);
+    acc22 = MAT_NEON_FMA(acc22, a2, b2);
+    acc23 = MAT_NEON_FMA(acc23, a2, b3);
+    acc30 = MAT_NEON_FMA(acc30, a3, b0);
+    acc31 = MAT_NEON_FMA(acc31, a3, b1);
+    acc32 = MAT_NEON_FMA(acc32, a3, b2);
+    acc33 = MAT_NEON_FMA(acc33, a3, b3);
+  }
+
+  C[(i + 0) * ldc + (j + 0)] -= MAT_NEON_ADDV(acc00);
+  C[(i + 0) * ldc + (j + 1)] -= MAT_NEON_ADDV(acc01);
+  C[(i + 0) * ldc + (j + 2)] -= MAT_NEON_ADDV(acc02);
+  C[(i + 0) * ldc + (j + 3)] -= MAT_NEON_ADDV(acc03);
+  C[(i + 1) * ldc + (j + 0)] -= MAT_NEON_ADDV(acc10);
+  C[(i + 1) * ldc + (j + 1)] -= MAT_NEON_ADDV(acc11);
+  C[(i + 1) * ldc + (j + 2)] -= MAT_NEON_ADDV(acc12);
+  C[(i + 1) * ldc + (j + 3)] -= MAT_NEON_ADDV(acc13);
+  C[(i + 2) * ldc + (j + 0)] -= MAT_NEON_ADDV(acc20);
+  C[(i + 2) * ldc + (j + 1)] -= MAT_NEON_ADDV(acc21);
+  C[(i + 2) * ldc + (j + 2)] -= MAT_NEON_ADDV(acc22);
+  C[(i + 2) * ldc + (j + 3)] -= MAT_NEON_ADDV(acc23);
+  C[(i + 3) * ldc + (j + 0)] -= MAT_NEON_ADDV(acc30);
+  C[(i + 3) * ldc + (j + 1)] -= MAT_NEON_ADDV(acc31);
+  C[(i + 3) * ldc + (j + 2)] -= MAT_NEON_ADDV(acc32);
+  C[(i + 3) * ldc + (j + 3)] -= MAT_NEON_ADDV(acc33);
+
+  // Scalar remainder for k
+  for (; kk < k; kk++) {
+    mat_elem_t a0 = A[(i + 0) * lda + kk], a1 = A[(i + 1) * lda + kk];
+    mat_elem_t a2 = A[(i + 2) * lda + kk], a3 = A[(i + 3) * lda + kk];
+    mat_elem_t b0 = A[(j + 0) * lda + kk], b1 = A[(j + 1) * lda + kk];
+    mat_elem_t b2 = A[(j + 2) * lda + kk], b3 = A[(j + 3) * lda + kk];
+    C[(i + 0) * ldc + (j + 0)] -= a0 * b0;
+    C[(i + 0) * ldc + (j + 1)] -= a0 * b1;
+    C[(i + 0) * ldc + (j + 2)] -= a0 * b2;
+    C[(i + 0) * ldc + (j + 3)] -= a0 * b3;
+    C[(i + 1) * ldc + (j + 0)] -= a1 * b0;
+    C[(i + 1) * ldc + (j + 1)] -= a1 * b1;
+    C[(i + 1) * ldc + (j + 2)] -= a1 * b2;
+    C[(i + 1) * ldc + (j + 3)] -= a1 * b3;
+    C[(i + 2) * ldc + (j + 0)] -= a2 * b0;
+    C[(i + 2) * ldc + (j + 1)] -= a2 * b1;
+    C[(i + 2) * ldc + (j + 2)] -= a2 * b2;
+    C[(i + 2) * ldc + (j + 3)] -= a2 * b3;
+    C[(i + 3) * ldc + (j + 0)] -= a3 * b0;
+    C[(i + 3) * ldc + (j + 1)] -= a3 * b1;
+    C[(i + 3) * ldc + (j + 2)] -= a3 * b2;
+    C[(i + 3) * ldc + (j + 3)] -= a3 * b3;
+  }
+}
+#endif
+
 // Symmetric rank-k update for lower triangle: C -= A * A^T
-// Specialized SYRK that avoids unnecessary packing since A=B
+// Uses kij loop order with vectorized updates
+
 MAT_INTERNAL_STATIC void mat_syrk_lower_strided(mat_elem_t *C, size_t ldc,
                                                 const mat_elem_t *A, size_t lda,
                                                 size_t m, size_t k) {
 #ifdef MAT_HAS_ARM_NEON
-  // Process 4x4 blocks (no packing needed since A=B)
+  // Process i rows in groups of 4
   size_t i = 0;
   for (; i + 4 <= m; i += 4) {
-    // Full 4x4 blocks strictly below diagonal (j + 4 <= i)
+    // Off-diagonal: process j < i in 4x4 blocks
     size_t j = 0;
     for (; j + 4 <= i; j += 4) {
+      // Accumulate dot products for 4x4 output block
       MAT_NEON_TYPE acc00 = MAT_NEON_DUP(0), acc01 = MAT_NEON_DUP(0);
       MAT_NEON_TYPE acc02 = MAT_NEON_DUP(0), acc03 = MAT_NEON_DUP(0);
       MAT_NEON_TYPE acc10 = MAT_NEON_DUP(0), acc11 = MAT_NEON_DUP(0);
@@ -4098,7 +4185,6 @@ MAT_INTERNAL_STATIC void mat_syrk_lower_strided(mat_elem_t *C, size_t ldc,
         acc33 = MAT_NEON_FMA(acc33, a3, b3);
       }
 
-      // Reduce and subtract from C
       C[(i + 0) * ldc + (j + 0)] -= MAT_NEON_ADDV(acc00);
       C[(i + 0) * ldc + (j + 1)] -= MAT_NEON_ADDV(acc01);
       C[(i + 0) * ldc + (j + 2)] -= MAT_NEON_ADDV(acc02);
@@ -4116,7 +4202,7 @@ MAT_INTERNAL_STATIC void mat_syrk_lower_strided(mat_elem_t *C, size_t ldc,
       C[(i + 3) * ldc + (j + 2)] -= MAT_NEON_ADDV(acc32);
       C[(i + 3) * ldc + (j + 3)] -= MAT_NEON_ADDV(acc33);
 
-      // Scalar remainder for k
+      // Scalar tail for k
       for (; kk < k; kk++) {
         mat_elem_t a0 = A[(i + 0) * lda + kk], a1 = A[(i + 1) * lda + kk];
         mat_elem_t a2 = A[(i + 2) * lda + kk], a3 = A[(i + 3) * lda + kk];
@@ -4141,26 +4227,58 @@ MAT_INTERNAL_STATIC void mat_syrk_lower_strided(mat_elem_t *C, size_t ldc,
       }
     }
 
-    // Remaining columns + diagonal block (lower triangle only)
+    // Remaining columns before diagonal (j < i, one column at a time)
+    for (; j < i; j++) {
+      // Compute 4 elements: C[i+0..i+3, j]
+      MAT_NEON_TYPE sum0 = MAT_NEON_DUP(0);
+      MAT_NEON_TYPE sum1 = MAT_NEON_DUP(0);
+      MAT_NEON_TYPE sum2 = MAT_NEON_DUP(0);
+      MAT_NEON_TYPE sum3 = MAT_NEON_DUP(0);
+      size_t kk = 0;
+      for (; kk + MAT_NEON_WIDTH <= k; kk += MAT_NEON_WIDTH) {
+        MAT_NEON_TYPE vb = MAT_NEON_LOAD(&A[j * lda + kk]);
+        sum0 = MAT_NEON_FMA(sum0, MAT_NEON_LOAD(&A[(i + 0) * lda + kk]), vb);
+        sum1 = MAT_NEON_FMA(sum1, MAT_NEON_LOAD(&A[(i + 1) * lda + kk]), vb);
+        sum2 = MAT_NEON_FMA(sum2, MAT_NEON_LOAD(&A[(i + 2) * lda + kk]), vb);
+        sum3 = MAT_NEON_FMA(sum3, MAT_NEON_LOAD(&A[(i + 3) * lda + kk]), vb);
+      }
+      mat_elem_t s0 = MAT_NEON_ADDV(sum0);
+      mat_elem_t s1 = MAT_NEON_ADDV(sum1);
+      mat_elem_t s2 = MAT_NEON_ADDV(sum2);
+      mat_elem_t s3 = MAT_NEON_ADDV(sum3);
+      for (; kk < k; kk++) {
+        mat_elem_t bk = A[j * lda + kk];
+        s0 += A[(i + 0) * lda + kk] * bk;
+        s1 += A[(i + 1) * lda + kk] * bk;
+        s2 += A[(i + 2) * lda + kk] * bk;
+        s3 += A[(i + 3) * lda + kk] * bk;
+      }
+      C[(i + 0) * ldc + j] -= s0;
+      C[(i + 1) * ldc + j] -= s1;
+      C[(i + 2) * ldc + j] -= s2;
+      C[(i + 3) * ldc + j] -= s3;
+    }
+
+    // Diagonal block: elements where i <= row < i+4 and i <= col <= row
     for (size_t ii = 0; ii < 4; ii++) {
-      for (size_t jj = j; jj <= i + ii; jj++) {
+      for (size_t jj = 0; jj <= ii; jj++) {
         MAT_NEON_TYPE vsum = MAT_NEON_DUP(0);
         size_t kk = 0;
         for (; kk + MAT_NEON_WIDTH <= k; kk += MAT_NEON_WIDTH) {
           MAT_NEON_TYPE va = MAT_NEON_LOAD(&A[(i + ii) * lda + kk]);
-          MAT_NEON_TYPE vb = MAT_NEON_LOAD(&A[jj * lda + kk]);
+          MAT_NEON_TYPE vb = MAT_NEON_LOAD(&A[(i + jj) * lda + kk]);
           vsum = MAT_NEON_FMA(vsum, va, vb);
         }
         mat_elem_t sum = MAT_NEON_ADDV(vsum);
         for (; kk < k; kk++) {
-          sum += A[(i + ii) * lda + kk] * A[jj * lda + kk];
+          sum += A[(i + ii) * lda + kk] * A[(i + jj) * lda + kk];
         }
-        C[(i + ii) * ldc + jj] -= sum;
+        C[(i + ii) * ldc + (i + jj)] -= sum;
       }
     }
   }
 
-  // Remaining rows
+  // Remaining rows (less than 4)
   for (; i < m; i++) {
     for (size_t j = 0; j <= i; j++) {
       MAT_NEON_TYPE vsum = MAT_NEON_DUP(0);
@@ -4250,8 +4368,72 @@ MAT_INTERNAL_STATIC int mat_chol_blocked_impl(mat_elem_t *M, size_t n,
         const mat_elem_t *L11_row_j = &M[(kb + j) * ldm + kb];
 
 #ifdef MAT_HAS_ARM_NEON
-        // Process 4 rows at a time
+        // Process 8 rows at a time for better throughput
         size_t i = 0;
+        for (; i + 8 <= trail_m; i += 8) {
+          mat_elem_t *L21_row0 = &M[(k_end + i + 0) * ldm + kb];
+          mat_elem_t *L21_row1 = &M[(k_end + i + 1) * ldm + kb];
+          mat_elem_t *L21_row2 = &M[(k_end + i + 2) * ldm + kb];
+          mat_elem_t *L21_row3 = &M[(k_end + i + 3) * ldm + kb];
+          mat_elem_t *L21_row4 = &M[(k_end + i + 4) * ldm + kb];
+          mat_elem_t *L21_row5 = &M[(k_end + i + 5) * ldm + kb];
+          mat_elem_t *L21_row6 = &M[(k_end + i + 6) * ldm + kb];
+          mat_elem_t *L21_row7 = &M[(k_end + i + 7) * ldm + kb];
+
+          MAT_NEON_TYPE sum0 = MAT_NEON_DUP(0);
+          MAT_NEON_TYPE sum1 = MAT_NEON_DUP(0);
+          MAT_NEON_TYPE sum2 = MAT_NEON_DUP(0);
+          MAT_NEON_TYPE sum3 = MAT_NEON_DUP(0);
+          MAT_NEON_TYPE sum4 = MAT_NEON_DUP(0);
+          MAT_NEON_TYPE sum5 = MAT_NEON_DUP(0);
+          MAT_NEON_TYPE sum6 = MAT_NEON_DUP(0);
+          MAT_NEON_TYPE sum7 = MAT_NEON_DUP(0);
+
+          size_t kk = 0;
+          for (; kk + MAT_NEON_WIDTH <= j; kk += MAT_NEON_WIDTH) {
+            MAT_NEON_TYPE l11 = MAT_NEON_LOAD(&L11_row_j[kk]);
+            sum0 = MAT_NEON_FMA(sum0, MAT_NEON_LOAD(&L21_row0[kk]), l11);
+            sum1 = MAT_NEON_FMA(sum1, MAT_NEON_LOAD(&L21_row1[kk]), l11);
+            sum2 = MAT_NEON_FMA(sum2, MAT_NEON_LOAD(&L21_row2[kk]), l11);
+            sum3 = MAT_NEON_FMA(sum3, MAT_NEON_LOAD(&L21_row3[kk]), l11);
+            sum4 = MAT_NEON_FMA(sum4, MAT_NEON_LOAD(&L21_row4[kk]), l11);
+            sum5 = MAT_NEON_FMA(sum5, MAT_NEON_LOAD(&L21_row5[kk]), l11);
+            sum6 = MAT_NEON_FMA(sum6, MAT_NEON_LOAD(&L21_row6[kk]), l11);
+            sum7 = MAT_NEON_FMA(sum7, MAT_NEON_LOAD(&L21_row7[kk]), l11);
+          }
+
+          mat_elem_t s0 = MAT_NEON_ADDV(sum0);
+          mat_elem_t s1 = MAT_NEON_ADDV(sum1);
+          mat_elem_t s2 = MAT_NEON_ADDV(sum2);
+          mat_elem_t s3 = MAT_NEON_ADDV(sum3);
+          mat_elem_t s4 = MAT_NEON_ADDV(sum4);
+          mat_elem_t s5 = MAT_NEON_ADDV(sum5);
+          mat_elem_t s6 = MAT_NEON_ADDV(sum6);
+          mat_elem_t s7 = MAT_NEON_ADDV(sum7);
+
+          for (; kk < j; kk++) {
+            mat_elem_t l11_k = L11_row_j[kk];
+            s0 += L21_row0[kk] * l11_k;
+            s1 += L21_row1[kk] * l11_k;
+            s2 += L21_row2[kk] * l11_k;
+            s3 += L21_row3[kk] * l11_k;
+            s4 += L21_row4[kk] * l11_k;
+            s5 += L21_row5[kk] * l11_k;
+            s6 += L21_row6[kk] * l11_k;
+            s7 += L21_row7[kk] * l11_k;
+          }
+
+          L21_row0[j] = (L21_row0[j] - s0) * ljj_inv;
+          L21_row1[j] = (L21_row1[j] - s1) * ljj_inv;
+          L21_row2[j] = (L21_row2[j] - s2) * ljj_inv;
+          L21_row3[j] = (L21_row3[j] - s3) * ljj_inv;
+          L21_row4[j] = (L21_row4[j] - s4) * ljj_inv;
+          L21_row5[j] = (L21_row5[j] - s5) * ljj_inv;
+          L21_row6[j] = (L21_row6[j] - s6) * ljj_inv;
+          L21_row7[j] = (L21_row7[j] - s7) * ljj_inv;
+        }
+
+        // Process 4 rows at a time
         for (; i + 4 <= trail_m; i += 4) {
           mat_elem_t *L21_row0 = &M[(k_end + i + 0) * ldm + kb];
           mat_elem_t *L21_row1 = &M[(k_end + i + 1) * ldm + kb];
