@@ -3497,8 +3497,87 @@ MATDEF void mat_householder_right(Mat *A, const Vec *v, mat_elem_t tau) {
   MAT_FREE_MAT(w);
 }
 
+// QR block size for switching to blocked algorithm
+#ifndef MAT_QR_BLOCK_SIZE
+#define MAT_QR_BLOCK_SIZE 8
+#endif
+
+#ifndef MAT_QR_BLOCK_THRESHOLD
+#define MAT_QR_BLOCK_THRESHOLD 64
+#endif
+
+// Build T matrix for compact WY representation: H1*H2*...*Hk = I - Y*T*Y^T
+// T is upper triangular with T[j,j] = tau[j]
+MAT_INTERNAL_STATIC void mat_qr_build_T(mat_elem_t *T, size_t ldt,
+                                        const mat_elem_t *Y, size_t ldy,
+                                        const mat_elem_t *tau, size_t m, size_t k) {
+  for (size_t i = 0; i < k * k; i++) T[i] = 0;
+
+  for (size_t j = 0; j < k; j++) {
+    T[j * ldt + j] = tau[j];
+
+    for (size_t i = 0; i < j; i++) {
+      mat_elem_t sum = 0;
+      for (size_t p = i; p < j; p++) {
+        mat_elem_t dot = 0;
+        for (size_t r = 0; r < m; r++) {
+          dot += Y[r * ldy + p] * Y[r * ldy + j];
+        }
+        sum += T[i * ldt + p] * dot;
+      }
+      T[i * ldt + j] = -tau[j] * sum;
+    }
+  }
+}
+
+// Apply block Householder from left: A = (I - Y*T^T*Y^T) * A
+// Uses T^T to get H_k * ... * H_1 ordering for QR
+MAT_INTERNAL_STATIC void mat_qr_apply_block_left(mat_elem_t *A_data, size_t lda,
+                                                  const mat_elem_t *Y, size_t ldy,
+                                                  const mat_elem_t *T, size_t ldt,
+                                                  size_t m, size_t k, size_t n) {
+  Mat Y_mat = {.rows = m, .cols = k, .data = (mat_elem_t *)Y};
+  Mat A_mat = {.rows = m, .cols = n, .data = A_data};
+
+  Mat *Yt = mat_rt(&Y_mat);
+  Mat *C = mat_rmul(Yt, &A_mat);
+
+  Mat T_mat = {.rows = k, .cols = k, .data = (mat_elem_t *)T};
+  Mat *Tt = mat_rt(&T_mat);
+  Mat *TC = mat_rmul(Tt, C);
+
+  mat_gemm(&A_mat, -1, &Y_mat, TC, 1);
+
+  mat_free_mat(Yt);
+  mat_free_mat(C);
+  mat_free_mat(Tt);
+  mat_free_mat(TC);
+}
+
+// Apply block Householder from right: A = A * (I - Y*T*Y^T)
+// Uses T to get H_1 * ... * H_k ordering for Q accumulation
+MAT_INTERNAL_STATIC void mat_qr_apply_block_right(mat_elem_t *A_data, size_t lda,
+                                                   const mat_elem_t *Y, size_t ldy,
+                                                   const mat_elem_t *T, size_t ldt,
+                                                   size_t m, size_t n, size_t k) {
+  Mat A_mat = {.rows = m, .cols = n, .data = A_data};
+  Mat Y_mat = {.rows = n, .cols = k, .data = (mat_elem_t *)Y};
+  Mat T_mat = {.rows = k, .cols = k, .data = (mat_elem_t *)T};
+
+  Mat *C = mat_rmul(&A_mat, &Y_mat);
+  Mat *CT = mat_rmul(C, &T_mat);
+  Mat *Yt = mat_rt(&Y_mat);
+
+  mat_gemm(&A_mat, -1, CT, Yt, 1);
+
+  mat_free_mat(C);
+  mat_free_mat(CT);
+  mat_free_mat(Yt);
+}
+
 // QR Decomposition using Householder reflections
 // A (m x n) = Q (m x m) * R (m x n), requires m >= n
+// Uses blocked algorithm with BLAS-3 operations for large matrices
 MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R) {
   MAT_ASSERT_MAT(A);
   MAT_ASSERT_MAT(Q);
@@ -3510,13 +3589,112 @@ MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R) {
   MAT_ASSERT(Q->rows == m && Q->cols == m);
   MAT_ASSERT(R->rows == m && R->cols == n);
 
-  // Copy A to R (we transform R in-place)
   mat_deep_copy(R, A);
-
-  // Initialize Q to identity
   mat_eye(Q);
 
-  // Workspace for Householder vectors
+  // Use blocked algorithm for large matrices
+  if (n >= MAT_QR_BLOCK_THRESHOLD) {
+    size_t block_size = MAT_QR_BLOCK_SIZE;
+    mat_elem_t *tau_block = (mat_elem_t *)MAT_MALLOC(block_size * sizeof(mat_elem_t));
+    mat_elem_t *Y = (mat_elem_t *)MAT_MALLOC(m * block_size * sizeof(mat_elem_t));
+    mat_elem_t *T = (mat_elem_t *)MAT_MALLOC(block_size * block_size * sizeof(mat_elem_t));
+    MAT_ASSERT(tau_block && Y && T);
+
+    for (size_t jb = 0; jb < n; jb += block_size) {
+      size_t kb = (jb + block_size <= n) ? block_size : (n - jb);
+      size_t len = m - jb;
+
+      // Panel factorization: compute kb Householder vectors
+      for (size_t j = 0; j < kb; j++) {
+        size_t col = jb + j;
+        size_t vlen = m - col;
+
+        mat_elem_t *x_data = (mat_elem_t *)MAT_MALLOC(vlen * sizeof(mat_elem_t));
+        for (size_t i = 0; i < vlen; i++) {
+          x_data[i] = R->data[(col + i) * n + col];
+        }
+
+        Vec x_sub = {.rows = vlen, .cols = 1, .data = x_data};
+        Vec v_sub = {.rows = vlen, .cols = 1, .data = x_data};
+        (void)mat_householder(&v_sub, &tau_block[j], &x_sub);
+
+        // Store v in Y with zeros above
+        size_t y_offset = col - jb;
+        for (size_t i = 0; i < y_offset; i++) {
+          Y[i * kb + j] = 0;
+        }
+        for (size_t i = 0; i < vlen; i++) {
+          Y[(y_offset + i) * kb + j] = v_sub.data[i];
+        }
+
+        // Apply single Householder to remaining panel columns
+        if (tau_block[j] != 0) {
+          for (size_t c = col; c < jb + kb; c++) {
+            mat_elem_t w = 0;
+            for (size_t i = 0; i < vlen; i++) {
+              w += v_sub.data[i] * R->data[(col + i) * n + c];
+            }
+            w *= tau_block[j];
+            for (size_t i = 0; i < vlen; i++) {
+              R->data[(col + i) * n + c] -= w * v_sub.data[i];
+            }
+          }
+        }
+
+        MAT_FREE(x_data);
+      }
+
+      // Build T matrix for WY representation
+      mat_qr_build_T(T, kb, Y, kb, tau_block, len, kb);
+
+      // Apply block reflector to trailing R
+      if (jb + kb < n) {
+        size_t trail_cols = n - (jb + kb);
+        mat_elem_t *R_trail = (mat_elem_t *)MAT_MALLOC(len * trail_cols * sizeof(mat_elem_t));
+
+        for (size_t i = 0; i < len; i++) {
+          for (size_t c = 0; c < trail_cols; c++) {
+            R_trail[i * trail_cols + c] = R->data[(jb + i) * n + (jb + kb + c)];
+          }
+        }
+
+        mat_qr_apply_block_left(R_trail, trail_cols, Y, kb, T, kb, len, kb, trail_cols);
+
+        for (size_t i = 0; i < len; i++) {
+          for (size_t c = 0; c < trail_cols; c++) {
+            R->data[(jb + i) * n + (jb + kb + c)] = R_trail[i * trail_cols + c];
+          }
+        }
+        MAT_FREE(R_trail);
+      }
+
+      // Apply block reflector to Q
+      {
+        mat_elem_t *Q_trail = (mat_elem_t *)MAT_MALLOC(m * len * sizeof(mat_elem_t));
+        for (size_t i = 0; i < m; i++) {
+          for (size_t c = 0; c < len; c++) {
+            Q_trail[i * len + c] = Q->data[i * m + (jb + c)];
+          }
+        }
+
+        mat_qr_apply_block_right(Q_trail, len, Y, kb, T, kb, m, len, kb);
+
+        for (size_t i = 0; i < m; i++) {
+          for (size_t c = 0; c < len; c++) {
+            Q->data[i * m + (jb + c)] = Q_trail[i * len + c];
+          }
+        }
+        MAT_FREE(Q_trail);
+      }
+    }
+
+    MAT_FREE(tau_block);
+    MAT_FREE(Y);
+    MAT_FREE(T);
+    return;
+  }
+
+  // Unblocked algorithm for small matrices
   mat_elem_t *x_data = (mat_elem_t *)MAT_MALLOC(m * sizeof(mat_elem_t));
   mat_elem_t *v_data = (mat_elem_t *)MAT_MALLOC(m * sizeof(mat_elem_t));
   MAT_ASSERT(x_data && v_data);
@@ -3524,12 +3702,10 @@ MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R) {
   for (size_t j = 0; j < n; j++) {
     size_t len = m - j;
 
-    // Extract column j of R[j:m, j] into x
     for (size_t i = 0; i < len; i++) {
       x_data[i] = R->data[(j + i) * n + j];
     }
 
-    // Create views for the subvectors
     Vec x_sub = {.rows = len, .cols = 1, .data = x_data};
     Vec v_sub = {.rows = len, .cols = 1, .data = v_data};
 
@@ -3539,32 +3715,7 @@ MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R) {
     if (tau == 0) continue;
 
     // Apply H to R[j:m, j:n] from left
-    // Process 4 columns at a time for better performance
-    size_t k = j;
-#ifdef MAT_HAS_ARM_NEON
-    for (; k + 4 <= n; k += 4) {
-      mat_elem_t w0 = 0, w1 = 0, w2 = 0, w3 = 0;
-      for (size_t i = 0; i < len; i++) {
-        mat_elem_t vi = v_data[i];
-        mat_elem_t *Ri = &R->data[(j + i) * n + k];
-        w0 += vi * Ri[0];
-        w1 += vi * Ri[1];
-        w2 += vi * Ri[2];
-        w3 += vi * Ri[3];
-      }
-      w0 *= tau; w1 *= tau; w2 *= tau; w3 *= tau;
-
-      for (size_t i = 0; i < len; i++) {
-        mat_elem_t vi = v_data[i];
-        mat_elem_t *Ri = &R->data[(j + i) * n + k];
-        Ri[0] -= vi * w0;
-        Ri[1] -= vi * w1;
-        Ri[2] -= vi * w2;
-        Ri[3] -= vi * w3;
-      }
-    }
-#endif
-    for (; k < n; k++) {
+    for (size_t k = j; k < n; k++) {
       mat_elem_t w = 0;
       for (size_t i = 0; i < len; i++) {
         w += v_data[i] * R->data[(j + i) * n + k];
@@ -3578,30 +3729,6 @@ MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R) {
     // Apply H to Q[:, j:m] from right
     for (size_t i = 0; i < m; i++) {
       mat_elem_t *Qi = &Q->data[i * m + j];
-
-#ifdef MAT_HAS_ARM_NEON
-      MAT_NEON_TYPE vsum = MAT_NEON_DUP(0);
-      size_t jj = 0;
-      for (; jj + MAT_NEON_WIDTH <= len; jj += MAT_NEON_WIDTH) {
-        vsum = MAT_NEON_FMA(vsum, MAT_NEON_LOAD(&Qi[jj]), MAT_NEON_LOAD(&v_data[jj]));
-      }
-      mat_elem_t w = MAT_NEON_ADDV(vsum);
-      for (; jj < len; jj++) {
-        w += Qi[jj] * v_data[jj];
-      }
-      w *= tau;
-
-      MAT_NEON_TYPE vw = MAT_NEON_DUP(w);
-      jj = 0;
-      for (; jj + MAT_NEON_WIDTH <= len; jj += MAT_NEON_WIDTH) {
-        MAT_NEON_TYPE q = MAT_NEON_LOAD(&Qi[jj]);
-        MAT_NEON_TYPE vv = MAT_NEON_LOAD(&v_data[jj]);
-        MAT_NEON_STORE(&Qi[jj], MAT_NEON_FMS(q, vw, vv));
-      }
-      for (; jj < len; jj++) {
-        Qi[jj] -= w * v_data[jj];
-      }
-#else
       mat_elem_t w = 0;
       for (size_t jj = 0; jj < len; jj++) {
         w += Qi[jj] * v_data[jj];
@@ -3610,7 +3737,6 @@ MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R) {
       for (size_t jj = 0; jj < len; jj++) {
         Qi[jj] -= w * v_data[jj];
       }
-#endif
     }
   }
 
