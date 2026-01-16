@@ -4135,7 +4135,7 @@ MAT_INTERNAL_STATIC void mat_syrk_kernel_4x4_neon(
 #endif
 
 // Symmetric rank-k update for lower triangle: C -= A * A^T
-// Uses kij loop order with vectorized updates
+// Uses ij loop order with vectorized dot products
 
 MAT_INTERNAL_STATIC void mat_syrk_lower_strided(mat_elem_t *C, size_t ldc,
                                                 const mat_elem_t *A, size_t lda,
@@ -4353,14 +4353,10 @@ MAT_INTERNAL_STATIC int mat_chol_blocked_impl(mat_elem_t *M, size_t n,
     }
 
     // 2. TRSM: Solve L21 * L11^T = A21 for L21
-    //    L21 is M[k_end:n, kb:k_end], L11 is M[kb:k_end, kb:k_end]
-    //    For each row i in L21: L21[i,:] = L21[i,:] * L11^-T
-    //    Since L11 is lower triangular, L11^-T is upper triangular
-    //    Solve by forward substitution on transposed system
     if (k_end < n) {
       size_t trail_m = n - k_end;
 
-      // For each column j of L21 (left to right):
+      // TRSM: For each column j of L21 (left to right):
       // L21[:,j] = (A21[:,j] - sum_{k<j} L21[:,k] * L11[j,k]) / L11[j,j]
       for (size_t j = 0; j < block_k; j++) {
         mat_elem_t ljj = M[(kb + j) * ldm + (kb + j)];
@@ -4433,51 +4429,17 @@ MAT_INTERNAL_STATIC int mat_chol_blocked_impl(mat_elem_t *M, size_t n,
           L21_row7[j] = (L21_row7[j] - s7) * ljj_inv;
         }
 
-        // Process 4 rows at a time
-        for (; i + 4 <= trail_m; i += 4) {
-          mat_elem_t *L21_row0 = &M[(k_end + i + 0) * ldm + kb];
-          mat_elem_t *L21_row1 = &M[(k_end + i + 1) * ldm + kb];
-          mat_elem_t *L21_row2 = &M[(k_end + i + 2) * ldm + kb];
-          mat_elem_t *L21_row3 = &M[(k_end + i + 3) * ldm + kb];
-
-          MAT_NEON_TYPE sum0 = MAT_NEON_DUP(0);
-          MAT_NEON_TYPE sum1 = MAT_NEON_DUP(0);
-          MAT_NEON_TYPE sum2 = MAT_NEON_DUP(0);
-          MAT_NEON_TYPE sum3 = MAT_NEON_DUP(0);
-
-          size_t kk = 0;
-          for (; kk + MAT_NEON_WIDTH <= j; kk += MAT_NEON_WIDTH) {
-            MAT_NEON_TYPE l11 = MAT_NEON_LOAD(&L11_row_j[kk]);
-            sum0 = MAT_NEON_FMA(sum0, MAT_NEON_LOAD(&L21_row0[kk]), l11);
-            sum1 = MAT_NEON_FMA(sum1, MAT_NEON_LOAD(&L21_row1[kk]), l11);
-            sum2 = MAT_NEON_FMA(sum2, MAT_NEON_LOAD(&L21_row2[kk]), l11);
-            sum3 = MAT_NEON_FMA(sum3, MAT_NEON_LOAD(&L21_row3[kk]), l11);
-          }
-
-          mat_elem_t s0 = MAT_NEON_ADDV(sum0);
-          mat_elem_t s1 = MAT_NEON_ADDV(sum1);
-          mat_elem_t s2 = MAT_NEON_ADDV(sum2);
-          mat_elem_t s3 = MAT_NEON_ADDV(sum3);
-
-          for (; kk < j; kk++) {
-            mat_elem_t l11_k = L11_row_j[kk];
-            s0 += L21_row0[kk] * l11_k;
-            s1 += L21_row1[kk] * l11_k;
-            s2 += L21_row2[kk] * l11_k;
-            s3 += L21_row3[kk] * l11_k;
-          }
-
-          L21_row0[j] = (L21_row0[j] - s0) * ljj_inv;
-          L21_row1[j] = (L21_row1[j] - s1) * ljj_inv;
-          L21_row2[j] = (L21_row2[j] - s2) * ljj_inv;
-          L21_row3[j] = (L21_row3[j] - s3) * ljj_inv;
-        }
-
         // Remaining rows
         for (; i < trail_m; i++) {
           mat_elem_t *L21_row = &M[(k_end + i) * ldm + kb];
-          mat_elem_t sum = 0;
-          for (size_t kk = 0; kk < j; kk++) {
+          MAT_NEON_TYPE vsum = MAT_NEON_DUP(0);
+          size_t kk = 0;
+          for (; kk + MAT_NEON_WIDTH <= j; kk += MAT_NEON_WIDTH) {
+            vsum = MAT_NEON_FMA(vsum, MAT_NEON_LOAD(&L21_row[kk]),
+                                MAT_NEON_LOAD(&L11_row_j[kk]));
+          }
+          mat_elem_t sum = MAT_NEON_ADDV(vsum);
+          for (; kk < j; kk++) {
             sum += L21_row[kk] * L11_row_j[kk];
           }
           L21_row[j] = (L21_row[j] - sum) * ljj_inv;
