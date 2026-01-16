@@ -530,6 +530,10 @@ MATDEF void mat_axpy(Vec *y, mat_elem_t alpha, const Vec *x);
 MATDEF void mat_gemv(Vec *y, mat_elem_t alpha, const Mat *A, const Vec *x,
                      mat_elem_t beta);
 
+// y = alpha * A^T * x + beta * y (GEMV transposed). SIMD-optimized.
+MATDEF void mat_gemv_t(Vec *y, mat_elem_t alpha, const Mat *A, const Vec *x,
+                       mat_elem_t beta);
+
 // A = A + alpha * x * y^T (GER/rank-1 update).
 MATDEF void mat_ger(Mat *A, mat_elem_t alpha, const Vec *x, const Vec *y);
 
@@ -652,6 +656,20 @@ MATDEF mat_elem_t mat_nnz(const Mat *a);
 // A = Q * R where Q is orthogonal (m x m), R is upper triangular (m x n).
 // Q and R must be pre-allocated with correct dimensions.
 MAT_EXPERIMENTAL MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R);
+
+// Householder reflection: compute v and tau such that H*x = beta*e1
+// where H = I - tau*v*v^T is orthogonal.
+// v is modified in-place from x (v[0] = 1, rest normalized).
+// Returns beta (the resulting first element after reflection).
+MATDEF mat_elem_t mat_householder(Vec *v, mat_elem_t *tau, const Vec *x);
+
+// Apply Householder reflection from left: A = H*A = A - tau*v*(v^T*A)
+// v[0] is assumed to be 1 (implicit).
+MATDEF void mat_householder_left(Mat *A, const Vec *v, mat_elem_t tau);
+
+// Apply Householder reflection from right: A = A*H = A - tau*(A*v)*v^T
+// v[0] is assumed to be 1 (implicit).
+MATDEF void mat_householder_right(Mat *A, const Vec *v, mat_elem_t tau);
 
 // LU decomposition with full pivoting.
 // P * A * Q = L * U where P, Q are permutations (full pivoting).
@@ -1737,6 +1755,101 @@ MATDEF void mat_gemv(Vec *y, mat_elem_t alpha, const Mat *A, const Vec *x,
   mat_gemv_neon_impl(y, alpha, A, x, beta);
 #else
   mat_gemv_scalar_impl(y, alpha, A, x, beta);
+#endif
+}
+
+// y = alpha * A^T * x + beta * y (GEMV transposed)
+// A is m×n, x is m×1, y is n×1
+#ifdef MAT_HAS_ARM_NEON
+MAT_INTERNAL_STATIC void mat_gemv_t_neon_impl(Vec *y, mat_elem_t alpha,
+                                               const Mat *A, const Vec *x,
+                                               mat_elem_t beta) {
+  size_t m = A->rows;
+  size_t n = A->cols;
+  mat_elem_t *py = y->data;
+  const mat_elem_t *pa = A->data;
+  const mat_elem_t *px = x->data;
+
+  // Scale y by beta first
+  if (beta == 0) {
+    for (size_t j = 0; j < n; j++) py[j] = 0;
+  } else if (beta != 1) {
+    for (size_t j = 0; j < n; j++) py[j] *= beta;
+  }
+
+  // y += alpha * A^T * x
+  // Process by rows of A (which are contiguous in memory)
+  for (size_t i = 0; i < m; i++) {
+    const mat_elem_t *row = &pa[i * n];
+    MAT_NEON_TYPE vxi = MAT_NEON_DUP(alpha * px[i]);
+
+    size_t j = 0;
+    for (; j + MAT_NEON_WIDTH * 4 <= n; j += MAT_NEON_WIDTH * 4) {
+      MAT_NEON_TYPE vy0 = MAT_NEON_LOAD(&py[j]);
+      MAT_NEON_TYPE vy1 = MAT_NEON_LOAD(&py[j + MAT_NEON_WIDTH]);
+      MAT_NEON_TYPE vy2 = MAT_NEON_LOAD(&py[j + MAT_NEON_WIDTH * 2]);
+      MAT_NEON_TYPE vy3 = MAT_NEON_LOAD(&py[j + MAT_NEON_WIDTH * 3]);
+      MAT_NEON_TYPE va0 = MAT_NEON_LOAD(&row[j]);
+      MAT_NEON_TYPE va1 = MAT_NEON_LOAD(&row[j + MAT_NEON_WIDTH]);
+      MAT_NEON_TYPE va2 = MAT_NEON_LOAD(&row[j + MAT_NEON_WIDTH * 2]);
+      MAT_NEON_TYPE va3 = MAT_NEON_LOAD(&row[j + MAT_NEON_WIDTH * 3]);
+      vy0 = MAT_NEON_FMA(vy0, va0, vxi);
+      vy1 = MAT_NEON_FMA(vy1, va1, vxi);
+      vy2 = MAT_NEON_FMA(vy2, va2, vxi);
+      vy3 = MAT_NEON_FMA(vy3, va3, vxi);
+      MAT_NEON_STORE(&py[j], vy0);
+      MAT_NEON_STORE(&py[j + MAT_NEON_WIDTH], vy1);
+      MAT_NEON_STORE(&py[j + MAT_NEON_WIDTH * 2], vy2);
+      MAT_NEON_STORE(&py[j + MAT_NEON_WIDTH * 3], vy3);
+    }
+
+    for (; j + MAT_NEON_WIDTH <= n; j += MAT_NEON_WIDTH) {
+      MAT_NEON_TYPE vy = MAT_NEON_LOAD(&py[j]);
+      MAT_NEON_TYPE va = MAT_NEON_LOAD(&row[j]);
+      vy = MAT_NEON_FMA(vy, va, vxi);
+      MAT_NEON_STORE(&py[j], vy);
+    }
+
+    mat_elem_t xi = alpha * px[i];
+    for (; j < n; j++) {
+      py[j] += row[j] * xi;
+    }
+  }
+}
+#endif
+
+MAT_INTERNAL_STATIC void mat_gemv_t_scalar_impl(Vec *y, mat_elem_t alpha,
+                                                 const Mat *A, const Vec *x,
+                                                 mat_elem_t beta) {
+  size_t m = A->rows;
+  size_t n = A->cols;
+
+  // y = beta * y first
+  for (size_t j = 0; j < n; j++) {
+    y->data[j] *= beta;
+  }
+
+  // y += alpha * A^T * x
+  for (size_t i = 0; i < m; i++) {
+    mat_elem_t xi = alpha * x->data[i];
+    for (size_t j = 0; j < n; j++) {
+      y->data[j] += A->data[i * n + j] * xi;
+    }
+  }
+}
+
+MATDEF void mat_gemv_t(Vec *y, mat_elem_t alpha, const Mat *A, const Vec *x,
+                        mat_elem_t beta) {
+  MAT_ASSERT_MAT(y);
+  MAT_ASSERT_MAT(A);
+  MAT_ASSERT_MAT(x);
+  MAT_ASSERT(A->cols == y->rows);  // A^T has n rows
+  MAT_ASSERT(A->rows == x->rows);  // A^T has m cols
+
+#ifdef MAT_HAS_ARM_NEON
+  mat_gemv_t_neon_impl(y, alpha, A, x, beta);
+#else
+  mat_gemv_t_scalar_impl(y, alpha, A, x, beta);
 #endif
 }
 
@@ -3257,6 +3370,131 @@ MATDEF mat_elem_t mat_std(const Mat *a) {
 #else
   return sqrtf(sum_sq / (mat_elem_t)n);
 #endif
+}
+
+// ============================================================================
+// Householder Reflections
+// ============================================================================
+
+MATDEF mat_elem_t mat_householder(Vec *v, mat_elem_t *tau, const Vec *x) {
+  MAT_ASSERT_MAT(v);
+  MAT_ASSERT_MAT(x);
+  MAT_ASSERT(v->rows == x->rows);
+
+  size_t n = x->rows;
+  if (n == 0) {
+    *tau = 0;
+    return 0;
+  }
+
+  mat_elem_t *vd = v->data;
+  const mat_elem_t *xd = x->data;
+
+  // Compute ||x||
+  mat_elem_t norm_sq = 0;
+#ifdef MAT_HAS_ARM_NEON
+  size_t i = 0;
+  MAT_NEON_TYPE vsum = MAT_NEON_DUP(0);
+  for (; i + MAT_NEON_WIDTH <= n; i += MAT_NEON_WIDTH) {
+    MAT_NEON_TYPE xi = MAT_NEON_LOAD(&xd[i]);
+    vsum = MAT_NEON_FMA(vsum, xi, xi);
+  }
+  norm_sq = MAT_NEON_ADDV(vsum);
+  for (; i < n; i++) {
+    norm_sq += xd[i] * xd[i];
+  }
+#else
+  for (size_t i = 0; i < n; i++) {
+    norm_sq += xd[i] * xd[i];
+  }
+#endif
+
+  mat_elem_t norm_x = MAT_SQRT(norm_sq);
+
+  if (norm_x < MAT_DEFAULT_EPSILON) {
+    *tau = 0;
+    for (size_t i = 0; i < n; i++) vd[i] = 0;
+    return 0;
+  }
+
+  // Choose sign to avoid cancellation: beta = -sign(x[0]) * ||x||
+  mat_elem_t x0 = xd[0];
+  mat_elem_t beta = (x0 >= 0) ? -norm_x : norm_x;
+
+  // v = x - beta*e1, so v[0] = x[0] - beta, v[i] = x[i] for i > 0
+  mat_elem_t v0 = x0 - beta;
+
+  // Normalize so v[0] = 1: v[i] = x[i] / v0 for i > 0
+  mat_elem_t v0_inv = 1 / v0;
+  vd[0] = 1;
+
+#ifdef MAT_HAS_ARM_NEON
+  MAT_NEON_TYPE vv0_inv = MAT_NEON_DUP(v0_inv);
+  i = 1;
+  for (; i + MAT_NEON_WIDTH <= n; i += MAT_NEON_WIDTH) {
+    MAT_NEON_TYPE xi = MAT_NEON_LOAD(&xd[i]);
+    MAT_NEON_STORE(&vd[i], MAT_NEON_MUL(xi, vv0_inv));
+  }
+  for (; i < n; i++) {
+    vd[i] = xd[i] * v0_inv;
+  }
+#else
+  for (size_t i = 1; i < n; i++) {
+    vd[i] = xd[i] * v0_inv;
+  }
+#endif
+
+  // tau = 2 / (v^T * v) = 2 / (1 + sum(v[i]^2 for i > 0))
+  // = 2 / (1 + sum(x[i]^2 for i > 0) / v0^2)
+  // = 2 * v0^2 / (v0^2 + sum(x[i]^2 for i > 0))
+  // = 2 * v0^2 / (v0^2 + norm_sq - x0^2)
+  // = 2 * v0^2 / ((x0 - beta)^2 + norm_sq - x0^2)
+  // = 2 * v0^2 / (x0^2 - 2*x0*beta + beta^2 + norm_sq - x0^2)
+  // = 2 * v0^2 / (beta^2 - 2*x0*beta + norm_sq)
+  // Since beta^2 = norm_sq: = 2 * v0^2 / (2*norm_sq - 2*x0*beta)
+  // = v0^2 / (norm_sq - x0*beta) = (x0 - beta)^2 / (norm_sq - x0*beta)
+  // Simpler: tau = -v0 / beta (standard formula)
+  *tau = -v0 / beta;
+
+  return beta;
+}
+
+MATDEF void mat_householder_left(Mat *A, const Vec *v, mat_elem_t tau) {
+  MAT_ASSERT_MAT(A);
+  MAT_ASSERT_MAT(v);
+  MAT_ASSERT(A->rows == v->rows);
+
+  if (tau == 0) return;
+
+  // A = A - tau * v * (v^T * A)
+  // w = v^T * A = (A^T * v), then A -= tau * v * w^T
+
+  size_t n = A->cols;
+  Vec *w = mat_vec(n);
+
+  mat_gemv_t(w, 1, A, v, 0);      // w = A^T * v
+  mat_ger(A, -tau, v, w);         // A -= tau * v * w^T
+
+  MAT_FREE_MAT(w);
+}
+
+MATDEF void mat_householder_right(Mat *A, const Vec *v, mat_elem_t tau) {
+  MAT_ASSERT_MAT(A);
+  MAT_ASSERT_MAT(v);
+  MAT_ASSERT(A->cols == v->rows);
+
+  if (tau == 0) return;
+
+  // A = A - tau * (A * v) * v^T
+
+  size_t m = A->rows;
+
+  Vec *w = mat_vec(m);
+
+  mat_gemv(w, 1, A, v, 0);        // w = A * v
+  mat_ger(A, -tau, w, v);         // A -= tau * w * v^T
+
+  MAT_FREE_MAT(w);
 }
 
 // QR Decomposition using blocked Householder (WY representation)
