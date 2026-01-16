@@ -142,6 +142,7 @@ typedef double mat_elem_t;
 #endif
 #define MAT_FABS fabs
 #define MAT_SQRT sqrt
+#define MAT_HUGE_VAL HUGE_VAL
 #else
 typedef float mat_elem_t;
 #ifndef MAT_DEFAULT_EPSILON
@@ -149,6 +150,7 @@ typedef float mat_elem_t;
 #endif
 #define MAT_FABS fabsf
 #define MAT_SQRT sqrtf
+#define MAT_HUGE_VAL HUGE_VALF
 #endif
 
 // NEON SIMD macros (only defined when targeting ARM with NEON)
@@ -641,12 +643,6 @@ MATDEF mat_elem_t mat_trace(const Mat *a);
 // Return determinant. Matrix must be square. Uses LU decomposition.
 MATDEF mat_elem_t mat_det(const Mat *a);
 
-// Return numerical rank via SVD.
-MAT_NOT_IMPLEMENTED MATDEF mat_elem_t mat_rank(const Mat *a);
-
-// Return condition number.
-MAT_NOT_IMPLEMENTED MATDEF mat_elem_t mat_cond(const Mat *a);
-
 // Return count of non-zero elements.
 MATDEF mat_elem_t mat_nnz(const Mat *a);
 
@@ -687,6 +683,16 @@ MATDEF void mat_inv(Mat *out, const Mat *A);
 // out must be n x m for input A of size m x n.
 // Tolerance for rank determination: max(m,n) * max(S) * epsilon.
 MATDEF void mat_pinv(Mat *out, const Mat *A);
+
+// Matrix rank via SVD.
+// Returns the number of singular values above tolerance.
+// Tolerance: max(m,n) * max(S) * epsilon.
+MATDEF size_t mat_rank(const Mat *A);
+
+// Condition number via SVD.
+// Returns sigma_max / sigma_min.
+// For singular matrices, returns infinity.
+MATDEF mat_elem_t mat_cond(const Mat *A);
 
 // Eigendecomposition.
 MAT_NOT_IMPLEMENTED MATDEF void mat_eig(const Mat *A, Vec *eigenvalues,
@@ -5116,6 +5122,67 @@ MATDEF void mat_pinv(Mat *out, const Mat *A) {
 
   MAT_FREE_MAT(W);
   MAT_FREE_MAT(V);
+}
+
+MATDEF size_t mat_rank(const Mat *A) {
+  MAT_ASSERT_MAT(A);
+
+  size_t m = A->rows;
+  size_t n = A->cols;
+
+  if (m == 0 || n == 0) return 0;
+
+  size_t k = m < n ? m : n;
+  Mat *U = mat_mat(m, m);
+  Vec *S = mat_vec(k);
+  Mat *Vt = mat_mat(n, n);
+
+  mat_svd(A, U, S, Vt);
+
+  // Tolerance based on max singular value (S[0] is the largest)
+  mat_elem_t tol = (mat_elem_t)(m > n ? m : n) * S->data[0] * MAT_DEFAULT_EPSILON;
+
+  // Count singular values above tolerance
+  size_t rank = 0;
+  for (size_t i = 0; i < k; i++) {
+    if (S->data[i] > tol) rank++;
+  }
+
+  MAT_FREE_MAT(U);
+  MAT_FREE_MAT(S);
+  MAT_FREE_MAT(Vt);
+  return rank;
+}
+
+MATDEF mat_elem_t mat_cond(const Mat *A) {
+  MAT_ASSERT_MAT(A);
+
+  size_t m = A->rows;
+  size_t n = A->cols;
+
+  if (m == 0 || n == 0) return 0;
+
+  size_t k = m < n ? m : n;
+  Mat *U = mat_mat(m, m);
+  Vec *S = mat_vec(k);
+  Mat *Vt = mat_mat(n, n);
+
+  mat_svd(A, U, S, Vt);
+
+  // S[0] is max, S[k-1] is min (singular values are sorted descending)
+  mat_elem_t sigma_max = S->data[0];
+  mat_elem_t sigma_min = S->data[k - 1];
+
+  MAT_FREE_MAT(U);
+  MAT_FREE_MAT(S);
+  MAT_FREE_MAT(Vt);
+
+  // Handle singular matrices
+  if (sigma_min < MAT_DEFAULT_EPSILON * sigma_max) {
+    return MAT_HUGE_VAL;
+  }
+
+  return sigma_max / sigma_min;
 }
 
 #endif // MAT_IMPLEMENTATION
