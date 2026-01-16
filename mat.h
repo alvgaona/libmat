@@ -655,7 +655,7 @@ MATDEF mat_elem_t mat_nnz(const Mat *a);
 // QR decomposition via Householder reflections.
 // A = Q * R where Q is orthogonal (m x m), R is upper triangular (m x n).
 // Q and R must be pre-allocated with correct dimensions.
-MAT_EXPERIMENTAL MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R);
+MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R);
 
 // Householder reflection: compute v and tau such that H*x = beta*e1
 // where H = I - tau*v*v^T is orthogonal.
@@ -3497,10 +3497,8 @@ MATDEF void mat_householder_right(Mat *A, const Vec *v, mat_elem_t tau) {
   MAT_FREE_MAT(w);
 }
 
-// QR Decomposition using blocked Householder (WY representation)
+// QR Decomposition using Householder reflections
 // A (m x n) = Q (m x m) * R (m x n), requires m >= n
-#define MAT_QR_BLOCK_SIZE 32
-
 MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R) {
   MAT_ASSERT_MAT(A);
   MAT_ASSERT_MAT(Q);
@@ -3518,196 +3516,106 @@ MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R) {
   // Initialize Q to identity
   mat_eye(Q);
 
-  size_t nb = MAT_QR_BLOCK_SIZE;
-  if (nb > n)
-    nb = n;
+  // Workspace for Householder vectors
+  mat_elem_t *x_data = (mat_elem_t *)MAT_MALLOC(m * sizeof(mat_elem_t));
+  mat_elem_t *v_data = (mat_elem_t *)MAT_MALLOC(m * sizeof(mat_elem_t));
+  MAT_ASSERT(x_data && v_data);
 
-  // Allocate workspace:
-  // V: m x nb - Householder vectors for current block
-  // T: nb x nb - upper triangular matrix for WY representation
-  // W: workspace for applying block reflector (max(m, n) x nb)
-  mat_elem_t *V = (mat_elem_t *)MAT_MALLOC(m * nb * sizeof(mat_elem_t));
-  mat_elem_t *T = (mat_elem_t *)MAT_MALLOC(nb * nb * sizeof(mat_elem_t));
-  mat_elem_t *W = (mat_elem_t *)MAT_MALLOC(m * nb * sizeof(mat_elem_t));
-  mat_elem_t *tau_arr = (mat_elem_t *)MAT_MALLOC(nb * sizeof(mat_elem_t));
-  MAT_ASSERT(V && T && W && tau_arr);
+  for (size_t j = 0; j < n; j++) {
+    size_t len = m - j;
 
-  for (size_t k = 0; k < n; k += nb) {
-    size_t kb = (k + nb <= n) ? nb : (n - k); // actual block size
-    size_t panel_rows = m - k;
+    // Extract column j of R[j:m, j] into x
+    for (size_t i = 0; i < len; i++) {
+      x_data[i] = R->data[(j + i) * n + j];
+    }
 
-    // === Panel factorization: factor columns k to k+kb ===
-    // Zero out V and T for this block
-    for (size_t i = 0; i < panel_rows * kb; i++)
-      V[i] = 0;
-    for (size_t i = 0; i < kb * kb; i++)
-      T[i] = 0;
+    // Create views for the subvectors
+    Vec x_sub = {.rows = len, .cols = 1, .data = x_data};
+    Vec v_sub = {.rows = len, .cols = 1, .data = v_data};
 
-    for (size_t j = 0; j < kb; j++) {
-      size_t col = k + j;
-      size_t len = m - col;
+    mat_elem_t tau;
+    (void)mat_householder(&v_sub, &tau, &x_sub);
 
-      // Compute norm of R[col:m, col]
-      mat_elem_t norm_x = 0;
+    if (tau == 0) continue;
+
+    // Apply H to R[j:m, j:n] from left
+    // Process 4 columns at a time for better performance
+    size_t k = j;
+#ifdef MAT_HAS_ARM_NEON
+    for (; k + 4 <= n; k += 4) {
+      mat_elem_t w0 = 0, w1 = 0, w2 = 0, w3 = 0;
       for (size_t i = 0; i < len; i++) {
-        mat_elem_t val = R->data[(col + i) * n + col];
-        norm_x += val * val;
+        mat_elem_t vi = v_data[i];
+        mat_elem_t *Ri = &R->data[(j + i) * n + k];
+        w0 += vi * Ri[0];
+        w1 += vi * Ri[1];
+        w2 += vi * Ri[2];
+        w3 += vi * Ri[3];
       }
-#ifdef MAT_DOUBLE_PRECISION
-      norm_x = sqrt(norm_x);
-#else
-      norm_x = sqrtf(norm_x);
-#endif
+      w0 *= tau; w1 *= tau; w2 *= tau; w3 *= tau;
 
-      mat_elem_t tau = 0;
-      if (norm_x >= MAT_DEFAULT_EPSILON) {
-        // Form Householder vector
-        mat_elem_t x0 = R->data[col * n + col];
-        mat_elem_t sign = (x0 >= 0) ? 1 : -1;
-        mat_elem_t v0 = x0 + sign * norm_x;
-
-        // Store normalized v in V (v[0] = 1, rest scaled)
-        V[j * panel_rows + j] = 1; // v[0] = 1 after normalization
-        for (size_t i = 1; i < len; i++) {
-          V[j * panel_rows + j + i] = R->data[(col + i) * n + col] / v0;
-        }
-
-        // tau = 2 / (v^T v) where v[0] = 1
-        mat_elem_t vtv = 1;
-        for (size_t i = 1; i < len; i++) {
-          mat_elem_t vi = V[j * panel_rows + j + i];
-          vtv += vi * vi;
-        }
-        tau = 2 / vtv;
-
-        // Apply H to R[col:m, col:k+kb] (panel columns)
-        for (size_t jj = col; jj < k + kb; jj++) {
-          mat_elem_t dot = R->data[col * n + jj]; // v[0] = 1
-          for (size_t i = 1; i < len; i++) {
-            dot += V[j * panel_rows + j + i] * R->data[(col + i) * n + jj];
-          }
-          dot *= tau;
-          R->data[col * n + jj] -= dot; // v[0] = 1
-          for (size_t i = 1; i < len; i++) {
-            R->data[(col + i) * n + jj] -= dot * V[j * panel_rows + j + i];
-          }
-        }
+      for (size_t i = 0; i < len; i++) {
+        mat_elem_t vi = v_data[i];
+        mat_elem_t *Ri = &R->data[(j + i) * n + k];
+        Ri[0] -= vi * w0;
+        Ri[1] -= vi * w1;
+        Ri[2] -= vi * w2;
+        Ri[3] -= vi * w3;
       }
-      tau_arr[j] = tau;
     }
-
-    // === Build T matrix (upper triangular for forward product H_0 * H_1 * ...
-    // * H_{kb-1}) === T(j, j) = tau(j) T(0:j-1, j) = -tau(j) * T(0:j-1, 0:j-1)
-    // * V(:, 0:j-1)^T * V(:, j)
-    for (size_t j = 0; j < kb; j++) {
-      T[j * kb + j] = tau_arr[j];
-      if (tau_arr[j] == 0 || j == 0)
-        continue;
-
-      // Compute z[i] = V(:, i)^T * V(:, j) for i = 0, ..., j-1
-      // Store in W temporarily
-      for (size_t i = 0; i < j; i++) {
-        // V(:,i) has 1 at position i, then V[i*panel_rows + r] for r > i
-        // V(:,j) has 1 at position j, then V[j*panel_rows + r] for r > j
-        // Since j > i, the overlap starts at position j
-        mat_elem_t dot = V[i * panel_rows + j]; // V(:,i)[j] * 1
-        for (size_t r = j + 1; r < panel_rows; r++) {
-          dot += V[i * panel_rows + r] * V[j * panel_rows + r];
-        }
-        W[i] = dot;
+#endif
+    for (; k < n; k++) {
+      mat_elem_t w = 0;
+      for (size_t i = 0; i < len; i++) {
+        w += v_data[i] * R->data[(j + i) * n + k];
       }
-
-      // T(0:j-1, j) = -tau(j) * T(0:j-1, 0:j-1) * z
-      // Upper triangular matrix-vector multiply
-      for (size_t i = 0; i < j; i++) {
-        mat_elem_t sum = 0;
-        for (size_t p = i; p < j; p++) {
-          sum += T[i * kb + p] * W[p];
-        }
-        T[i * kb + j] = -tau_arr[j] * sum;
+      w *= tau;
+      for (size_t i = 0; i < len; i++) {
+        R->data[(j + i) * n + k] -= w * v_data[i];
       }
     }
 
-    // === Apply block reflector to trailing matrix R[k:m, k+kb:n] ===
-    if (k + kb < n) {
-      size_t trail_cols = n - k - kb;
+    // Apply H to Q[:, j:m] from right
+    for (size_t i = 0; i < m; i++) {
+      mat_elem_t *Qi = &Q->data[i * m + j];
 
-      // W = V^T * R[k:m, k+kb:n]  (kb x trail_cols)
 #ifdef MAT_HAS_ARM_NEON
-      mat_gemm_unit_lower_t_neon(W, trail_cols, V, panel_rows,
-                                 &R->data[k * n + (k + kb)], n, kb, panel_rows,
-                                 trail_cols);
-#else
-      mat_gemm_unit_lower_t_scalar(W, trail_cols, V, panel_rows,
-                                   &R->data[k * n + (k + kb)], n, kb,
-                                   panel_rows, trail_cols);
-#endif
-
-      // W = T^T * W  (kb x trail_cols), using T^T (lower triangular) for
-      // H_k*...*H_1
-      for (size_t jj = 0; jj < trail_cols; jj++) {
-        for (int ii = (int)kb - 1; ii >= 0; ii--) {
-          mat_elem_t sum = 0;
-          for (size_t p = 0; p <= (size_t)ii; p++) {
-            sum += T[p * kb + ii] * W[p * trail_cols + jj];
-          }
-          W[ii * trail_cols + jj] = sum;
-        }
+      MAT_NEON_TYPE vsum = MAT_NEON_DUP(0);
+      size_t jj = 0;
+      for (; jj + MAT_NEON_WIDTH <= len; jj += MAT_NEON_WIDTH) {
+        vsum = MAT_NEON_FMA(vsum, MAT_NEON_LOAD(&Qi[jj]), MAT_NEON_LOAD(&v_data[jj]));
       }
-
-      // R[k:m, k+kb:n] -= V * W
-#ifdef MAT_HAS_ARM_NEON
-      mat_gemm_unit_lower_neon(&R->data[k * n + (k + kb)], n, V, panel_rows, W,
-                               trail_cols, panel_rows, kb, trail_cols);
-#else
-      mat_gemm_unit_lower_scalar(&R->data[k * n + (k + kb)], n, V, panel_rows,
-                                 W, trail_cols, panel_rows, kb, trail_cols);
-#endif
-    }
-
-    // === Apply block reflector to Q[:, k:m] ===
-    // Q = Q * (I - V * T * V^T) = Q - Q * V * T * V^T
-    // Let W = Q[:, k:m] * V  (m x kb)
-#ifdef MAT_HAS_ARM_NEON
-    mat_gemm_q_unit_lower_neon(W, kb, &Q->data[k], m, V, panel_rows, m,
-                               panel_rows, kb);
-#else
-    mat_gemm_q_unit_lower_scalar(W, kb, &Q->data[k], m, V, panel_rows, m,
-                                 panel_rows, kb);
-#endif
-
-    // W = W * T  (m x kb), T is upper triangular
-    for (size_t ii = 0; ii < m; ii++) {
-      for (int jj = (int)kb - 1; jj >= 0; jj--) { // bottom to top for in-place
-        mat_elem_t sum = 0;
-        for (size_t p = 0; p <= (size_t)jj; p++) {
-          sum += W[ii * kb + p] * T[p * kb + jj];
-        }
-        W[ii * kb + jj] = sum;
+      mat_elem_t w = MAT_NEON_ADDV(vsum);
+      for (; jj < len; jj++) {
+        w += Qi[jj] * v_data[jj];
       }
-    }
+      w *= tau;
 
-    // Q[:, k:m] -= W * V^T
-#ifdef MAT_HAS_ARM_NEON
-    mat_gemm_sub_w_unit_upper_neon(&Q->data[k], m, W, kb, V, panel_rows, m, kb,
-                                   panel_rows);
+      MAT_NEON_TYPE vw = MAT_NEON_DUP(w);
+      jj = 0;
+      for (; jj + MAT_NEON_WIDTH <= len; jj += MAT_NEON_WIDTH) {
+        MAT_NEON_TYPE q = MAT_NEON_LOAD(&Qi[jj]);
+        MAT_NEON_TYPE vv = MAT_NEON_LOAD(&v_data[jj]);
+        MAT_NEON_STORE(&Qi[jj], MAT_NEON_FMS(q, vw, vv));
+      }
+      for (; jj < len; jj++) {
+        Qi[jj] -= w * v_data[jj];
+      }
 #else
-    mat_gemm_sub_w_unit_upper_scalar(&Q->data[k], m, W, kb, V, panel_rows, m,
-                                     kb, panel_rows);
+      mat_elem_t w = 0;
+      for (size_t jj = 0; jj < len; jj++) {
+        w += Qi[jj] * v_data[jj];
+      }
+      w *= tau;
+      for (size_t jj = 0; jj < len; jj++) {
+        Qi[jj] -= w * v_data[jj];
+      }
 #endif
-  }
-
-  // Zero out lower triangular part of R
-  for (size_t i = 1; i < m; i++) {
-    for (size_t j = 0; j < i && j < n; j++) {
-      R->data[i * n + j] = 0;
     }
   }
 
-  MAT_FREE(V);
-  MAT_FREE(T);
-  MAT_FREE(W);
-  MAT_FREE(tau_arr);
+  MAT_FREE(x_data);
+  MAT_FREE(v_data);
 }
 
 // Blocked partial pivoting LU (P * A = L * U)
