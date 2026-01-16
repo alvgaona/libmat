@@ -4,10 +4,12 @@
 #include "test.h"
 
 // Check if matrix is upper triangular (below diagonal is zero)
+// Tolerance scales with matrix dimension to account for float32 precision
 static int is_upper_triangular(const Mat *R) {
+    mat_elem_t tol = (mat_elem_t)R->rows * MAT_DEFAULT_EPSILON;
     for (size_t i = 1; i < R->rows; i++) {
         for (size_t j = 0; j < i && j < R->cols; j++) {
-            if (MAT_FABS(R->data[i * R->cols + j]) > MAT_DEFAULT_EPSILON) {
+            if (MAT_FABS(R->data[i * R->cols + j]) > tol) {
                 return 0;
             }
         }
