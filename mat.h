@@ -563,6 +563,10 @@ MATDEF void mat_gemv_t(Vec *y, mat_elem_t alpha, const Mat *A, const Vec *x,
 // A = A + alpha * x * y^T (GER/rank-1 update).
 MATDEF void mat_ger(Mat *A, mat_elem_t alpha, const Vec *x, const Vec *y);
 
+// A = alpha * x * x^T + A (SYR). SIMD-optimized.
+// uplo: 'L' for lower, 'U' for upper triangle.
+MATDEF void mat_syr(Mat *A, mat_elem_t alpha, const Vec *x, char uplo);
+
 // C = alpha * A * B + beta * C (GEMM). SIMD-optimized.
 MATDEF void mat_gemm(Mat *C, mat_elem_t alpha, const Mat *A, const Mat *B,
                      mat_elem_t beta);
@@ -1978,6 +1982,111 @@ MATDEF void mat_ger(Mat *A, mat_elem_t alpha, const Vec *x, const Vec *y) {
 #else
   mat_ger_scalar_(A, alpha, x, y);
 #endif
+}
+
+// A += alpha * x * x^T (BLAS Level-2: syr - symmetric rank-1 update)
+// Lower triangle version
+MAT_INTERNAL_STATIC void mat_syr_lower_scalar_(Mat *A, mat_elem_t alpha,
+                                               const Vec *x) {
+  size_t n = A->rows;
+  for (size_t i = 0; i < n; i++) {
+    mat_elem_t xi = alpha * x->data[i];
+    for (size_t j = 0; j <= i; j++) {
+      A->data[i * n + j] += xi * x->data[j];
+    }
+  }
+}
+
+// Upper triangle version
+MAT_INTERNAL_STATIC void mat_syr_upper_scalar_(Mat *A, mat_elem_t alpha,
+                                               const Vec *x) {
+  size_t n = A->rows;
+  for (size_t i = 0; i < n; i++) {
+    mat_elem_t xi = alpha * x->data[i];
+    for (size_t j = i; j < n; j++) {
+      A->data[i * n + j] += xi * x->data[j];
+    }
+  }
+}
+
+#ifdef MAT_HAS_ARM_NEON
+MAT_INTERNAL_STATIC void mat_syr_lower_neon_(Mat *A, mat_elem_t alpha,
+                                             const Vec *x) {
+  size_t n = A->rows;
+  mat_elem_t *pa = A->data;
+  const mat_elem_t *px = x->data;
+
+  for (size_t i = 0; i < n; i++) {
+    mat_elem_t *row = &pa[i * n];
+    mat_elem_t xi = alpha * px[i];
+    MAT_NEON_TYPE vxi = MAT_NEON_DUP(xi);
+
+    size_t j = 0;
+    // SIMD: process full vectors while j + MAT_NEON_WIDTH <= i + 1
+    for (; j + MAT_NEON_WIDTH <= i + 1; j += MAT_NEON_WIDTH) {
+      MAT_NEON_TYPE va = MAT_NEON_LOAD(&row[j]);
+      MAT_NEON_TYPE vx = MAT_NEON_LOAD(&px[j]);
+      va = MAT_NEON_FMA(va, vx, vxi);
+      MAT_NEON_STORE(&row[j], va);
+    }
+    // Scalar remainder: j <= i
+    for (; j <= i; j++) {
+      row[j] += xi * px[j];
+    }
+  }
+}
+
+MAT_INTERNAL_STATIC void mat_syr_upper_neon_(Mat *A, mat_elem_t alpha,
+                                             const Vec *x) {
+  size_t n = A->rows;
+  mat_elem_t *pa = A->data;
+  const mat_elem_t *px = x->data;
+
+  for (size_t i = 0; i < n; i++) {
+    mat_elem_t *row = &pa[i * n];
+    mat_elem_t xi = alpha * px[i];
+    MAT_NEON_TYPE vxi = MAT_NEON_DUP(xi);
+
+    size_t j = i;
+    // Scalar until aligned to SIMD boundary
+    size_t aligned_start = (i + MAT_NEON_WIDTH - 1) & ~(MAT_NEON_WIDTH - 1);
+    for (; j < aligned_start && j < n; j++) {
+      row[j] += xi * px[j];
+    }
+    // SIMD: process full vectors
+    for (; j + MAT_NEON_WIDTH <= n; j += MAT_NEON_WIDTH) {
+      MAT_NEON_TYPE va = MAT_NEON_LOAD(&row[j]);
+      MAT_NEON_TYPE vx = MAT_NEON_LOAD(&px[j]);
+      va = MAT_NEON_FMA(va, vx, vxi);
+      MAT_NEON_STORE(&row[j], va);
+    }
+    // Scalar remainder
+    for (; j < n; j++) {
+      row[j] += xi * px[j];
+    }
+  }
+}
+#endif
+
+MATDEF void mat_syr(Mat *A, mat_elem_t alpha, const Vec *x, char uplo) {
+  MAT_ASSERT_MAT(A);
+  MAT_ASSERT_MAT(x);
+  MAT_ASSERT(A->rows == A->cols);
+  MAT_ASSERT(A->rows == x->rows);
+
+  if (uplo == 'L' || uplo == 'l') {
+#ifdef MAT_HAS_ARM_NEON
+    mat_syr_lower_neon_(A, alpha, x);
+#else
+    mat_syr_lower_scalar_(A, alpha, x);
+#endif
+  } else {
+#ifdef MAT_HAS_ARM_NEON
+    mat_syr_upper_neon_(A, alpha, x);
+#else
+    mat_syr_upper_scalar_(A, alpha, x);
+#endif
+  }
 }
 
 // Unit lower triangular GEMM for QR decomposition
