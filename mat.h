@@ -759,8 +759,14 @@ MAT_NOT_IMPLEMENTED MATDEF void mat_eig(const Mat *A, Vec *eigenvalues,
 // Eigenvalues only (faster, no eigenvectors).
 MAT_NOT_IMPLEMENTED MATDEF void mat_eigvals(Vec *out, const Mat *A);
 
-// Solve Ax = b.
-MAT_NOT_IMPLEMENTED MATDEF void mat_solve(Vec *x, const Mat *A, const Vec *b);
+// Solve Ax = b for x. A must be square and non-singular.
+// Uses LU decomposition with partial pivoting.
+MATDEF void mat_solve(Vec *x, const Mat *A, const Vec *b);
+
+// Solve Ax = b for x where A is symmetric positive definite.
+// Uses Cholesky decomposition (~2x faster than mat_solve for SPD matrices).
+// Returns 0 on success, -1 if A is not positive definite.
+MATDEF int mat_solve_spd(Vec *x, const Mat *A, const Vec *b);
 
 // Least squares solution.
 MAT_NOT_IMPLEMENTED MATDEF void mat_lstsq(Vec *x, const Mat *A, const Vec *b);
@@ -4293,15 +4299,12 @@ MATDEF int mat_lu(const Mat *A, Mat *L, Mat *U, Perm *p, Perm *q) {
 }
 
 // ============================================================================
-// Cholesky decomposition (A = L * L^T, A must be symmetric positive definite)
+// Raw dot product (used by triangular solvers and Cholesky)
 // ============================================================================
 
-#define MAT_CHOL_BLOCK_SIZE 64
-
-// Inline strided dot product for Cholesky (avoids Vec allocation overhead)
-MAT_INTERNAL_STATIC mat_elem_t mat_chol_dot_strided_(const mat_elem_t *a,
-                                                     const mat_elem_t *b,
-                                                     size_t n) {
+// Dot product of two raw arrays (NEON-optimized when available)
+MAT_INTERNAL_STATIC mat_elem_t mat_dot_raw_(const mat_elem_t *a,
+                                            const mat_elem_t *b, size_t n) {
 #ifdef MAT_HAS_ARM_NEON
   MAT_NEON_TYPE vsum0 = MAT_NEON_DUP(0);
   MAT_NEON_TYPE vsum1 = MAT_NEON_DUP(0);
@@ -4349,6 +4352,209 @@ MAT_INTERNAL_STATIC mat_elem_t mat_chol_dot_strided_(const mat_elem_t *a,
   return result;
 #endif
 }
+
+// ============================================================================
+// Triangular system solvers (for mat_solve)
+// ============================================================================
+
+// Forward substitution: Solve Lx = b where L is unit lower triangular.
+// L has 1s on diagonal (implicit), elements below diagonal stored.
+MAT_INTERNAL_STATIC void mat_forward_sub_(Vec *x, const Mat *L, const Vec *b) {
+  size_t n = L->rows;
+  mat_elem_t *x_data = x->data;
+  const mat_elem_t *b_data = b->data;
+  const mat_elem_t *L_data = L->data;
+
+  for (size_t i = 0; i < n; i++) {
+    mat_elem_t dot = mat_dot_raw_(&L_data[i * n], x_data, i);
+    x_data[i] = b_data[i] - dot; // L[i,i] = 1 (implicit)
+  }
+}
+
+// Backward substitution: Solve Ux = b where U is upper triangular.
+MAT_INTERNAL_STATIC void mat_backward_sub_(Vec *x, const Mat *U, const Vec *b) {
+  size_t n = U->rows;
+  mat_elem_t *x_data = x->data;
+  const mat_elem_t *b_data = b->data;
+  const mat_elem_t *U_data = U->data;
+
+  for (size_t i = n; i-- > 0;) {
+    size_t len = n - i - 1;
+    mat_elem_t dot = mat_dot_raw_(&U_data[i * n + i + 1], &x_data[i + 1], len);
+    x_data[i] = (b_data[i] - dot) / U_data[i * n + i];
+  }
+}
+
+MATDEF void mat_solve(Vec *x, const Mat *A, const Vec *b) {
+  MAT_ASSERT_MAT(A);
+  MAT_ASSERT_MAT(x);
+  MAT_ASSERT_MAT(b);
+  MAT_ASSERT_SQUARE(A);
+  MAT_ASSERT(b->rows == A->rows && "b must have same rows as A");
+  MAT_ASSERT(x->rows == A->cols && "x must have same rows as A cols");
+
+  size_t n = A->rows;
+
+  // Allocate temporaries
+  Mat *L = mat_mat(n, n);
+  Mat *U = mat_mat(n, n);
+  Perm *p = mat_perm(n);
+  Vec *pb = mat_vec(n); // Permuted b
+  Vec *z = mat_vec(n);  // Intermediate result
+
+  // 1. LU factorization: PA = LU
+  mat_plu(A, L, U, p);
+
+  // 2. Apply permutation: pb = P * b
+  for (size_t i = 0; i < n; i++) {
+    pb->data[i] = b->data[p->data[i]];
+  }
+
+  // 3. Forward substitution: Lz = pb
+  mat_forward_sub_(z, L, pb);
+
+  // 4. Backward substitution: Ux = z
+  mat_backward_sub_(x, U, z);
+
+  // Cleanup
+  MAT_FREE_MAT(L);
+  MAT_FREE_MAT(U);
+  MAT_FREE_PERM(p);
+  MAT_FREE_MAT(pb);
+  MAT_FREE_MAT(z);
+}
+
+// Forward substitution: Solve Lx = b where L is lower triangular (non-unit).
+// L has actual values on diagonal (for Cholesky).
+MAT_INTERNAL_STATIC void mat_forward_sub_nonunit_(Vec *x, const Mat *L,
+                                                   const Vec *b) {
+  size_t n = L->rows;
+  mat_elem_t *x_data = x->data;
+  const mat_elem_t *b_data = b->data;
+  const mat_elem_t *L_data = L->data;
+
+  for (size_t i = 0; i < n; i++) {
+    mat_elem_t dot = mat_dot_raw_(&L_data[i * n], x_data, i);
+    x_data[i] = (b_data[i] - dot) / L_data[i * n + i];
+  }
+}
+
+// Backward substitution: Solve L^T x = b where L is lower triangular.
+// Uses column-oriented algorithm for contiguous memory access.
+
+#ifdef MAT_HAS_ARM_NEON
+MAT_INTERNAL_STATIC void mat_backward_sub_lt_neon_(Vec *x, const Mat *L,
+                                                    const Vec *b) {
+  size_t n = L->rows;
+  mat_elem_t *x_data = x->data;
+  const mat_elem_t *L_data = L->data;
+
+  memcpy(x_data, b->data, n * sizeof(mat_elem_t));
+
+  for (size_t j = n; j-- > 0;) {
+    x_data[j] /= L_data[j * n + j];
+    mat_elem_t xj = x_data[j];
+    const mat_elem_t *Lj = &L_data[j * n];
+
+    size_t i = 0;
+    MAT_NEON_TYPE vxj = MAT_NEON_DUP(xj);
+    for (; i + MAT_NEON_WIDTH * 4 <= j; i += MAT_NEON_WIDTH * 4) {
+      MAT_NEON_TYPE vx0 = MAT_NEON_LOAD(&x_data[i]);
+      MAT_NEON_TYPE vx1 = MAT_NEON_LOAD(&x_data[i + MAT_NEON_WIDTH]);
+      MAT_NEON_TYPE vx2 = MAT_NEON_LOAD(&x_data[i + MAT_NEON_WIDTH * 2]);
+      MAT_NEON_TYPE vx3 = MAT_NEON_LOAD(&x_data[i + MAT_NEON_WIDTH * 3]);
+      MAT_NEON_TYPE vL0 = MAT_NEON_LOAD(&Lj[i]);
+      MAT_NEON_TYPE vL1 = MAT_NEON_LOAD(&Lj[i + MAT_NEON_WIDTH]);
+      MAT_NEON_TYPE vL2 = MAT_NEON_LOAD(&Lj[i + MAT_NEON_WIDTH * 2]);
+      MAT_NEON_TYPE vL3 = MAT_NEON_LOAD(&Lj[i + MAT_NEON_WIDTH * 3]);
+      vx0 = MAT_NEON_FMS(vx0, vL0, vxj);
+      vx1 = MAT_NEON_FMS(vx1, vL1, vxj);
+      vx2 = MAT_NEON_FMS(vx2, vL2, vxj);
+      vx3 = MAT_NEON_FMS(vx3, vL3, vxj);
+      MAT_NEON_STORE(&x_data[i], vx0);
+      MAT_NEON_STORE(&x_data[i + MAT_NEON_WIDTH], vx1);
+      MAT_NEON_STORE(&x_data[i + MAT_NEON_WIDTH * 2], vx2);
+      MAT_NEON_STORE(&x_data[i + MAT_NEON_WIDTH * 3], vx3);
+    }
+    for (; i + MAT_NEON_WIDTH <= j; i += MAT_NEON_WIDTH) {
+      MAT_NEON_TYPE vx = MAT_NEON_LOAD(&x_data[i]);
+      MAT_NEON_TYPE vL = MAT_NEON_LOAD(&Lj[i]);
+      vx = MAT_NEON_FMS(vx, vL, vxj);
+      MAT_NEON_STORE(&x_data[i], vx);
+    }
+    for (; i < j; i++) {
+      x_data[i] -= Lj[i] * xj;
+    }
+  }
+}
+#endif
+
+MAT_INTERNAL_STATIC void mat_backward_sub_lt_scalar_(Vec *x, const Mat *L,
+                                                      const Vec *b) {
+  size_t n = L->rows;
+  mat_elem_t *x_data = x->data;
+  const mat_elem_t *L_data = L->data;
+
+  memcpy(x_data, b->data, n * sizeof(mat_elem_t));
+
+  for (size_t j = n; j-- > 0;) {
+    x_data[j] /= L_data[j * n + j];
+    mat_elem_t xj = x_data[j];
+    const mat_elem_t *Lj = &L_data[j * n];
+    for (size_t i = 0; i < j; i++) {
+      x_data[i] -= Lj[i] * xj;
+    }
+  }
+}
+
+MAT_INTERNAL_STATIC void mat_backward_sub_lt_(Vec *x, const Mat *L,
+                                               const Vec *b) {
+#ifdef MAT_HAS_ARM_NEON
+  mat_backward_sub_lt_neon_(x, L, b);
+#else
+  mat_backward_sub_lt_scalar_(x, L, b);
+#endif
+}
+
+MATDEF int mat_solve_spd(Vec *x, const Mat *A, const Vec *b) {
+  MAT_ASSERT_MAT(A);
+  MAT_ASSERT_MAT(x);
+  MAT_ASSERT_MAT(b);
+  MAT_ASSERT_SQUARE(A);
+  MAT_ASSERT(b->rows == A->rows && "b must have same rows as A");
+  MAT_ASSERT(x->rows == A->cols && "x must have same rows as A cols");
+
+  size_t n = A->rows;
+
+  // Allocate temporaries
+  Mat *L = mat_mat(n, n);
+  Vec *y = mat_vec(n);
+
+  // 1. Cholesky factorization: A = L * L^T
+  int ret = mat_chol(A, L);
+  if (ret != 0) {
+    MAT_FREE_MAT(L);
+    MAT_FREE_MAT(y);
+    return -1; // Not positive definite
+  }
+
+  // 2. Forward substitution: Ly = b
+  mat_forward_sub_nonunit_(y, L, b);
+
+  // 3. Backward substitution: L^T x = y
+  mat_backward_sub_lt_(x, L, y);
+
+  // Cleanup
+  MAT_FREE_MAT(L);
+  MAT_FREE_MAT(y);
+  return 0;
+}
+
+// ============================================================================
+// Cholesky decomposition (A = L * L^T, A must be symmetric positive definite)
+// ============================================================================
+
+#define MAT_CHOL_BLOCK_SIZE 64
 
 // Lower-triangular GEMM: C[lower] += alpha * A * B^T[lower]
 // Only computes and updates the lower triangle of C
@@ -4950,7 +5156,7 @@ MAT_INTERNAL_STATIC int mat_chol_unblocked_(mat_elem_t *M, size_t n,
   for (size_t j = 0; j < n; j++) {
     // Diagonal: L[j,j] = sqrt(A[j,j] - sum_{k<j} L[j,k]^2)
     mat_elem_t *Mj = &M[j * ldm];
-    mat_elem_t sum = mat_chol_dot_strided_(Mj, Mj, j);
+    mat_elem_t sum = mat_dot_raw_(Mj, Mj, j);
     mat_elem_t diag = Mj[j] - sum;
 
     if (diag <= 0) {
@@ -4963,7 +5169,7 @@ MAT_INTERNAL_STATIC int mat_chol_unblocked_(mat_elem_t *M, size_t n,
     // Off-diagonal: L[i,j] = (A[i,j] - dot(L[i,0:j], L[j,0:j])) / L[j,j]
     for (size_t i = j + 1; i < n; i++) {
       mat_elem_t *Mi = &M[i * ldm];
-      mat_elem_t dot = mat_chol_dot_strided_(Mi, Mj, j);
+      mat_elem_t dot = mat_dot_raw_(Mi, Mj, j);
       Mi[j] = (Mi[j] - dot) * ljj_inv;
     }
   }
