@@ -768,6 +768,16 @@ MATDEF void mat_solve(Vec *x, const Mat *A, const Vec *b);
 // Returns 0 on success, -1 if A is not positive definite.
 MATDEF int mat_solve_spd(Vec *x, const Mat *A, const Vec *b);
 
+// Triangular solvers (TRSV operations).
+// Solve Lx = b where L is lower triangular.
+MATDEF void mat_solve_tril(Vec *x, const Mat *L, const Vec *b);
+// Solve Lx = b where L is unit lower triangular (implicit 1s on diagonal).
+MATDEF void mat_solve_tril_unit(Vec *x, const Mat *L, const Vec *b);
+// Solve Ux = b where U is upper triangular.
+MATDEF void mat_solve_triu(Vec *x, const Mat *U, const Vec *b);
+// Solve L^T x = b where L is lower triangular (uses L directly, no transpose).
+MATDEF void mat_solve_trilt(Vec *x, const Mat *L, const Vec *b);
+
 // Least squares solution.
 MAT_NOT_IMPLEMENTED MATDEF void mat_lstsq(Vec *x, const Mat *A, const Vec *b);
 
@@ -4354,80 +4364,13 @@ MAT_INTERNAL_STATIC mat_elem_t mat_dot_raw_(const mat_elem_t *a,
 }
 
 // ============================================================================
-// Triangular system solvers (for mat_solve)
+// Triangular system solvers (TRSV)
 // ============================================================================
 
-// Forward substitution: Solve Lx = b where L is unit lower triangular.
-// L has 1s on diagonal (implicit), elements below diagonal stored.
-MAT_INTERNAL_STATIC void mat_forward_sub_(Vec *x, const Mat *L, const Vec *b) {
-  size_t n = L->rows;
-  mat_elem_t *x_data = x->data;
-  const mat_elem_t *b_data = b->data;
-  const mat_elem_t *L_data = L->data;
+// --- mat_solve_tril: Solve Lx = b, L lower triangular (non-unit diagonal) ---
 
-  for (size_t i = 0; i < n; i++) {
-    mat_elem_t dot = mat_dot_raw_(&L_data[i * n], x_data, i);
-    x_data[i] = b_data[i] - dot; // L[i,i] = 1 (implicit)
-  }
-}
-
-// Backward substitution: Solve Ux = b where U is upper triangular.
-MAT_INTERNAL_STATIC void mat_backward_sub_(Vec *x, const Mat *U, const Vec *b) {
-  size_t n = U->rows;
-  mat_elem_t *x_data = x->data;
-  const mat_elem_t *b_data = b->data;
-  const mat_elem_t *U_data = U->data;
-
-  for (size_t i = n; i-- > 0;) {
-    size_t len = n - i - 1;
-    mat_elem_t dot = mat_dot_raw_(&U_data[i * n + i + 1], &x_data[i + 1], len);
-    x_data[i] = (b_data[i] - dot) / U_data[i * n + i];
-  }
-}
-
-MATDEF void mat_solve(Vec *x, const Mat *A, const Vec *b) {
-  MAT_ASSERT_MAT(A);
-  MAT_ASSERT_MAT(x);
-  MAT_ASSERT_MAT(b);
-  MAT_ASSERT_SQUARE(A);
-  MAT_ASSERT(b->rows == A->rows && "b must have same rows as A");
-  MAT_ASSERT(x->rows == A->cols && "x must have same rows as A cols");
-
-  size_t n = A->rows;
-
-  // Allocate temporaries
-  Mat *L = mat_mat(n, n);
-  Mat *U = mat_mat(n, n);
-  Perm *p = mat_perm(n);
-  Vec *pb = mat_vec(n); // Permuted b
-  Vec *z = mat_vec(n);  // Intermediate result
-
-  // 1. LU factorization: PA = LU
-  mat_plu(A, L, U, p);
-
-  // 2. Apply permutation: pb = P * b
-  for (size_t i = 0; i < n; i++) {
-    pb->data[i] = b->data[p->data[i]];
-  }
-
-  // 3. Forward substitution: Lz = pb
-  mat_forward_sub_(z, L, pb);
-
-  // 4. Backward substitution: Ux = z
-  mat_backward_sub_(x, U, z);
-
-  // Cleanup
-  MAT_FREE_MAT(L);
-  MAT_FREE_MAT(U);
-  MAT_FREE_PERM(p);
-  MAT_FREE_MAT(pb);
-  MAT_FREE_MAT(z);
-}
-
-// Forward substitution: Solve Lx = b where L is lower triangular (non-unit).
-// L has actual values on diagonal (for Cholesky).
-MAT_INTERNAL_STATIC void mat_forward_sub_nonunit_(Vec *x, const Mat *L,
-                                                   const Vec *b) {
+MAT_INTERNAL_STATIC void mat_solve_tril_scalar_(Vec *x, const Mat *L,
+                                                 const Vec *b) {
   size_t n = L->rows;
   mat_elem_t *x_data = x->data;
   const mat_elem_t *b_data = b->data;
@@ -4439,12 +4382,133 @@ MAT_INTERNAL_STATIC void mat_forward_sub_nonunit_(Vec *x, const Mat *L,
   }
 }
 
-// Backward substitution: Solve L^T x = b where L is lower triangular.
+MATDEF void mat_solve_tril(Vec *x, const Mat *L, const Vec *b) {
+  MAT_ASSERT_MAT(L);
+  MAT_ASSERT_MAT(x);
+  MAT_ASSERT_MAT(b);
+  MAT_ASSERT_SQUARE(L);
+  MAT_ASSERT(b->rows == L->rows);
+  MAT_ASSERT(x->rows == L->rows);
+  mat_solve_tril_scalar_(x, L, b);
+}
+
+// --- mat_solve_tril_unit: Solve Lx = b, L unit lower triangular (1s on diag) -
+
+MAT_INTERNAL_STATIC void mat_solve_tril_unit_scalar_(Vec *x, const Mat *L,
+                                                      const Vec *b) {
+  size_t n = L->rows;
+  mat_elem_t *x_data = x->data;
+  const mat_elem_t *b_data = b->data;
+  const mat_elem_t *L_data = L->data;
+
+  for (size_t i = 0; i < n; i++) {
+    mat_elem_t dot = mat_dot_raw_(&L_data[i * n], x_data, i);
+    x_data[i] = b_data[i] - dot;
+  }
+}
+
+MATDEF void mat_solve_tril_unit(Vec *x, const Mat *L, const Vec *b) {
+  MAT_ASSERT_MAT(L);
+  MAT_ASSERT_MAT(x);
+  MAT_ASSERT_MAT(b);
+  MAT_ASSERT_SQUARE(L);
+  MAT_ASSERT(b->rows == L->rows);
+  MAT_ASSERT(x->rows == L->rows);
+  mat_solve_tril_unit_scalar_(x, L, b);
+}
+
+// --- mat_solve_triu: Solve Ux = b, U upper triangular ---
+// Row-oriented backward substitution with NEON optimization.
+// For row-major U, accessing U[i, i+1:n] is contiguous.
+
+#ifdef MAT_HAS_ARM_NEON
+MAT_INTERNAL_STATIC void mat_solve_triu_neon_(Vec *x, const Mat *U,
+                                               const Vec *b) {
+  size_t n = U->rows;
+  mat_elem_t *x_data = x->data;
+  const mat_elem_t *b_data = b->data;
+  const mat_elem_t *U_data = U->data;
+
+  for (size_t i = n; i-- > 0;) {
+    const mat_elem_t *Ui = &U_data[i * n];
+    size_t j = i + 1;
+
+    MAT_NEON_TYPE vsum0 = MAT_NEON_DUP(0);
+    MAT_NEON_TYPE vsum1 = MAT_NEON_DUP(0);
+    MAT_NEON_TYPE vsum2 = MAT_NEON_DUP(0);
+    MAT_NEON_TYPE vsum3 = MAT_NEON_DUP(0);
+
+    for (; j + MAT_NEON_WIDTH * 4 <= n; j += MAT_NEON_WIDTH * 4) {
+      MAT_NEON_TYPE vu0 = MAT_NEON_LOAD(&Ui[j]);
+      MAT_NEON_TYPE vu1 = MAT_NEON_LOAD(&Ui[j + MAT_NEON_WIDTH]);
+      MAT_NEON_TYPE vu2 = MAT_NEON_LOAD(&Ui[j + MAT_NEON_WIDTH * 2]);
+      MAT_NEON_TYPE vu3 = MAT_NEON_LOAD(&Ui[j + MAT_NEON_WIDTH * 3]);
+      MAT_NEON_TYPE vx0 = MAT_NEON_LOAD(&x_data[j]);
+      MAT_NEON_TYPE vx1 = MAT_NEON_LOAD(&x_data[j + MAT_NEON_WIDTH]);
+      MAT_NEON_TYPE vx2 = MAT_NEON_LOAD(&x_data[j + MAT_NEON_WIDTH * 2]);
+      MAT_NEON_TYPE vx3 = MAT_NEON_LOAD(&x_data[j + MAT_NEON_WIDTH * 3]);
+      vsum0 = MAT_NEON_FMA(vsum0, vu0, vx0);
+      vsum1 = MAT_NEON_FMA(vsum1, vu1, vx1);
+      vsum2 = MAT_NEON_FMA(vsum2, vu2, vx2);
+      vsum3 = MAT_NEON_FMA(vsum3, vu3, vx3);
+    }
+
+    for (; j + MAT_NEON_WIDTH <= n; j += MAT_NEON_WIDTH) {
+      MAT_NEON_TYPE vu = MAT_NEON_LOAD(&Ui[j]);
+      MAT_NEON_TYPE vx = MAT_NEON_LOAD(&x_data[j]);
+      vsum0 = MAT_NEON_FMA(vsum0, vu, vx);
+    }
+
+    vsum0 = MAT_NEON_ADD(vsum0, vsum1);
+    vsum2 = MAT_NEON_ADD(vsum2, vsum3);
+    vsum0 = MAT_NEON_ADD(vsum0, vsum2);
+    mat_elem_t dot = MAT_NEON_ADDV(vsum0);
+
+    for (; j < n; j++) {
+      dot += Ui[j] * x_data[j];
+    }
+
+    x_data[i] = (b_data[i] - dot) / Ui[i];
+  }
+}
+#endif
+
+MAT_INTERNAL_STATIC void mat_solve_triu_scalar_(Vec *x, const Mat *U,
+                                                 const Vec *b) {
+  size_t n = U->rows;
+  mat_elem_t *x_data = x->data;
+  const mat_elem_t *b_data = b->data;
+  const mat_elem_t *U_data = U->data;
+
+  for (size_t i = n; i-- > 0;) {
+    mat_elem_t sum = b_data[i];
+    for (size_t j = i + 1; j < n; j++) {
+      sum -= U_data[i * n + j] * x_data[j];
+    }
+    x_data[i] = sum / U_data[i * n + i];
+  }
+}
+
+MATDEF void mat_solve_triu(Vec *x, const Mat *U, const Vec *b) {
+  MAT_ASSERT_MAT(U);
+  MAT_ASSERT_MAT(x);
+  MAT_ASSERT_MAT(b);
+  MAT_ASSERT_SQUARE(U);
+  MAT_ASSERT(b->rows == U->rows);
+  MAT_ASSERT(x->rows == U->rows);
+#ifdef MAT_HAS_ARM_NEON
+  mat_solve_triu_neon_(x, U, b);
+#else
+  mat_solve_triu_scalar_(x, U, b);
+#endif
+}
+
+// --- mat_solve_trilt: Solve L^T x = b, L lower triangular ---
 // Uses column-oriented algorithm for contiguous memory access.
 
 #ifdef MAT_HAS_ARM_NEON
-MAT_INTERNAL_STATIC void mat_backward_sub_lt_neon_(Vec *x, const Mat *L,
-                                                    const Vec *b) {
+MAT_INTERNAL_STATIC void mat_solve_trilt_neon_(Vec *x, const Mat *L,
+                                                const Vec *b) {
   size_t n = L->rows;
   mat_elem_t *x_data = x->data;
   const mat_elem_t *L_data = L->data;
@@ -4489,8 +4553,8 @@ MAT_INTERNAL_STATIC void mat_backward_sub_lt_neon_(Vec *x, const Mat *L,
 }
 #endif
 
-MAT_INTERNAL_STATIC void mat_backward_sub_lt_scalar_(Vec *x, const Mat *L,
-                                                      const Vec *b) {
+MAT_INTERNAL_STATIC void mat_solve_trilt_scalar_(Vec *x, const Mat *L,
+                                                  const Vec *b) {
   size_t n = L->rows;
   mat_elem_t *x_data = x->data;
   const mat_elem_t *L_data = L->data;
@@ -4507,13 +4571,54 @@ MAT_INTERNAL_STATIC void mat_backward_sub_lt_scalar_(Vec *x, const Mat *L,
   }
 }
 
-MAT_INTERNAL_STATIC void mat_backward_sub_lt_(Vec *x, const Mat *L,
-                                               const Vec *b) {
+MATDEF void mat_solve_trilt(Vec *x, const Mat *L, const Vec *b) {
+  MAT_ASSERT_MAT(L);
+  MAT_ASSERT_MAT(x);
+  MAT_ASSERT_MAT(b);
+  MAT_ASSERT_SQUARE(L);
+  MAT_ASSERT(b->rows == L->rows);
+  MAT_ASSERT(x->rows == L->rows);
 #ifdef MAT_HAS_ARM_NEON
-  mat_backward_sub_lt_neon_(x, L, b);
+  mat_solve_trilt_neon_(x, L, b);
 #else
-  mat_backward_sub_lt_scalar_(x, L, b);
+  mat_solve_trilt_scalar_(x, L, b);
 #endif
+}
+
+// ============================================================================
+// Linear system solvers (using triangular solvers)
+// ============================================================================
+
+MATDEF void mat_solve(Vec *x, const Mat *A, const Vec *b) {
+  MAT_ASSERT_MAT(A);
+  MAT_ASSERT_MAT(x);
+  MAT_ASSERT_MAT(b);
+  MAT_ASSERT_SQUARE(A);
+  MAT_ASSERT(b->rows == A->rows && "b must have same rows as A");
+  MAT_ASSERT(x->rows == A->cols && "x must have same rows as A cols");
+
+  size_t n = A->rows;
+
+  Mat *L = mat_mat(n, n);
+  Mat *U = mat_mat(n, n);
+  Perm *p = mat_perm(n);
+  Vec *pb = mat_vec(n);
+  Vec *z = mat_vec(n);
+
+  mat_plu(A, L, U, p);
+
+  for (size_t i = 0; i < n; i++) {
+    pb->data[i] = b->data[p->data[i]];
+  }
+
+  mat_solve_tril_unit(z, L, pb);
+  mat_solve_triu(x, U, z);
+
+  MAT_FREE_MAT(L);
+  MAT_FREE_MAT(U);
+  MAT_FREE_PERM(p);
+  MAT_FREE_MAT(pb);
+  MAT_FREE_MAT(z);
 }
 
 MATDEF int mat_solve_spd(Vec *x, const Mat *A, const Vec *b) {
@@ -4539,10 +4644,10 @@ MATDEF int mat_solve_spd(Vec *x, const Mat *A, const Vec *b) {
   }
 
   // 2. Forward substitution: Ly = b
-  mat_forward_sub_nonunit_(y, L, b);
+  mat_solve_tril_scalar_(y, L, b);
 
   // 3. Backward substitution: L^T x = y
-  mat_backward_sub_lt_(x, L, y);
+  mat_solve_trilt(x, L, y);
 
   // Cleanup
   MAT_FREE_MAT(L);
