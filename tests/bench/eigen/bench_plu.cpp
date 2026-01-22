@@ -1,6 +1,6 @@
 #include <cstdio>
-#include <cstdlib>
 #include <Eigen/Dense>
+#include <cstdlib>
 
 #define BENCH_ITERATIONS 1
 #define BENCH_ROUNDS 10
@@ -12,13 +12,13 @@
 #include "mat.h"
 
 #ifdef MAT_DOUBLE_PRECISION
-  using EigenMatrix = Eigen::MatrixXd;
-  #define PRECISION_NAME "float64"
-  #define BENCH_FILL bench_fill_random_d
+    using EigenMatrix = Eigen::MatrixXd;
+#define PRECISION_NAME "float64"
+#define BENCH_FILL bench_fill_random_d
 #else
-  using EigenMatrix = Eigen::MatrixXf;
-  #define PRECISION_NAME "float32"
-  #define BENCH_FILL bench_fill_random_f
+    using EigenMatrix = Eigen::MatrixXf;
+#define PRECISION_NAME "float32"
+#define BENCH_FILL bench_fill_random_f
 #endif
 
 void bench_speed(size_t n) {
@@ -60,8 +60,8 @@ void bench_speed(size_t n) {
   BenchStats ls = bench_stats(libmat_times, BENCH_ROUNDS);
   BenchStats es = bench_stats(eigen_times, BENCH_ROUNDS);
 
-  printf("libmat: %8.1f ± %.1f us  (%.2fx vs Eigen)\n",
-         ls.avg, ls.std, es.avg / ls.avg);
+  printf("libmat: %8.1f ± %.1f us  (%.2fx vs Eigen)\n", ls.avg, ls.std,
+         es.avg / ls.avg);
   printf("Eigen:  %8.1f ± %.1f us\n", es.avg, es.std);
 
   mat_free_mat(A);

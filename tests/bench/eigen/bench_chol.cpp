@@ -27,21 +27,21 @@ void make_spd(Mat *A) {
   Mat *B = mat_mat(n, n);
   BENCH_FILL(B->data, n * n);
 
-  // A = B * B^T
+  // A = B * B^T using MAT_AT/MAT_SET for storage-order independence
   for (size_t i = 0; i < n; i++) {
     for (size_t j = 0; j <= i; j++) {
       mat_elem_t sum = 0;
       for (size_t k = 0; k < n; k++) {
-        sum += B->data[i * n + k] * B->data[j * n + k];
+        sum += MAT_AT(B, i, k) * MAT_AT(B, j, k);
       }
-      A->data[i * n + j] = sum;
-      A->data[j * n + i] = sum;
+      MAT_SET(A, i, j, sum);
+      MAT_SET(A, j, i, sum);
     }
   }
 
   // Add n*I
   for (size_t i = 0; i < n; i++) {
-    A->data[i * n + i] += (mat_elem_t)n;
+    MAT_SET(A, i, i, MAT_AT(A, i, i) + (mat_elem_t)n);
   }
 
   mat_free_mat(B);
