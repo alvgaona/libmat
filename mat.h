@@ -2125,7 +2125,7 @@ MAT_INTERNAL_STATIC void mat_gemv_t_scalar_(Vec *y, mat_elem_t alpha,
   for (size_t i = 0; i < m; i++) {
     mat_elem_t xi = alpha * x->data[i];
     for (size_t j = 0; j < n; j++) {
-      y->data[j] += A->data[i * n + j] * xi;
+      y->data[j] += MAT_AT(A, i, j) * xi;
     }
   }
 }
@@ -2243,7 +2243,7 @@ MAT_INTERNAL_STATIC void mat_ger_scalar_(Mat *A, mat_elem_t alpha, const Vec *x,
   for (size_t i = 0; i < m; i++) {
     mat_elem_t xi = alpha * x->data[i];
     for (size_t j = 0; j < n; j++) {
-      A->data[i * n + j] += xi * y->data[j];
+      MAT_SET(A, i, j, MAT_AT(A, i, j) + xi * y->data[j]);
     }
   }
 }
@@ -2270,7 +2270,7 @@ MAT_INTERNAL_STATIC void mat_syr_lower_scalar_(Mat *A, mat_elem_t alpha,
   for (size_t i = 0; i < n; i++) {
     mat_elem_t xi = alpha * x->data[i];
     for (size_t j = 0; j <= i; j++) {
-      A->data[i * n + j] += xi * x->data[j];
+      MAT_SET(A, i, j, MAT_AT(A, i, j) + xi * x->data[j]);
     }
   }
 }
@@ -2282,7 +2282,7 @@ MAT_INTERNAL_STATIC void mat_syr_upper_scalar_(Mat *A, mat_elem_t alpha,
   for (size_t i = 0; i < n; i++) {
     mat_elem_t xi = alpha * x->data[i];
     for (size_t j = i; j < n; j++) {
-      A->data[i * n + j] += xi * x->data[j];
+      MAT_SET(A, i, j, MAT_AT(A, i, j) + xi * x->data[j]);
     }
   }
 }
