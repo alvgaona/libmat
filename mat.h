@@ -1996,6 +1996,70 @@ MAT_INTERNAL_STATIC void mat_gemv_t_neon_(Vec *y, mat_elem_t alpha,
   const mat_elem_t *pa = A->data;
   const mat_elem_t *px = x->data;
 
+#ifdef MAT_COLUMN_MAJOR
+  // Column-major: y[j] = alpha * dot(A[:,j], x) + beta * y[j]
+  // Column j is contiguous at &pa[j * m], so this is a series of dot products
+  // Process 4 columns at a time for better ILP
+  size_t j = 0;
+  for (; j + 4 <= n; j += 4) {
+    const mat_elem_t *col0 = &pa[j * m];
+    const mat_elem_t *col1 = &pa[(j + 1) * m];
+    const mat_elem_t *col2 = &pa[(j + 2) * m];
+    const mat_elem_t *col3 = &pa[(j + 3) * m];
+
+    MAT_NEON_TYPE sum0 = MAT_NEON_DUP(0);
+    MAT_NEON_TYPE sum1 = MAT_NEON_DUP(0);
+    MAT_NEON_TYPE sum2 = MAT_NEON_DUP(0);
+    MAT_NEON_TYPE sum3 = MAT_NEON_DUP(0);
+
+    size_t i = 0;
+    for (; i + MAT_NEON_WIDTH <= m; i += MAT_NEON_WIDTH) {
+      MAT_NEON_TYPE vx = MAT_NEON_LOAD(&px[i]);
+      sum0 = MAT_NEON_FMA(sum0, MAT_NEON_LOAD(&col0[i]), vx);
+      sum1 = MAT_NEON_FMA(sum1, MAT_NEON_LOAD(&col1[i]), vx);
+      sum2 = MAT_NEON_FMA(sum2, MAT_NEON_LOAD(&col2[i]), vx);
+      sum3 = MAT_NEON_FMA(sum3, MAT_NEON_LOAD(&col3[i]), vx);
+    }
+
+    mat_elem_t dot0 = MAT_NEON_ADDV(sum0);
+    mat_elem_t dot1 = MAT_NEON_ADDV(sum1);
+    mat_elem_t dot2 = MAT_NEON_ADDV(sum2);
+    mat_elem_t dot3 = MAT_NEON_ADDV(sum3);
+
+    // Scalar remainder
+    for (; i < m; i++) {
+      dot0 += col0[i] * px[i];
+      dot1 += col1[i] * px[i];
+      dot2 += col2[i] * px[i];
+      dot3 += col3[i] * px[i];
+    }
+
+    py[j] = alpha * dot0 + beta * py[j];
+    py[j + 1] = alpha * dot1 + beta * py[j + 1];
+    py[j + 2] = alpha * dot2 + beta * py[j + 2];
+    py[j + 3] = alpha * dot3 + beta * py[j + 3];
+  }
+
+  // Handle remaining columns
+  for (; j < n; j++) {
+    const mat_elem_t *col = &pa[j * m];
+    MAT_NEON_TYPE sum = MAT_NEON_DUP(0);
+
+    size_t i = 0;
+    for (; i + MAT_NEON_WIDTH <= m; i += MAT_NEON_WIDTH) {
+      MAT_NEON_TYPE vx = MAT_NEON_LOAD(&px[i]);
+      sum = MAT_NEON_FMA(sum, MAT_NEON_LOAD(&col[i]), vx);
+    }
+
+    mat_elem_t dot = MAT_NEON_ADDV(sum);
+    for (; i < m; i++) {
+      dot += col[i] * px[i];
+    }
+
+    py[j] = alpha * dot + beta * py[j];
+  }
+#else
+  // Row-major: y += alpha * A^T * x using AXPY approach
   // Scale y by beta first
   if (beta == 0) {
     for (size_t j = 0; j < n; j++)
@@ -2005,7 +2069,6 @@ MAT_INTERNAL_STATIC void mat_gemv_t_neon_(Vec *y, mat_elem_t alpha,
       py[j] *= beta;
   }
 
-  // y += alpha * A^T * x
   // Process by rows of A (which are contiguous in memory)
   for (size_t i = 0; i < m; i++) {
     const mat_elem_t *row = &pa[i * n];
@@ -2043,6 +2106,7 @@ MAT_INTERNAL_STATIC void mat_gemv_t_neon_(Vec *y, mat_elem_t alpha,
       py[j] += row[j] * xi;
     }
   }
+#endif
 }
 #endif
 
@@ -3250,9 +3314,89 @@ MAT_INTERNAL_STATIC void mat_t_scalar_(Mat *out, const Mat *m);
 
 MAT_INTERNAL_STATIC void mat_t_neon_(Mat *out, const Mat *m) {
 #ifdef MAT_COLUMN_MAJOR
-  // Column-major: fall back to scalar version which uses MAT_AT/MAT_SET
-  // TODO: Optimize NEON transpose for column-major storage
-  mat_t_scalar_(out, m);
+  // Column-major NEON transpose
+  // Input: m is rows×cols, m[i,j] = src[j*rows + i] (column j is contiguous)
+  // Output: out is cols×rows, out[j,i] = dst[i*cols + j] (column i is contiguous)
+  // We want: out[j,i] = m[i,j], so dst[i*cols + j] = src[j*rows + i]
+  size_t rows = m->rows;
+  size_t cols = m->cols;
+  const mat_elem_t *src = m->data;
+  mat_elem_t *dst = out->data;
+
+  size_t full_rows = (rows / MAT_T_BLOCK) * MAT_T_BLOCK;
+  size_t full_cols = (cols / MAT_T_BLOCK) * MAT_T_BLOCK;
+
+#if defined(MAT_HAS_OPENMP)
+#pragma omp parallel for collapse(2)                                           \
+    schedule(static) if (rows * cols >= MAT_OMP_THRESHOLD)
+#endif
+  for (size_t ii = 0; ii < full_rows; ii += MAT_T_BLOCK) {
+    for (size_t jj = 0; jj < full_cols; jj += MAT_T_BLOCK) {
+#ifdef MAT_DOUBLE_PRECISION
+      // float64x2_t: process 2x2 blocks
+      // Load from columns jj, jj+1 of input (each column is contiguous)
+      // Store to columns ii, ii+1 of output (each column is contiguous)
+      for (size_t i = ii; i < ii + MAT_T_BLOCK; i += 2) {
+        for (size_t j = jj; j < jj + MAT_T_BLOCK; j += 2) {
+          // Load 2 elements from column j and j+1, rows i and i+1
+          float64x2_t c0 = vld1q_f64(&src[(j + 0) * rows + i]);  // col j
+          float64x2_t c1 = vld1q_f64(&src[(j + 1) * rows + i]);  // col j+1
+          // Transpose 2x2
+          float64x2_t t0 = vzip1q_f64(c0, c1);
+          float64x2_t t1 = vzip2q_f64(c0, c1);
+          // Store to column i and i+1 of output
+          vst1q_f64(&dst[(i + 0) * cols + j], t0);
+          vst1q_f64(&dst[(i + 1) * cols + j], t1);
+        }
+      }
+#else
+      // float32x4_t: process 4x4 blocks
+      // Load from columns jj..jj+3 of input (each column is contiguous)
+      // Store to columns ii..ii+3 of output (each column is contiguous)
+      for (size_t i = ii; i < ii + MAT_T_BLOCK; i += 4) {
+        for (size_t j = jj; j < jj + MAT_T_BLOCK; j += 4) {
+          // Load 4 elements from each of 4 columns
+          float32x4_t c0 = vld1q_f32(&src[(j + 0) * rows + i]);
+          float32x4_t c1 = vld1q_f32(&src[(j + 1) * rows + i]);
+          float32x4_t c2 = vld1q_f32(&src[(j + 2) * rows + i]);
+          float32x4_t c3 = vld1q_f32(&src[(j + 3) * rows + i]);
+          // Transpose 4x4 using NEON intrinsics
+          float32x4x2_t p01 = vtrnq_f32(c0, c1);
+          float32x4x2_t p23 = vtrnq_f32(c2, c3);
+          float32x4_t t0 =
+              vcombine_f32(vget_low_f32(p01.val[0]), vget_low_f32(p23.val[0]));
+          float32x4_t t1 =
+              vcombine_f32(vget_low_f32(p01.val[1]), vget_low_f32(p23.val[1]));
+          float32x4_t t2 =
+              vcombine_f32(vget_high_f32(p01.val[0]), vget_high_f32(p23.val[0]));
+          float32x4_t t3 =
+              vcombine_f32(vget_high_f32(p01.val[1]), vget_high_f32(p23.val[1]));
+          // Store to 4 columns of output
+          vst1q_f32(&dst[(i + 0) * cols + j], t0);
+          vst1q_f32(&dst[(i + 1) * cols + j], t1);
+          vst1q_f32(&dst[(i + 2) * cols + j], t2);
+          vst1q_f32(&dst[(i + 3) * cols + j], t3);
+        }
+      }
+#endif
+    }
+  }
+
+  // Edge cases: right edge (cols not multiple of block)
+  for (size_t ii = 0; ii < full_rows; ii += MAT_T_BLOCK) {
+    for (size_t i = ii; i < ii + MAT_T_BLOCK; i++) {
+      for (size_t j = full_cols; j < cols; j++) {
+        dst[i * cols + j] = src[j * rows + i];
+      }
+    }
+  }
+
+  // Edge cases: bottom edge (rows not multiple of block)
+  for (size_t i = full_rows; i < rows; i++) {
+    for (size_t j = 0; j < cols; j++) {
+      dst[i * cols + j] = src[j * rows + i];
+    }
+  }
 #else
   // Row-major: optimized NEON transpose
   size_t rows = m->rows;
