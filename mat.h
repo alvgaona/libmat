@@ -4686,16 +4686,18 @@ MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R) {
   // Use blocked algorithm for large matrices
   if (n >= MAT_QR_BLOCK_THRESHOLD) {
     size_t block_size = MAT_QR_BLOCK_SIZE;
+
+    // Pre-allocate all workspace (using heap - scratch arena is reset by GEMM)
     mat_elem_t *tau_block =
         (mat_elem_t *)MAT_MALLOC(block_size * sizeof(mat_elem_t));
-    // Y stored column-major: Y[row, col] = Y[col * len + row]
     mat_elem_t *Y =
         (mat_elem_t *)MAT_MALLOC(m * block_size * sizeof(mat_elem_t));
     mat_elem_t *T =
         (mat_elem_t *)MAT_MALLOC(block_size * block_size * sizeof(mat_elem_t));
-    MAT_ASSERT(tau_block && Y && T);
+    mat_elem_t *x_data = (mat_elem_t *)MAT_MALLOC(m * sizeof(mat_elem_t));
+    mat_elem_t *R_trail = (mat_elem_t *)MAT_MALLOC(m * n * sizeof(mat_elem_t));
 
-    // Pre-allocate workspace for apply functions (reused across all iterations)
+    // Pre-allocate workspace for apply functions
     mat_qr_workspace_t ws;
     ws.W_mk = (mat_elem_t *)MAT_MALLOC(m * block_size * sizeof(mat_elem_t));
     ws.W_mk2 = (mat_elem_t *)MAT_MALLOC(m * block_size * sizeof(mat_elem_t));
@@ -4703,7 +4705,6 @@ MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R) {
     ws.W_kn = (mat_elem_t *)MAT_MALLOC(block_size * n * sizeof(mat_elem_t));
     ws.W_kn2 = (mat_elem_t *)MAT_MALLOC(block_size * n * sizeof(mat_elem_t));
     ws.W_kk = (mat_elem_t *)MAT_MALLOC(block_size * block_size * sizeof(mat_elem_t));
-    MAT_ASSERT(ws.W_mk && ws.W_mk2 && ws.W_km && ws.W_kn && ws.W_kn2 && ws.W_kk);
 
     for (size_t jb = 0; jb < n; jb += block_size) {
       size_t kb = (jb + block_size <= n) ? block_size : (n - jb);
@@ -4714,10 +4715,7 @@ MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R) {
         size_t col = jb + j;
         size_t vlen = m - col;
 
-        mat_elem_t *x_data =
-            (mat_elem_t *)MAT_MALLOC(vlen * sizeof(mat_elem_t));
-        // Column-major: R[row, col] = R->data[col * m + row]
-        // Extract column col, rows col to m-1
+        // Extract column (x_data reused each iteration)
         for (size_t i = 0; i < vlen; i++) {
           x_data[i] = R->data[col * m + (col + i)];
         }
@@ -4738,19 +4736,11 @@ MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R) {
         // Apply single Householder to remaining panel columns
         if (tau_block[j] != 0) {
           for (size_t c = col; c < jb + kb; c++) {
-            mat_elem_t w = 0;
-            // Column-major: R[row, c] = R->data[c * m + row]
-            for (size_t i = 0; i < vlen; i++) {
-              w += v_sub.data[i] * R->data[c * m + (col + i)];
-            }
-            w *= tau_block[j];
-            for (size_t i = 0; i < vlen; i++) {
-              R->data[c * m + (col + i)] -= w * v_sub.data[i];
-            }
+            Vec r_col = {.rows = vlen, .cols = 1, .data = &R->data[c * m + col]};
+            mat_elem_t w = mat_dot(&v_sub, &r_col) * tau_block[j];
+            mat_axpy(&r_col, -w, &v_sub);
           }
         }
-
-        MAT_FREE(x_data);
       }
 
       // Build T matrix for WY representation (column-major)
@@ -4759,10 +4749,8 @@ MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R) {
       // Apply block reflector to trailing R
       if (jb + kb < n) {
         size_t trail_cols = n - (jb + kb);
-        // Copy R submatrix to dense storage (better cache behavior)
-        mat_elem_t *R_trail =
-            (mat_elem_t *)MAT_MALLOC(len * trail_cols * sizeof(mat_elem_t));
         mat_elem_t *R_src = &R->data[(jb + kb) * m + jb];
+        // Copy R submatrix to dense storage (R_trail reused each iteration)
         for (size_t c = 0; c < trail_cols; c++)
           memcpy(&R_trail[c * len], &R_src[c * m], len * sizeof(mat_elem_t));
 
@@ -4772,7 +4760,6 @@ MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R) {
         // Copy back
         for (size_t c = 0; c < trail_cols; c++)
           memcpy(&R_src[c * m], &R_trail[c * len], len * sizeof(mat_elem_t));
-        MAT_FREE(R_trail);
       }
 
       // Apply block reflector to Q (in-place - Q columns are always dense)
@@ -4785,16 +4772,17 @@ MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R) {
     }
 
     // Free workspace
+    MAT_FREE(tau_block);
+    MAT_FREE(Y);
+    MAT_FREE(T);
+    MAT_FREE(x_data);
+    MAT_FREE(R_trail);
     MAT_FREE(ws.W_mk);
     MAT_FREE(ws.W_mk2);
     MAT_FREE(ws.W_km);
     MAT_FREE(ws.W_kn);
     MAT_FREE(ws.W_kn2);
     MAT_FREE(ws.W_kk);
-
-    MAT_FREE(tau_block);
-    MAT_FREE(Y);
-    MAT_FREE(T);
     return;
   }
 
@@ -5088,13 +5076,16 @@ MATDEF void mat_qr_r(const Mat *A, Mat *R) {
   // Column-major: use blocked algorithm for large matrices
   if (n >= MAT_QR_BLOCK_THRESHOLD) {
     size_t block_size = MAT_QR_BLOCK_SIZE;
+
+    // Pre-allocate workspace (using heap - scratch arena is reset by GEMM)
     mat_elem_t *tau_block =
         (mat_elem_t *)MAT_MALLOC(block_size * sizeof(mat_elem_t));
     mat_elem_t *Y =
         (mat_elem_t *)MAT_MALLOC(m * block_size * sizeof(mat_elem_t));
     mat_elem_t *T =
         (mat_elem_t *)MAT_MALLOC(block_size * block_size * sizeof(mat_elem_t));
-    MAT_ASSERT(tau_block && Y && T);
+    mat_elem_t *x_data = (mat_elem_t *)MAT_MALLOC(m * sizeof(mat_elem_t));
+    mat_elem_t *R_trail = (mat_elem_t *)MAT_MALLOC(m * n * sizeof(mat_elem_t));
 
     // Reduced workspace - no Q updates needed
     mat_elem_t *W_km = (mat_elem_t *)MAT_MALLOC(block_size * m * sizeof(mat_elem_t));
@@ -5111,8 +5102,6 @@ MATDEF void mat_qr_r(const Mat *A, Mat *R) {
         size_t col = jb + j;
         size_t vlen = m - col;
 
-        mat_elem_t *x_data =
-            (mat_elem_t *)MAT_MALLOC(vlen * sizeof(mat_elem_t));
         for (size_t i = 0; i < vlen; i++) {
           x_data[i] = R->data[col * m + (col + i)];
         }
@@ -5131,18 +5120,11 @@ MATDEF void mat_qr_r(const Mat *A, Mat *R) {
 
         if (tau_block[j] != 0) {
           for (size_t c = col; c < jb + kb; c++) {
-            mat_elem_t w = 0;
-            for (size_t i = 0; i < vlen; i++) {
-              w += v_sub.data[i] * R->data[c * m + (col + i)];
-            }
-            w *= tau_block[j];
-            for (size_t i = 0; i < vlen; i++) {
-              R->data[c * m + (col + i)] -= w * v_sub.data[i];
-            }
+            Vec r_col = {.rows = vlen, .cols = 1, .data = &R->data[c * m + col]};
+            mat_elem_t w = mat_dot(&v_sub, &r_col) * tau_block[j];
+            mat_axpy(&r_col, -w, &v_sub);
           }
         }
-
-        MAT_FREE(x_data);
       }
 
       // Build T matrix for WY representation
@@ -5151,8 +5133,6 @@ MATDEF void mat_qr_r(const Mat *A, Mat *R) {
       // Apply block reflector to trailing R only (skip Q!)
       if (jb + kb < n) {
         size_t trail_cols = n - (jb + kb);
-        mat_elem_t *R_trail =
-            (mat_elem_t *)MAT_MALLOC(len * trail_cols * sizeof(mat_elem_t));
         mat_elem_t *R_src = &R->data[(jb + kb) * m + jb];
         for (size_t c = 0; c < trail_cols; c++)
           memcpy(&R_trail[c * len], &R_src[c * m], len * sizeof(mat_elem_t));
@@ -5171,18 +5151,20 @@ MATDEF void mat_qr_r(const Mat *A, Mat *R) {
 
         for (size_t c = 0; c < trail_cols; c++)
           memcpy(&R_src[c * m], &R_trail[c * len], len * sizeof(mat_elem_t));
-        MAT_FREE(R_trail);
       }
       // Skip Q update entirely!
     }
 
+    // Free workspace
+    MAT_FREE(tau_block);
+    MAT_FREE(Y);
+    MAT_FREE(T);
+    MAT_FREE(x_data);
+    MAT_FREE(R_trail);
     MAT_FREE(W_km);
     MAT_FREE(W_kn);
     MAT_FREE(W_kn2);
     MAT_FREE(W_kk);
-    MAT_FREE(tau_block);
-    MAT_FREE(Y);
-    MAT_FREE(T);
     return;
   }
 
