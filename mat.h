@@ -92,6 +92,12 @@ typedef struct {
 } MatArena;
 #endif
 
+// Transpose flags for GEMM operations (BLAS-style)
+typedef enum {
+  MAT_NO_TRANS = 0,  // Use matrix as-is
+  MAT_TRANS = 1      // Use transpose of matrix
+} mat_trans_t;
+
 #ifdef MAT_STRIP_PREFIX
 
 #define mat mat_mat
@@ -2799,12 +2805,14 @@ mat_gemm_strided_(mat_elem_t *C, size_t ldc, mat_elem_t alpha,
 // Column-major strided GEMM: C = alpha * A * B + beta * C
 // Layout: A[i,k] = A[k*lda + i], B[k,j] = B[j*ldb + k], C[i,j] = C[j*ldc + i]
 // Uses same strategy as optimized GEMM: transpose A, use 4x4 micro-kernel
+// transA/transB: if MAT_TRANS, treat input as transposed without copying
 #ifdef MAT_HAS_ARM_NEON
 MAT_INTERNAL_STATIC void
 mat_gemm_strided_colmajor_neon_(mat_elem_t *C, size_t ldc, mat_elem_t alpha,
-                                const mat_elem_t *A, size_t lda, size_t M,
-                                size_t K, const mat_elem_t *B, size_t ldb,
-                                size_t N, mat_elem_t beta) {
+                                const mat_elem_t *A, size_t lda,
+                                mat_trans_t transA, const mat_elem_t *B,
+                                size_t ldb, mat_trans_t transB, size_t M,
+                                size_t K, size_t N, mat_elem_t beta) {
   // Scale C by beta first
   if (beta == 0) {
     for (size_t j = 0; j < N; j++)
@@ -2847,7 +2855,8 @@ mat_gemm_strided_colmajor_neon_(mat_elem_t *C, size_t ldc, mat_elem_t alpha,
       for (size_t kk = 0; kk < kc; kk++) {
         size_t k = k0 + kk;
         for (size_t ii = 0; ii < MR; ii++)
-          pa[kk * MR + ii] = A[k * lda + i + ii];
+          // A[i,k]: normal = A[k*lda + i], transposed = A[i*lda + k]
+          pa[kk * MR + ii] = transA ? A[(i + ii) * lda + k] : A[k * lda + i + ii];
       }
     }
 
@@ -2856,7 +2865,9 @@ mat_gemm_strided_colmajor_neon_(mat_elem_t *C, size_t ldc, mat_elem_t alpha,
       for (size_t kk = 0; kk < kc; kk++) {
         size_t k = k0 + kk;
         for (size_t jj = 0; jj < NR; jj++)
-          packed_b[kk * NR + jj] = B[(j + jj) * ldb + k];
+          // B[k,j]: normal = B[j*ldb + k], transposed = B[k*ldb + j]
+          packed_b[kk * NR + jj] =
+              transB ? B[k * ldb + (j + jj)] : B[(j + jj) * ldb + k];
       }
 
       for (size_t p = 0; p < npanels_a; p++) {
@@ -3018,8 +3029,11 @@ mat_gemm_strided_colmajor_neon_(mat_elem_t *C, size_t ldc, mat_elem_t alpha,
       for (size_t i = M_MR; i < M; i++) {
         for (size_t jj = 0; jj < NR; jj++) {
           mat_elem_t sum = 0;
-          for (size_t kk = 0; kk < kc; kk++)
-            sum += A[(k0 + kk) * lda + i] * packed_b[kk * NR + jj];
+          for (size_t kk = 0; kk < kc; kk++) {
+            size_t k = k0 + kk;
+            mat_elem_t a_ik = transA ? A[i * lda + k] : A[k * lda + i];
+            sum += a_ik * packed_b[kk * NR + jj];
+          }
           C[(j + jj) * ldc + i] += alpha * sum;
         }
       }
@@ -3029,8 +3043,12 @@ mat_gemm_strided_colmajor_neon_(mat_elem_t *C, size_t ldc, mat_elem_t alpha,
     for (size_t jj = N_NR; jj < N; jj++) {
       for (size_t i = 0; i < M; i++) {
         mat_elem_t sum = 0;
-        for (size_t kk = 0; kk < kc; kk++)
-          sum += A[(k0 + kk) * lda + i] * B[jj * ldb + k0 + kk];
+        for (size_t kk = 0; kk < kc; kk++) {
+          size_t k = k0 + kk;
+          mat_elem_t a_ik = transA ? A[i * lda + k] : A[k * lda + i];
+          mat_elem_t b_kj = transB ? B[k * ldb + jj] : B[jj * ldb + k];
+          sum += a_ik * b_kj;
+        }
         C[jj * ldc + i] += alpha * sum;
       }
     }
@@ -3047,11 +3065,12 @@ mat_gemm_strided_colmajor_neon_(mat_elem_t *C, size_t ldc, mat_elem_t alpha,
 
 MAT_INTERNAL_STATIC void
 mat_gemm_strided_colmajor_(mat_elem_t *C, size_t ldc, mat_elem_t alpha,
-                           const mat_elem_t *A, size_t lda, size_t M, size_t K,
-                           const mat_elem_t *B, size_t ldb, size_t N,
-                           mat_elem_t beta) {
+                           const mat_elem_t *A, size_t lda, mat_trans_t transA,
+                           const mat_elem_t *B, size_t ldb, mat_trans_t transB,
+                           size_t M, size_t K, size_t N, mat_elem_t beta) {
 #ifdef MAT_HAS_ARM_NEON
-  mat_gemm_strided_colmajor_neon_(C, ldc, alpha, A, lda, M, K, B, ldb, N, beta);
+  mat_gemm_strided_colmajor_neon_(C, ldc, alpha, A, lda, transA, B, ldb, transB,
+                                  M, K, N, beta);
 #else
   // Scalar fallback
   if (beta == 0) {
@@ -3062,12 +3081,15 @@ mat_gemm_strided_colmajor_(mat_elem_t *C, size_t ldc, mat_elem_t alpha,
       for (size_t i = 0; i < M; i++)
         C[j * ldc + i] *= beta;
   }
-  // C[:,j] += alpha * sum_k A[:,k] * B[k,j]
+  // C[:,j] += alpha * sum_k op(A)[:,k] * op(B)[k,j]
   for (size_t j = 0; j < N; j++) {
     for (size_t k = 0; k < K; k++) {
-      mat_elem_t bkj = alpha * B[j * ldb + k];
-      for (size_t i = 0; i < M; i++)
-        C[j * ldc + i] += A[k * lda + i] * bkj;
+      mat_elem_t b_kj = transB ? B[k * ldb + j] : B[j * ldb + k];
+      mat_elem_t ab = alpha * b_kj;
+      for (size_t i = 0; i < M; i++) {
+        mat_elem_t a_ik = transA ? A[i * lda + k] : A[k * lda + i];
+        C[j * ldc + i] += a_ik * ab;
+      }
     }
   }
 #endif
@@ -3087,8 +3109,8 @@ MAT_INTERNAL_STATIC void mat_gemm_neon_(Mat *C, mat_elem_t alpha, const Mat *A,
   // Column-major: delegate to strided implementation
   // For column-major Mat, leading dimension = rows
   mat_gemm_strided_colmajor_neon_(C->data, C->rows, alpha, A->data, A->rows,
-                                  A->rows, A->cols, B->data, B->rows, B->cols,
-                                  beta);
+                                  MAT_NO_TRANS, B->data, B->rows, MAT_NO_TRANS,
+                                  A->rows, A->cols, B->cols, beta);
 #else
   // Row-major: optimized NEON implementation
   size_t M = A->rows;
@@ -4515,10 +4537,8 @@ mat_transpose_colmajor_(mat_elem_t *Bt, const mat_elem_t *B, size_t rows,
 typedef struct {
   mat_elem_t *W_mk;   // m × k workspace (for C, CT in apply_right)
   mat_elem_t *W_mk2;  // m × k workspace (second buffer)
-  mat_elem_t *W_km;   // k × m workspace (for Yt)
   mat_elem_t *W_kn;   // k × n workspace (for C in apply_left)
   mat_elem_t *W_kn2;  // k × n workspace (for TC in apply_left)
-  mat_elem_t *W_kk;   // k × k workspace (for Tt)
 } mat_qr_workspace_t;
 
 // Column-major: Apply block Householder from left: A = (I - Y*T^T*Y^T) * A
@@ -4534,25 +4554,20 @@ mat_qr_apply_block_left_colmajor_(mat_elem_t *A_data, size_t lda,
   (void)ldt;
 
   // A = A - Y * T^T * (Y^T * A)
-  mat_elem_t *Yt = ws->W_km;   // k × m
   mat_elem_t *C = ws->W_kn;    // k × n
-  mat_elem_t *Tt = ws->W_kk;   // k × k
   mat_elem_t *TC = ws->W_kn2;  // k × n
 
-  // Yt = Y^T (k x m)
-  mat_transpose_colmajor_(Yt, Y, m, k);
+  // C = Y^T * A (k x n) - use transA flag instead of explicit transpose
+  mat_gemm_strided_colmajor_(C, k, 1.0f, Y, ldy, MAT_TRANS, A_data, lda,
+                             MAT_NO_TRANS, k, m, n, 0.0f);
 
-  // C = Y^T * A (k x n)
-  mat_gemm_strided_colmajor_(C, k, 1.0f, Yt, k, k, m, A_data, lda, n, 0.0f);
-
-  // Tt = T^T (k x k)
-  mat_transpose_colmajor_(Tt, T, k, k);
-
-  // TC = T^T * C (k x n)
-  mat_gemm_strided_colmajor_(TC, k, 1.0f, Tt, k, k, k, C, k, n, 0.0f);
+  // TC = T^T * C (k x n) - use transA flag instead of explicit transpose
+  mat_gemm_strided_colmajor_(TC, k, 1.0f, T, ldt, MAT_TRANS, C, k, MAT_NO_TRANS,
+                             k, k, n, 0.0f);
 
   // A = A - Y * TC (m x n)
-  mat_gemm_strided_colmajor_(A_data, lda, -1.0f, Y, ldy, m, k, TC, k, n, 1.0f);
+  mat_gemm_strided_colmajor_(A_data, lda, -1.0f, Y, ldy, MAT_NO_TRANS, TC, k,
+                             MAT_NO_TRANS, m, k, n, 1.0f);
 }
 
 // Column-major: Apply block Householder from right: A = A * (I - Y*T*Y^T)
@@ -4571,19 +4586,18 @@ mat_qr_apply_block_right_colmajor_(mat_elem_t *A_data, size_t lda,
   // A is m x n, Y is n x k, T is k x k
   mat_elem_t *C = ws->W_mk;    // m × k
   mat_elem_t *CT = ws->W_mk2;  // m × k
-  mat_elem_t *Yt = ws->W_km;   // k × n (reuse, max n = m)
 
   // C = A * Y (m x k)
-  mat_gemm_strided_colmajor_(C, m, 1.0f, A_data, lda, m, n, Y, ldy, k, 0.0f);
+  mat_gemm_strided_colmajor_(C, m, 1.0f, A_data, lda, MAT_NO_TRANS, Y, ldy,
+                             MAT_NO_TRANS, m, n, k, 0.0f);
 
   // CT = C * T (m x k)
-  mat_gemm_strided_colmajor_(CT, m, 1.0f, C, m, m, k, T, k, k, 0.0f);
+  mat_gemm_strided_colmajor_(CT, m, 1.0f, C, m, MAT_NO_TRANS, T, ldt,
+                             MAT_NO_TRANS, m, k, k, 0.0f);
 
-  // Yt = Y^T (k x n)
-  mat_transpose_colmajor_(Yt, Y, n, k);
-
-  // A = A - CT * Y^T (m x n)
-  mat_gemm_strided_colmajor_(A_data, lda, -1.0f, CT, m, m, k, Yt, k, n, 1.0f);
+  // A = A - CT * Y^T (m x n) - use transB flag instead of explicit transpose
+  mat_gemm_strided_colmajor_(A_data, lda, -1.0f, CT, m, MAT_NO_TRANS, Y, ldy,
+                             MAT_TRANS, m, k, n, 1.0f);
 }
 #endif
 
@@ -4695,16 +4709,13 @@ MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R) {
     mat_elem_t *T =
         (mat_elem_t *)MAT_MALLOC(block_size * block_size * sizeof(mat_elem_t));
     mat_elem_t *x_data = (mat_elem_t *)MAT_MALLOC(m * sizeof(mat_elem_t));
-    mat_elem_t *R_trail = (mat_elem_t *)MAT_MALLOC(m * n * sizeof(mat_elem_t));
 
-    // Pre-allocate workspace for apply functions
+    // Pre-allocate workspace for apply functions (no transpose buffers needed)
     mat_qr_workspace_t ws;
     ws.W_mk = (mat_elem_t *)MAT_MALLOC(m * block_size * sizeof(mat_elem_t));
     ws.W_mk2 = (mat_elem_t *)MAT_MALLOC(m * block_size * sizeof(mat_elem_t));
-    ws.W_km = (mat_elem_t *)MAT_MALLOC(block_size * m * sizeof(mat_elem_t));
     ws.W_kn = (mat_elem_t *)MAT_MALLOC(block_size * n * sizeof(mat_elem_t));
     ws.W_kn2 = (mat_elem_t *)MAT_MALLOC(block_size * n * sizeof(mat_elem_t));
-    ws.W_kk = (mat_elem_t *)MAT_MALLOC(block_size * block_size * sizeof(mat_elem_t));
 
     for (size_t jb = 0; jb < n; jb += block_size) {
       size_t kb = (jb + block_size <= n) ? block_size : (n - jb);
@@ -4746,20 +4757,13 @@ MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R) {
       // Build T matrix for WY representation (column-major)
       mat_qr_build_T_colmajor_(T, kb, Y, len, tau_block, len, kb);
 
-      // Apply block reflector to trailing R
+      // Apply block reflector to trailing R (work directly with stride m)
       if (jb + kb < n) {
         size_t trail_cols = n - (jb + kb);
         mat_elem_t *R_src = &R->data[(jb + kb) * m + jb];
-        // Copy R submatrix to dense storage (R_trail reused each iteration)
-        for (size_t c = 0; c < trail_cols; c++)
-          memcpy(&R_trail[c * len], &R_src[c * m], len * sizeof(mat_elem_t));
 
-        mat_qr_apply_block_left_colmajor_(R_trail, len, Y, len, T, kb, len, kb,
+        mat_qr_apply_block_left_colmajor_(R_src, m, Y, len, T, kb, len, kb,
                                           trail_cols, &ws);
-
-        // Copy back
-        for (size_t c = 0; c < trail_cols; c++)
-          memcpy(&R_src[c * m], &R_trail[c * len], len * sizeof(mat_elem_t));
       }
 
       // Apply block reflector to Q (in-place - Q columns are always dense)
@@ -4776,13 +4780,10 @@ MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R) {
     MAT_FREE(Y);
     MAT_FREE(T);
     MAT_FREE(x_data);
-    MAT_FREE(R_trail);
     MAT_FREE(ws.W_mk);
     MAT_FREE(ws.W_mk2);
-    MAT_FREE(ws.W_km);
     MAT_FREE(ws.W_kn);
     MAT_FREE(ws.W_kn2);
-    MAT_FREE(ws.W_kk);
     return;
   }
 
@@ -5085,13 +5086,10 @@ MATDEF void mat_qr_r(const Mat *A, Mat *R) {
     mat_elem_t *T =
         (mat_elem_t *)MAT_MALLOC(block_size * block_size * sizeof(mat_elem_t));
     mat_elem_t *x_data = (mat_elem_t *)MAT_MALLOC(m * sizeof(mat_elem_t));
-    mat_elem_t *R_trail = (mat_elem_t *)MAT_MALLOC(m * n * sizeof(mat_elem_t));
 
-    // Reduced workspace - no Q updates needed
-    mat_elem_t *W_km = (mat_elem_t *)MAT_MALLOC(block_size * m * sizeof(mat_elem_t));
+    // Reduced workspace - no Q updates, no transpose buffers, no R_trail copy
     mat_elem_t *W_kn = (mat_elem_t *)MAT_MALLOC(block_size * n * sizeof(mat_elem_t));
     mat_elem_t *W_kn2 = (mat_elem_t *)MAT_MALLOC(block_size * n * sizeof(mat_elem_t));
-    mat_elem_t *W_kk = (mat_elem_t *)MAT_MALLOC(block_size * block_size * sizeof(mat_elem_t));
 
     for (size_t jb = 0; jb < n; jb += block_size) {
       size_t kb = (jb + block_size <= n) ? block_size : (n - jb);
@@ -5131,26 +5129,23 @@ MATDEF void mat_qr_r(const Mat *A, Mat *R) {
       mat_qr_build_T_colmajor_(T, kb, Y, len, tau_block, len, kb);
 
       // Apply block reflector to trailing R only (skip Q!)
+      // Work directly on R with stride m (no copy needed)
       if (jb + kb < n) {
         size_t trail_cols = n - (jb + kb);
         mat_elem_t *R_src = &R->data[(jb + kb) * m + jb];
-        for (size_t c = 0; c < trail_cols; c++)
-          memcpy(&R_trail[c * len], &R_src[c * m], len * sizeof(mat_elem_t));
 
-        // Inline apply_block_left without Q workspace
-        mat_elem_t *Yt = W_km;
         mat_elem_t *C = W_kn;
-        mat_elem_t *Tt = W_kk;
         mat_elem_t *TC = W_kn2;
 
-        mat_transpose_colmajor_(Yt, Y, len, kb);
-        mat_gemm_strided_colmajor_(C, kb, 1.0f, Yt, kb, kb, len, R_trail, len, trail_cols, 0.0f);
-        mat_transpose_colmajor_(Tt, T, kb, kb);
-        mat_gemm_strided_colmajor_(TC, kb, 1.0f, Tt, kb, kb, kb, C, kb, trail_cols, 0.0f);
-        mat_gemm_strided_colmajor_(R_trail, len, -1.0f, Y, len, len, kb, TC, kb, trail_cols, 1.0f);
-
-        for (size_t c = 0; c < trail_cols; c++)
-          memcpy(&R_src[c * m], &R_trail[c * len], len * sizeof(mat_elem_t));
+        // C = Y^T * R_src (kb x trail_cols), R_src has stride m
+        mat_gemm_strided_colmajor_(C, kb, 1.0f, Y, len, MAT_TRANS, R_src, m,
+                                   MAT_NO_TRANS, kb, len, trail_cols, 0.0f);
+        // TC = T^T * C (kb x trail_cols)
+        mat_gemm_strided_colmajor_(TC, kb, 1.0f, T, kb, MAT_TRANS, C, kb,
+                                   MAT_NO_TRANS, kb, kb, trail_cols, 0.0f);
+        // R_src -= Y * TC (len x trail_cols), R_src has stride m
+        mat_gemm_strided_colmajor_(R_src, m, -1.0f, Y, len, MAT_NO_TRANS, TC,
+                                   kb, MAT_NO_TRANS, len, kb, trail_cols, 1.0f);
       }
       // Skip Q update entirely!
     }
@@ -5160,11 +5155,8 @@ MATDEF void mat_qr_r(const Mat *A, Mat *R) {
     MAT_FREE(Y);
     MAT_FREE(T);
     MAT_FREE(x_data);
-    MAT_FREE(R_trail);
-    MAT_FREE(W_km);
     MAT_FREE(W_kn);
     MAT_FREE(W_kn2);
-    MAT_FREE(W_kk);
     return;
   }
 
@@ -5489,10 +5481,9 @@ MAT_INTERNAL_STATIC int mat_plu_blocked_colmajor_(Mat *M, Perm *p) {
       mat_gemm_strided_colmajor_(
           &data[k_end * n + k_end], n,  // C, ldc
           -1.0f,                         // alpha = -1
-          &data[kb * n + k_end], n,     // A (L block), lda
-          trail_m, block_k,             // M, K
-          &data[k_end * n + kb], n,     // B (U block), ldb
-          trail_n,                       // N
+          &data[kb * n + k_end], n, MAT_NO_TRANS,  // A (L block), lda
+          &data[k_end * n + kb], n, MAT_NO_TRANS,  // B (U block), ldb
+          trail_m, block_k, trail_n,    // M, K, N
           1.0f);                         // beta = 1
     }
   }
