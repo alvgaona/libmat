@@ -9,7 +9,7 @@ static int is_upper_triangular(const Mat *R) {
     mat_elem_t tol = (mat_elem_t)R->rows * MAT_DEFAULT_EPSILON;
     for (size_t i = 1; i < R->rows; i++) {
         for (size_t j = 0; j < i && j < R->cols; j++) {
-            if (MAT_FABS(R->data[i * R->cols + j]) > tol) {
+            if (MAT_FABS(MAT_AT(R, i, j)) > tol) {
                 return 0;
             }
         }

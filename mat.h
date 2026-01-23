@@ -716,6 +716,11 @@ MATDEF mat_elem_t mat_nnz(const Mat *a);
 // Q and R must be pre-allocated with correct dimensions.
 MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R);
 
+// QR decomposition (R factor only) - faster when Q is not needed.
+// Useful for least squares, rank determination, etc.
+// R must be pre-allocated with dimensions (m x n).
+MATDEF void mat_qr_r(const Mat *A, Mat *R);
+
 // Householder reflection: compute v and tau such that H*x = beta*e1
 // where H = I - tau*v*v^T is orthogonal.
 // v is modified in-place from x (v[0] = 1, rest normalized).
@@ -4430,15 +4435,161 @@ MATDEF void mat_householder_right(Mat *A, const Vec *v, mat_elem_t tau) {
 
 // QR block size for switching to blocked algorithm
 #ifndef MAT_QR_BLOCK_SIZE
-#define MAT_QR_BLOCK_SIZE 8
+#define MAT_QR_BLOCK_SIZE 16
 #endif
 
 #ifndef MAT_QR_BLOCK_THRESHOLD
 #define MAT_QR_BLOCK_THRESHOLD 64
 #endif
 
+#ifdef MAT_COLUMN_MAJOR
+// Column-major: Build T matrix for compact WY representation
+// Y is stored column-major: Y[i,j] = Y[j * ldy + i]
+// Optimized: precompute Y^T * Y to avoid redundant dot products
+MAT_INTERNAL_STATIC void mat_qr_build_T_colmajor_(mat_elem_t *T, size_t ldt,
+                                                   const mat_elem_t *Y, size_t ldy,
+                                                   const mat_elem_t *tau, size_t m,
+                                                   size_t k) {
+  // T is stored column-major: T[i,j] = T[j * ldt + i]
+  for (size_t i = 0; i < k * k; i++)
+    T[i] = 0;
+
+  // Precompute YtY[p,j] = Y[:,p]^T * Y[:,j] for p < j
+  // Only upper triangle needed, stored column-major
+  mat_elem_t *YtY = (mat_elem_t *)MAT_MALLOC(k * k * sizeof(mat_elem_t));
+  for (size_t j = 1; j < k; j++) {
+    const mat_elem_t *Yj = &Y[j * ldy];
+    for (size_t p = 0; p < j; p++) {
+      const mat_elem_t *Yp = &Y[p * ldy];
+      mat_elem_t dot = 0;
+#ifdef MAT_HAS_ARM_NEON
+      size_t r = 0;
+      MAT_NEON_TYPE acc = MAT_NEON_DUP(0);
+      for (; r + MAT_NEON_WIDTH <= m; r += MAT_NEON_WIDTH) {
+        MAT_NEON_TYPE yp = MAT_NEON_LOAD(&Yp[r]);
+        MAT_NEON_TYPE yj = MAT_NEON_LOAD(&Yj[r]);
+        acc = MAT_NEON_FMA(acc, yp, yj);
+      }
+      dot = MAT_NEON_ADDV(acc);
+      for (; r < m; r++)
+        dot += Yp[r] * Yj[r];
+#else
+      for (size_t r = 0; r < m; r++)
+        dot += Yp[r] * Yj[r];
+#endif
+      YtY[j * k + p] = dot;  // YtY[p,j] stored at col j, row p
+    }
+  }
+
+  // Build T using precomputed dot products
+  for (size_t j = 0; j < k; j++) {
+    T[j * ldt + j] = tau[j];  // T[j,j] = tau[j]
+
+    for (size_t i = 0; i < j; i++) {
+      mat_elem_t sum = 0;
+      for (size_t p = i; p < j; p++) {
+        sum += T[p * ldt + i] * YtY[j * k + p];  // T[i,p] * YtY[p,j]
+      }
+      T[j * ldt + i] = -tau[j] * sum;  // T[i,j]
+    }
+  }
+
+  MAT_FREE(YtY);
+}
+
+// Fast column-major transpose: Bt = B^T
+// B is rows x cols (col-major: B[r,c] = B[c*rows + r])
+// Bt is cols x rows (col-major: Bt[r,c] = Bt[c*cols + r])
+// We want: Bt[r,c] = B[c,r] => Bt[c*cols + r] = B[r*rows + c]
+MAT_INTERNAL_STATIC void
+mat_transpose_colmajor_(mat_elem_t *Bt, const mat_elem_t *B, size_t rows,
+                         size_t cols) {
+  for (size_t r = 0; r < cols; r++) {    // r = row in Bt, col in B
+    for (size_t c = 0; c < rows; c++) {  // c = col in Bt, row in B
+      Bt[c * cols + r] = B[r * rows + c];
+    }
+  }
+}
+
+// Workspace structure for blocked QR apply functions
+typedef struct {
+  mat_elem_t *W_mk;   // m × k workspace (for C, CT in apply_right)
+  mat_elem_t *W_mk2;  // m × k workspace (second buffer)
+  mat_elem_t *W_km;   // k × m workspace (for Yt)
+  mat_elem_t *W_kn;   // k × n workspace (for C in apply_left)
+  mat_elem_t *W_kn2;  // k × n workspace (for TC in apply_left)
+  mat_elem_t *W_kk;   // k × k workspace (for Tt)
+} mat_qr_workspace_t;
+
+// Column-major: Apply block Householder from left: A = (I - Y*T^T*Y^T) * A
+// Uses pre-allocated workspace
+MAT_INTERNAL_STATIC void
+mat_qr_apply_block_left_colmajor_(mat_elem_t *A_data, size_t lda,
+                                   const mat_elem_t *Y, size_t ldy,
+                                   const mat_elem_t *T, size_t ldt,
+                                   size_t m, size_t k, size_t n,
+                                   mat_qr_workspace_t *ws) {
+  (void)lda;
+  (void)ldy;
+  (void)ldt;
+
+  // A = A - Y * T^T * (Y^T * A)
+  mat_elem_t *Yt = ws->W_km;   // k × m
+  mat_elem_t *C = ws->W_kn;    // k × n
+  mat_elem_t *Tt = ws->W_kk;   // k × k
+  mat_elem_t *TC = ws->W_kn2;  // k × n
+
+  // Yt = Y^T (k x m)
+  mat_transpose_colmajor_(Yt, Y, m, k);
+
+  // C = Y^T * A (k x n)
+  mat_gemm_strided_colmajor_(C, k, 1.0f, Yt, k, k, m, A_data, lda, n, 0.0f);
+
+  // Tt = T^T (k x k)
+  mat_transpose_colmajor_(Tt, T, k, k);
+
+  // TC = T^T * C (k x n)
+  mat_gemm_strided_colmajor_(TC, k, 1.0f, Tt, k, k, k, C, k, n, 0.0f);
+
+  // A = A - Y * TC (m x n)
+  mat_gemm_strided_colmajor_(A_data, lda, -1.0f, Y, ldy, m, k, TC, k, n, 1.0f);
+}
+
+// Column-major: Apply block Householder from right: A = A * (I - Y*T*Y^T)
+// Uses pre-allocated workspace
+MAT_INTERNAL_STATIC void
+mat_qr_apply_block_right_colmajor_(mat_elem_t *A_data, size_t lda,
+                                    const mat_elem_t *Y, size_t ldy,
+                                    const mat_elem_t *T, size_t ldt,
+                                    size_t m, size_t n, size_t k,
+                                    mat_qr_workspace_t *ws) {
+  (void)lda;
+  (void)ldy;
+  (void)ldt;
+
+  // A = A - (A * Y) * T * Y^T
+  // A is m x n, Y is n x k, T is k x k
+  mat_elem_t *C = ws->W_mk;    // m × k
+  mat_elem_t *CT = ws->W_mk2;  // m × k
+  mat_elem_t *Yt = ws->W_km;   // k × n (reuse, max n = m)
+
+  // C = A * Y (m x k)
+  mat_gemm_strided_colmajor_(C, m, 1.0f, A_data, lda, m, n, Y, ldy, k, 0.0f);
+
+  // CT = C * T (m x k)
+  mat_gemm_strided_colmajor_(CT, m, 1.0f, C, m, m, k, T, k, k, 0.0f);
+
+  // Yt = Y^T (k x n)
+  mat_transpose_colmajor_(Yt, Y, n, k);
+
+  // A = A - CT * Y^T (m x n)
+  mat_gemm_strided_colmajor_(A_data, lda, -1.0f, CT, m, m, k, Yt, k, n, 1.0f);
+}
+#endif
+
 // Build T matrix for compact WY representation: H1*H2*...*Hk = I - Y*T*Y^T
 // T is upper triangular with T[j,j] = tau[j]
+// Row-major version: Y[i,j] = Y[i * ldy + j], T[i,j] = T[i * ldt + j]
 MAT_INTERNAL_STATIC void mat_qr_build_T_(mat_elem_t *T, size_t ldt,
                                          const mat_elem_t *Y, size_t ldy,
                                          const mat_elem_t *tau, size_t m,
@@ -4526,6 +4677,238 @@ MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R) {
 
   mat_deep_copy(R, A);
   mat_eye(Q);
+
+#ifdef MAT_COLUMN_MAJOR
+  // Column-major implementation: columns are contiguous
+  // R[row, col] = R->data[col * m + row]
+  // Q[row, col] = Q->data[col * m + row]
+
+  // Use blocked algorithm for large matrices
+  if (n >= MAT_QR_BLOCK_THRESHOLD) {
+    size_t block_size = MAT_QR_BLOCK_SIZE;
+    mat_elem_t *tau_block =
+        (mat_elem_t *)MAT_MALLOC(block_size * sizeof(mat_elem_t));
+    // Y stored column-major: Y[row, col] = Y[col * len + row]
+    mat_elem_t *Y =
+        (mat_elem_t *)MAT_MALLOC(m * block_size * sizeof(mat_elem_t));
+    mat_elem_t *T =
+        (mat_elem_t *)MAT_MALLOC(block_size * block_size * sizeof(mat_elem_t));
+    MAT_ASSERT(tau_block && Y && T);
+
+    // Pre-allocate workspace for apply functions (reused across all iterations)
+    mat_qr_workspace_t ws;
+    ws.W_mk = (mat_elem_t *)MAT_MALLOC(m * block_size * sizeof(mat_elem_t));
+    ws.W_mk2 = (mat_elem_t *)MAT_MALLOC(m * block_size * sizeof(mat_elem_t));
+    ws.W_km = (mat_elem_t *)MAT_MALLOC(block_size * m * sizeof(mat_elem_t));
+    ws.W_kn = (mat_elem_t *)MAT_MALLOC(block_size * n * sizeof(mat_elem_t));
+    ws.W_kn2 = (mat_elem_t *)MAT_MALLOC(block_size * n * sizeof(mat_elem_t));
+    ws.W_kk = (mat_elem_t *)MAT_MALLOC(block_size * block_size * sizeof(mat_elem_t));
+    MAT_ASSERT(ws.W_mk && ws.W_mk2 && ws.W_km && ws.W_kn && ws.W_kn2 && ws.W_kk);
+
+    for (size_t jb = 0; jb < n; jb += block_size) {
+      size_t kb = (jb + block_size <= n) ? block_size : (n - jb);
+      size_t len = m - jb;
+
+      // Panel factorization: compute kb Householder vectors
+      for (size_t j = 0; j < kb; j++) {
+        size_t col = jb + j;
+        size_t vlen = m - col;
+
+        mat_elem_t *x_data =
+            (mat_elem_t *)MAT_MALLOC(vlen * sizeof(mat_elem_t));
+        // Column-major: R[row, col] = R->data[col * m + row]
+        // Extract column col, rows col to m-1
+        for (size_t i = 0; i < vlen; i++) {
+          x_data[i] = R->data[col * m + (col + i)];
+        }
+
+        Vec x_sub = {.rows = vlen, .cols = 1, .data = x_data};
+        Vec v_sub = {.rows = vlen, .cols = 1, .data = x_data};
+        (void)mat_householder(&v_sub, &tau_block[j], &x_sub);
+
+        // Store v in Y (column-major): Y[row, j] = Y[j * len + row]
+        size_t y_offset = col - jb;
+        for (size_t i = 0; i < y_offset; i++) {
+          Y[j * len + i] = 0;
+        }
+        for (size_t i = 0; i < vlen; i++) {
+          Y[j * len + (y_offset + i)] = v_sub.data[i];
+        }
+
+        // Apply single Householder to remaining panel columns
+        if (tau_block[j] != 0) {
+          for (size_t c = col; c < jb + kb; c++) {
+            mat_elem_t w = 0;
+            // Column-major: R[row, c] = R->data[c * m + row]
+            for (size_t i = 0; i < vlen; i++) {
+              w += v_sub.data[i] * R->data[c * m + (col + i)];
+            }
+            w *= tau_block[j];
+            for (size_t i = 0; i < vlen; i++) {
+              R->data[c * m + (col + i)] -= w * v_sub.data[i];
+            }
+          }
+        }
+
+        MAT_FREE(x_data);
+      }
+
+      // Build T matrix for WY representation (column-major)
+      mat_qr_build_T_colmajor_(T, kb, Y, len, tau_block, len, kb);
+
+      // Apply block reflector to trailing R
+      if (jb + kb < n) {
+        size_t trail_cols = n - (jb + kb);
+        // Copy R submatrix to dense storage (better cache behavior)
+        mat_elem_t *R_trail =
+            (mat_elem_t *)MAT_MALLOC(len * trail_cols * sizeof(mat_elem_t));
+        mat_elem_t *R_src = &R->data[(jb + kb) * m + jb];
+        for (size_t c = 0; c < trail_cols; c++)
+          memcpy(&R_trail[c * len], &R_src[c * m], len * sizeof(mat_elem_t));
+
+        mat_qr_apply_block_left_colmajor_(R_trail, len, Y, len, T, kb, len, kb,
+                                          trail_cols, &ws);
+
+        // Copy back
+        for (size_t c = 0; c < trail_cols; c++)
+          memcpy(&R_src[c * m], &R_trail[c * len], len * sizeof(mat_elem_t));
+        MAT_FREE(R_trail);
+      }
+
+      // Apply block reflector to Q (in-place - Q columns are always dense)
+      // Q[:, jb:m] starts at Q->data[jb*m], all m rows accessed
+      {
+        mat_elem_t *Q_trail = &Q->data[jb * m];
+        mat_qr_apply_block_right_colmajor_(Q_trail, m, Y, len, T, kb, m, len,
+                                           kb, &ws);
+      }
+    }
+
+    // Free workspace
+    MAT_FREE(ws.W_mk);
+    MAT_FREE(ws.W_mk2);
+    MAT_FREE(ws.W_km);
+    MAT_FREE(ws.W_kn);
+    MAT_FREE(ws.W_kn2);
+    MAT_FREE(ws.W_kk);
+
+    MAT_FREE(tau_block);
+    MAT_FREE(Y);
+    MAT_FREE(T);
+    return;
+  }
+
+  // Unblocked algorithm for small matrices (column-major)
+  mat_elem_t *x_data = (mat_elem_t *)MAT_MALLOC(m * sizeof(mat_elem_t));
+  mat_elem_t *v_data = (mat_elem_t *)MAT_MALLOC(m * sizeof(mat_elem_t));
+  mat_elem_t *u = (mat_elem_t *)MAT_MALLOC(m * sizeof(mat_elem_t));
+  MAT_ASSERT(x_data && v_data && u);
+
+  for (size_t j = 0; j < n; j++) {
+    size_t len = m - j;
+
+    // Extract column j, rows j to m-1 (column-major: contiguous!)
+    // Use memcpy for contiguous data
+    memcpy(x_data, &R->data[j * m + j], len * sizeof(mat_elem_t));
+
+    Vec x_sub = {.rows = len, .cols = 1, .data = x_data};
+    Vec v_sub = {.rows = len, .cols = 1, .data = v_data};
+
+    mat_elem_t tau;
+    (void)mat_householder(&v_sub, &tau, &x_sub);
+
+    if (tau == 0)
+      continue;
+
+    // Apply H to R[j:m, j:n] from left (column-major)
+    // For each column k, compute w = v^T * R[j:m, k], then R[:,k] -= w*v
+    for (size_t k = j; k < n; k++) {
+      mat_elem_t *Rk = &R->data[k * m + j];  // column k, starting at row j
+      mat_elem_t w = 0;
+#ifdef MAT_HAS_ARM_NEON
+      size_t i = 0;
+      MAT_NEON_TYPE wv = MAT_NEON_DUP(0);
+      for (; i + MAT_NEON_WIDTH <= len; i += MAT_NEON_WIDTH) {
+        MAT_NEON_TYPE vi = MAT_NEON_LOAD(&v_data[i]);
+        MAT_NEON_TYPE ri = MAT_NEON_LOAD(&Rk[i]);
+        wv = MAT_NEON_FMA(wv, vi, ri);
+      }
+      w = MAT_NEON_ADDV(wv);
+      for (; i < len; i++)
+        w += v_data[i] * Rk[i];
+#else
+      for (size_t i = 0; i < len; i++)
+        w += v_data[i] * Rk[i];
+#endif
+      w *= tau;
+#ifdef MAT_HAS_ARM_NEON
+      MAT_NEON_TYPE wv2 = MAT_NEON_DUP(w);
+      i = 0;
+      for (; i + MAT_NEON_WIDTH <= len; i += MAT_NEON_WIDTH) {
+        MAT_NEON_TYPE vi = MAT_NEON_LOAD(&v_data[i]);
+        MAT_NEON_TYPE ri = MAT_NEON_LOAD(&Rk[i]);
+        MAT_NEON_STORE(&Rk[i], MAT_NEON_FMS(ri, wv2, vi));
+      }
+      for (; i < len; i++)
+        Rk[i] -= w * v_data[i];
+#else
+      for (size_t i = 0; i < len; i++)
+        Rk[i] -= w * v_data[i];
+#endif
+    }
+
+    // Apply H to Q[:, j:m] from right (column-major)
+    // Q = Q * H = Q - tau * (Q * v) * v^T
+    // Step 1: u = Q[:, j:m] * v (compute u column-by-column for contiguous access)
+    memset(u, 0, m * sizeof(mat_elem_t));
+
+    // u = Q[:, j:m] * v, computed column-by-column
+    for (size_t jj = 0; jj < len; jj++) {
+      mat_elem_t vjj = v_data[jj];
+      mat_elem_t *Qcol = &Q->data[(j + jj) * m];  // column j+jj (contiguous)
+#ifdef MAT_HAS_ARM_NEON
+      MAT_NEON_TYPE vv = MAT_NEON_DUP(vjj);
+      size_t i = 0;
+      for (; i + MAT_NEON_WIDTH <= m; i += MAT_NEON_WIDTH) {
+        MAT_NEON_TYPE ui = MAT_NEON_LOAD(&u[i]);
+        MAT_NEON_TYPE qi = MAT_NEON_LOAD(&Qcol[i]);
+        MAT_NEON_STORE(&u[i], MAT_NEON_FMA(ui, qi, vv));
+      }
+      for (; i < m; i++)
+        u[i] += Qcol[i] * vjj;
+#else
+      for (size_t i = 0; i < m; i++)
+        u[i] += Qcol[i] * vjj;
+#endif
+    }
+
+    // Step 2: Q[:, j:m] -= tau * u * v^T, applied column by column
+    for (size_t jj = 0; jj < len; jj++) {
+      mat_elem_t scale = tau * v_data[jj];
+      mat_elem_t *Qcol = &Q->data[(j + jj) * m];  // column j+jj (contiguous)
+#ifdef MAT_HAS_ARM_NEON
+      MAT_NEON_TYPE sv = MAT_NEON_DUP(scale);
+      size_t i = 0;
+      for (; i + MAT_NEON_WIDTH <= m; i += MAT_NEON_WIDTH) {
+        MAT_NEON_TYPE qi = MAT_NEON_LOAD(&Qcol[i]);
+        MAT_NEON_TYPE ui = MAT_NEON_LOAD(&u[i]);
+        MAT_NEON_STORE(&Qcol[i], MAT_NEON_FMS(qi, sv, ui));
+      }
+      for (; i < m; i++)
+        Qcol[i] -= scale * u[i];
+#else
+      for (size_t i = 0; i < m; i++)
+        Qcol[i] -= scale * u[i];
+#endif
+    }
+  }
+
+  MAT_FREE(x_data);
+  MAT_FREE(v_data);
+  MAT_FREE(u);
+
+#else
+  // Row-major implementation
 
   // Use blocked algorithm for large matrices
   if (n >= MAT_QR_BLOCK_THRESHOLD) {
@@ -4685,6 +5068,286 @@ MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R) {
 
   MAT_FREE(x_data);
   MAT_FREE(v_data);
+#endif
+}
+
+// QR Decomposition - R factor only (skips Q computation)
+// Much faster when only R is needed (e.g., least squares, rank determination)
+MATDEF void mat_qr_r(const Mat *A, Mat *R) {
+  MAT_ASSERT_MAT(A);
+  MAT_ASSERT_MAT(R);
+
+  size_t m = A->rows;
+  size_t n = A->cols;
+  MAT_ASSERT(m >= n && "mat_qr_r requires m >= n");
+  MAT_ASSERT(R->rows == m && R->cols == n);
+
+  mat_deep_copy(R, A);
+
+#ifdef MAT_COLUMN_MAJOR
+  // Column-major: use blocked algorithm for large matrices
+  if (n >= MAT_QR_BLOCK_THRESHOLD) {
+    size_t block_size = MAT_QR_BLOCK_SIZE;
+    mat_elem_t *tau_block =
+        (mat_elem_t *)MAT_MALLOC(block_size * sizeof(mat_elem_t));
+    mat_elem_t *Y =
+        (mat_elem_t *)MAT_MALLOC(m * block_size * sizeof(mat_elem_t));
+    mat_elem_t *T =
+        (mat_elem_t *)MAT_MALLOC(block_size * block_size * sizeof(mat_elem_t));
+    MAT_ASSERT(tau_block && Y && T);
+
+    // Reduced workspace - no Q updates needed
+    mat_elem_t *W_km = (mat_elem_t *)MAT_MALLOC(block_size * m * sizeof(mat_elem_t));
+    mat_elem_t *W_kn = (mat_elem_t *)MAT_MALLOC(block_size * n * sizeof(mat_elem_t));
+    mat_elem_t *W_kn2 = (mat_elem_t *)MAT_MALLOC(block_size * n * sizeof(mat_elem_t));
+    mat_elem_t *W_kk = (mat_elem_t *)MAT_MALLOC(block_size * block_size * sizeof(mat_elem_t));
+
+    for (size_t jb = 0; jb < n; jb += block_size) {
+      size_t kb = (jb + block_size <= n) ? block_size : (n - jb);
+      size_t len = m - jb;
+
+      // Panel factorization: compute kb Householder vectors
+      for (size_t j = 0; j < kb; j++) {
+        size_t col = jb + j;
+        size_t vlen = m - col;
+
+        mat_elem_t *x_data =
+            (mat_elem_t *)MAT_MALLOC(vlen * sizeof(mat_elem_t));
+        for (size_t i = 0; i < vlen; i++) {
+          x_data[i] = R->data[col * m + (col + i)];
+        }
+
+        Vec x_sub = {.rows = vlen, .cols = 1, .data = x_data};
+        Vec v_sub = {.rows = vlen, .cols = 1, .data = x_data};
+        (void)mat_householder(&v_sub, &tau_block[j], &x_sub);
+
+        size_t y_offset = col - jb;
+        for (size_t i = 0; i < y_offset; i++) {
+          Y[j * len + i] = 0;
+        }
+        for (size_t i = 0; i < vlen; i++) {
+          Y[j * len + (y_offset + i)] = v_sub.data[i];
+        }
+
+        if (tau_block[j] != 0) {
+          for (size_t c = col; c < jb + kb; c++) {
+            mat_elem_t w = 0;
+            for (size_t i = 0; i < vlen; i++) {
+              w += v_sub.data[i] * R->data[c * m + (col + i)];
+            }
+            w *= tau_block[j];
+            for (size_t i = 0; i < vlen; i++) {
+              R->data[c * m + (col + i)] -= w * v_sub.data[i];
+            }
+          }
+        }
+
+        MAT_FREE(x_data);
+      }
+
+      // Build T matrix for WY representation
+      mat_qr_build_T_colmajor_(T, kb, Y, len, tau_block, len, kb);
+
+      // Apply block reflector to trailing R only (skip Q!)
+      if (jb + kb < n) {
+        size_t trail_cols = n - (jb + kb);
+        mat_elem_t *R_trail =
+            (mat_elem_t *)MAT_MALLOC(len * trail_cols * sizeof(mat_elem_t));
+        mat_elem_t *R_src = &R->data[(jb + kb) * m + jb];
+        for (size_t c = 0; c < trail_cols; c++)
+          memcpy(&R_trail[c * len], &R_src[c * m], len * sizeof(mat_elem_t));
+
+        // Inline apply_block_left without Q workspace
+        mat_elem_t *Yt = W_km;
+        mat_elem_t *C = W_kn;
+        mat_elem_t *Tt = W_kk;
+        mat_elem_t *TC = W_kn2;
+
+        mat_transpose_colmajor_(Yt, Y, len, kb);
+        mat_gemm_strided_colmajor_(C, kb, 1.0f, Yt, kb, kb, len, R_trail, len, trail_cols, 0.0f);
+        mat_transpose_colmajor_(Tt, T, kb, kb);
+        mat_gemm_strided_colmajor_(TC, kb, 1.0f, Tt, kb, kb, kb, C, kb, trail_cols, 0.0f);
+        mat_gemm_strided_colmajor_(R_trail, len, -1.0f, Y, len, len, kb, TC, kb, trail_cols, 1.0f);
+
+        for (size_t c = 0; c < trail_cols; c++)
+          memcpy(&R_src[c * m], &R_trail[c * len], len * sizeof(mat_elem_t));
+        MAT_FREE(R_trail);
+      }
+      // Skip Q update entirely!
+    }
+
+    MAT_FREE(W_km);
+    MAT_FREE(W_kn);
+    MAT_FREE(W_kn2);
+    MAT_FREE(W_kk);
+    MAT_FREE(tau_block);
+    MAT_FREE(Y);
+    MAT_FREE(T);
+    return;
+  }
+
+  // Unblocked algorithm for small matrices (column-major)
+  mat_elem_t *x_data = (mat_elem_t *)MAT_MALLOC(m * sizeof(mat_elem_t));
+  mat_elem_t *v_data = (mat_elem_t *)MAT_MALLOC(m * sizeof(mat_elem_t));
+  MAT_ASSERT(x_data && v_data);
+
+  for (size_t j = 0; j < n; j++) {
+    size_t len = m - j;
+    memcpy(x_data, &R->data[j * m + j], len * sizeof(mat_elem_t));
+
+    Vec x_sub = {.rows = len, .cols = 1, .data = x_data};
+    Vec v_sub = {.rows = len, .cols = 1, .data = v_data};
+
+    mat_elem_t tau;
+    (void)mat_householder(&v_sub, &tau, &x_sub);
+
+    if (tau == 0)
+      continue;
+
+    // Apply H to R[j:m, j:n] from left only
+    for (size_t k = j; k < n; k++) {
+      mat_elem_t *Rk = &R->data[k * m + j];
+      mat_elem_t w = 0;
+#ifdef MAT_HAS_ARM_NEON
+      size_t i = 0;
+      MAT_NEON_TYPE wv = MAT_NEON_DUP(0);
+      for (; i + MAT_NEON_WIDTH <= len; i += MAT_NEON_WIDTH) {
+        MAT_NEON_TYPE vi = MAT_NEON_LOAD(&v_data[i]);
+        MAT_NEON_TYPE ri = MAT_NEON_LOAD(&Rk[i]);
+        wv = MAT_NEON_FMA(wv, vi, ri);
+      }
+      w = MAT_NEON_ADDV(wv);
+      for (; i < len; i++)
+        w += v_data[i] * Rk[i];
+#else
+      for (size_t i = 0; i < len; i++)
+        w += v_data[i] * Rk[i];
+#endif
+      w *= tau;
+#ifdef MAT_HAS_ARM_NEON
+      MAT_NEON_TYPE wv2 = MAT_NEON_DUP(w);
+      i = 0;
+      for (; i + MAT_NEON_WIDTH <= len; i += MAT_NEON_WIDTH) {
+        MAT_NEON_TYPE vi = MAT_NEON_LOAD(&v_data[i]);
+        MAT_NEON_TYPE ri = MAT_NEON_LOAD(&Rk[i]);
+        MAT_NEON_STORE(&Rk[i], MAT_NEON_FMS(ri, wv2, vi));
+      }
+      for (; i < len; i++)
+        Rk[i] -= w * v_data[i];
+#else
+      for (size_t i = 0; i < len; i++)
+        Rk[i] -= w * v_data[i];
+#endif
+    }
+    // Skip Q update!
+  }
+
+  MAT_FREE(x_data);
+  MAT_FREE(v_data);
+
+#else
+  // Row-major: use blocked algorithm for large matrices
+  if (n >= MAT_QR_BLOCK_THRESHOLD) {
+    size_t block_size = MAT_QR_BLOCK_SIZE;
+    mat_elem_t *tau_block =
+        (mat_elem_t *)MAT_MALLOC(block_size * sizeof(mat_elem_t));
+    mat_elem_t *Y =
+        (mat_elem_t *)MAT_MALLOC(m * block_size * sizeof(mat_elem_t));
+    mat_elem_t *T =
+        (mat_elem_t *)MAT_MALLOC(block_size * block_size * sizeof(mat_elem_t));
+    MAT_ASSERT(tau_block && Y && T);
+
+    for (size_t jb = 0; jb < n; jb += block_size) {
+      size_t kb = (jb + block_size <= n) ? block_size : (n - jb);
+      size_t len = m - jb;
+
+      for (size_t j = 0; j < kb; j++) {
+        size_t col = jb + j;
+        size_t vlen = m - col;
+
+        mat_elem_t *x_data =
+            (mat_elem_t *)MAT_MALLOC(vlen * sizeof(mat_elem_t));
+        for (size_t i = 0; i < vlen; i++) {
+          x_data[i] = R->data[(col + i) * n + col];
+        }
+
+        Vec x_sub = {.rows = vlen, .cols = 1, .data = x_data};
+        Vec v_sub = {.rows = vlen, .cols = 1, .data = x_data};
+        (void)mat_householder(&v_sub, &tau_block[j], &x_sub);
+
+        size_t y_offset = col - jb;
+        for (size_t i = 0; i < y_offset; i++) {
+          Y[i * kb + j] = 0;
+        }
+        for (size_t i = 0; i < vlen; i++) {
+          Y[(y_offset + i) * kb + j] = v_sub.data[i];
+        }
+
+        if (tau_block[j] != 0) {
+          for (size_t c = col; c < jb + kb; c++) {
+            mat_elem_t w = 0;
+            for (size_t i = 0; i < vlen; i++) {
+              w += v_sub.data[i] * R->data[(col + i) * n + c];
+            }
+            w *= tau_block[j];
+            for (size_t i = 0; i < vlen; i++) {
+              R->data[(col + i) * n + c] -= w * v_sub.data[i];
+            }
+          }
+        }
+
+        MAT_FREE(x_data);
+      }
+
+      mat_qr_build_T_(T, kb, Y, kb, tau_block, len, kb);
+
+      if (jb + kb < n) {
+        size_t trail_cols = n - (jb + kb);
+        mat_qr_apply_block_left_(&R->data[jb * n + (jb + kb)], n, Y, kb, T, kb,
+                                  len, kb, trail_cols);
+      }
+      // Skip Q update!
+    }
+
+    MAT_FREE(tau_block);
+    MAT_FREE(Y);
+    MAT_FREE(T);
+    return;
+  }
+
+  // Unblocked algorithm for small matrices (row-major)
+  mat_elem_t *x_data = (mat_elem_t *)MAT_MALLOC(m * sizeof(mat_elem_t));
+  mat_elem_t *v_data = (mat_elem_t *)MAT_MALLOC(m * sizeof(mat_elem_t));
+  MAT_ASSERT(x_data && v_data);
+
+  for (size_t j = 0; j < n; j++) {
+    size_t len = m - j;
+    for (size_t i = 0; i < len; i++)
+      x_data[i] = R->data[(j + i) * n + j];
+
+    Vec x_sub = {.rows = len, .cols = 1, .data = x_data};
+    Vec v_sub = {.rows = len, .cols = 1, .data = v_data};
+
+    mat_elem_t tau;
+    (void)mat_householder(&v_sub, &tau, &x_sub);
+
+    if (tau == 0)
+      continue;
+
+    for (size_t k = j; k < n; k++) {
+      mat_elem_t w = 0;
+      for (size_t i = 0; i < len; i++)
+        w += v_data[i] * R->data[(j + i) * n + k];
+      w *= tau;
+      for (size_t i = 0; i < len; i++)
+        R->data[(j + i) * n + k] -= w * v_data[i];
+    }
+    // Skip Q update!
+  }
+
+  MAT_FREE(x_data);
+  MAT_FREE(v_data);
+#endif
 }
 
 // Blocked partial pivoting LU (P * A = L * U)
