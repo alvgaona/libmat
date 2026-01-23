@@ -1055,6 +1055,50 @@ MAT_INTERNAL_STATIC void mat_swap_raw_(mat_elem_t *a, mat_elem_t *b, size_t n) {
 #endif
 }
 
+// AMAX: returns max(|arr[0:n]|) (BLAS AMAX - absolute max value)
+MAT_INTERNAL_STATIC mat_elem_t mat_amax_raw_(const mat_elem_t *arr, size_t n) {
+  if (n == 0) return 0;
+
+#ifdef MAT_HAS_ARM_NEON
+  MAT_NEON_TYPE vmax0 = MAT_NEON_DUP(0);
+  MAT_NEON_TYPE vmax1 = MAT_NEON_DUP(0);
+  MAT_NEON_TYPE vmax2 = MAT_NEON_DUP(0);
+  MAT_NEON_TYPE vmax3 = MAT_NEON_DUP(0);
+  size_t i = 0;
+  for (; i + MAT_NEON_WIDTH * 4 <= n; i += MAT_NEON_WIDTH * 4) {
+    MAT_NEON_TYPE v0 = MAT_NEON_ABS(MAT_NEON_LOAD(&arr[i]));
+    MAT_NEON_TYPE v1 = MAT_NEON_ABS(MAT_NEON_LOAD(&arr[i + MAT_NEON_WIDTH]));
+    MAT_NEON_TYPE v2 = MAT_NEON_ABS(MAT_NEON_LOAD(&arr[i + MAT_NEON_WIDTH * 2]));
+    MAT_NEON_TYPE v3 = MAT_NEON_ABS(MAT_NEON_LOAD(&arr[i + MAT_NEON_WIDTH * 3]));
+    vmax0 = MAT_NEON_MAX(vmax0, v0);
+    vmax1 = MAT_NEON_MAX(vmax1, v1);
+    vmax2 = MAT_NEON_MAX(vmax2, v2);
+    vmax3 = MAT_NEON_MAX(vmax3, v3);
+  }
+  for (; i + MAT_NEON_WIDTH <= n; i += MAT_NEON_WIDTH) {
+    MAT_NEON_TYPE v = MAT_NEON_ABS(MAT_NEON_LOAD(&arr[i]));
+    vmax0 = MAT_NEON_MAX(vmax0, v);
+  }
+  vmax0 = MAT_NEON_MAX(vmax0, vmax1);
+  vmax2 = MAT_NEON_MAX(vmax2, vmax3);
+  vmax0 = MAT_NEON_MAX(vmax0, vmax2);
+  mat_elem_t max_val = MAT_NEON_MAXV(vmax0);
+  // Scalar remainder
+  for (; i < n; i++) {
+    mat_elem_t val = MAT_FABS(arr[i]);
+    if (val > max_val) max_val = val;
+  }
+  return max_val;
+#else
+  mat_elem_t max_val = MAT_FABS(arr[0]);
+  for (size_t i = 1; i < n; i++) {
+    mat_elem_t val = MAT_FABS(arr[i]);
+    if (val > max_val) max_val = val;
+  }
+  return max_val;
+#endif
+}
+
 // IAMAX: returns index of max(|arr[0:n]|) (BLAS IAMAX)
 // Also returns the max value via max_out if non-NULL
 MAT_INTERNAL_STATIC size_t mat_iamax_raw_(const mat_elem_t *arr, size_t n,
@@ -1064,50 +1108,14 @@ MAT_INTERNAL_STATIC size_t mat_iamax_raw_(const mat_elem_t *arr, size_t n,
     return 0;
   }
 
-  mat_elem_t max_val = 0;
-  size_t max_idx = 0;
-
-#ifdef MAT_HAS_ARM_NEON
-  // Phase 1: Find max absolute value using NEON
-  MAT_NEON_TYPE vmax = MAT_NEON_DUP(0);
-  size_t i = 0;
-  for (; i + MAT_NEON_WIDTH * 4 <= n; i += MAT_NEON_WIDTH * 4) {
-    MAT_NEON_TYPE v0 = MAT_NEON_ABS(MAT_NEON_LOAD(&arr[i]));
-    MAT_NEON_TYPE v1 = MAT_NEON_ABS(MAT_NEON_LOAD(&arr[i + MAT_NEON_WIDTH]));
-    MAT_NEON_TYPE v2 = MAT_NEON_ABS(MAT_NEON_LOAD(&arr[i + MAT_NEON_WIDTH * 2]));
-    MAT_NEON_TYPE v3 = MAT_NEON_ABS(MAT_NEON_LOAD(&arr[i + MAT_NEON_WIDTH * 3]));
-    vmax = MAT_NEON_MAX(vmax, MAT_NEON_MAX(MAT_NEON_MAX(v0, v1), MAT_NEON_MAX(v2, v3)));
-  }
-  for (; i + MAT_NEON_WIDTH <= n; i += MAT_NEON_WIDTH) {
-    MAT_NEON_TYPE v = MAT_NEON_ABS(MAT_NEON_LOAD(&arr[i]));
-    vmax = MAT_NEON_MAX(vmax, v);
-  }
-  max_val = MAT_NEON_MAXV(vmax);
-  // Scalar remainder
-  for (; i < n; i++) {
-    mat_elem_t val = MAT_FABS(arr[i]);
-    if (val > max_val) max_val = val;
-  }
-
-  // Phase 2: Find index of max value
-  for (size_t j = 0; j < n; j++) {
-    if (MAT_FABS(arr[j]) == max_val) {
-      max_idx = j;
-      break;
-    }
-  }
-#else
-  for (size_t i = 0; i < n; i++) {
-    mat_elem_t val = MAT_FABS(arr[i]);
-    if (val > max_val) {
-      max_val = val;
-      max_idx = i;
-    }
-  }
-#endif
-
+  mat_elem_t max_val = mat_amax_raw_(arr, n);
   if (max_out) *max_out = max_val;
-  return max_idx;
+
+  // Find index of max value
+  for (size_t i = 0; i < n; i++) {
+    if (MAT_FABS(arr[i]) == max_val) return i;
+  }
+  return 0;  // Fallback (shouldn't happen)
 }
 
 // Construction & Memory
@@ -1738,72 +1746,11 @@ MATDEF Mat *mat_rhadamard(const Mat *a, const Mat *b) {
   return result;
 }
 
-#ifdef MAT_HAS_ARM_NEON
-MAT_INTERNAL_STATIC mat_elem_t mat_dot_neon_(const Vec *v1, const Vec *v2) {
-  size_t len = v1->rows;
-  mat_elem_t *pa = v1->data;
-  mat_elem_t *pb = v2->data;
-
-  MAT_NEON_TYPE vsum0 = MAT_NEON_DUP(0);
-  MAT_NEON_TYPE vsum1 = MAT_NEON_DUP(0);
-  MAT_NEON_TYPE vsum2 = MAT_NEON_DUP(0);
-  MAT_NEON_TYPE vsum3 = MAT_NEON_DUP(0);
-
-  size_t i = 0;
-
-  for (; i + MAT_NEON_WIDTH * 4 <= len; i += MAT_NEON_WIDTH * 4) {
-    MAT_NEON_TYPE va0 = MAT_NEON_LOAD(&pa[i]);
-    MAT_NEON_TYPE va1 = MAT_NEON_LOAD(&pa[i + MAT_NEON_WIDTH]);
-    MAT_NEON_TYPE va2 = MAT_NEON_LOAD(&pa[i + MAT_NEON_WIDTH * 2]);
-    MAT_NEON_TYPE va3 = MAT_NEON_LOAD(&pa[i + MAT_NEON_WIDTH * 3]);
-
-    MAT_NEON_TYPE vb0 = MAT_NEON_LOAD(&pb[i]);
-    MAT_NEON_TYPE vb1 = MAT_NEON_LOAD(&pb[i + MAT_NEON_WIDTH]);
-    MAT_NEON_TYPE vb2 = MAT_NEON_LOAD(&pb[i + MAT_NEON_WIDTH * 2]);
-    MAT_NEON_TYPE vb3 = MAT_NEON_LOAD(&pb[i + MAT_NEON_WIDTH * 3]);
-
-    vsum0 = MAT_NEON_FMA(vsum0, va0, vb0);
-    vsum1 = MAT_NEON_FMA(vsum1, va1, vb1);
-    vsum2 = MAT_NEON_FMA(vsum2, va2, vb2);
-    vsum3 = MAT_NEON_FMA(vsum3, va3, vb3);
-  }
-
-  for (; i + MAT_NEON_WIDTH <= len; i += MAT_NEON_WIDTH) {
-    MAT_NEON_TYPE va = MAT_NEON_LOAD(&pa[i]);
-    MAT_NEON_TYPE vb = MAT_NEON_LOAD(&pb[i]);
-    vsum0 = MAT_NEON_FMA(vsum0, va, vb);
-  }
-
-  vsum0 = MAT_NEON_ADD(vsum0, vsum1);
-  vsum2 = MAT_NEON_ADD(vsum2, vsum3);
-  vsum0 = MAT_NEON_ADD(vsum0, vsum2);
-  mat_elem_t result = MAT_NEON_ADDV(vsum0);
-
-  for (; i < len; i++) {
-    result += pa[i] * pb[i];
-  }
-
-  return result;
-}
-#endif
-
-MAT_INTERNAL_STATIC mat_elem_t mat_dot_scalar_(const Vec *v1, const Vec *v2) {
-  mat_elem_t result = 0;
-  for (size_t i = 0; i < v1->rows; i++) {
-    result += v1->data[i] * v2->data[i];
-  }
-  return result;
-}
-
 MATDEF mat_elem_t mat_dot(const Vec *v1, const Vec *v2) {
   MAT_ASSERT_MAT(v1);
   MAT_ASSERT_MAT(v2);
-
-#ifdef MAT_HAS_ARM_NEON
-  return mat_dot_neon_(v1, v2);
-#else
-  return mat_dot_scalar_(v1, v2);
-#endif
+  MAT_ASSERT(v1->rows * v1->cols == v2->rows * v2->cols);
+  return mat_dot_raw_(v1->data, v2->data, v1->rows * v1->cols);
 }
 
 MATDEF void mat_cross(Vec *out, const Vec *v1, const Vec *v2) {
@@ -2692,12 +2639,8 @@ MAT_INTERNAL_STATIC void mat_gemm_scalar_(Mat *C, mat_elem_t alpha,
   size_t K = A->cols;
   size_t N = B->cols;
 
-  // Scale C by beta first, then accumulate
-  for (size_t i = 0; i < M; i++) {
-    for (size_t j = 0; j < N; j++) {
-      MAT_SET(C, i, j, MAT_AT(C, i, j) * beta);
-    }
-  }
+  // Scale C by beta first
+  mat_scal_raw_(C->data, beta, M * N);
 
   // ikj loop order for cache-friendly access (row-major)
   // For column-major, jki would be better, but this still works correctly
@@ -3329,70 +3272,9 @@ MATDEF mat_elem_t mat_norm(const Mat *a, size_t p) {
 
 MATDEF mat_elem_t mat_norm2(const Mat *a) { return mat_norm_fro(a); }
 
-#ifdef MAT_HAS_ARM_NEON
-MAT_INTERNAL_STATIC mat_elem_t mat_norm_max_neon_(const Mat *a) {
-  size_t len = a->rows * a->cols;
-  mat_elem_t *pa = a->data;
-
-  MAT_NEON_TYPE vmax0 = MAT_NEON_DUP(0);
-  MAT_NEON_TYPE vmax1 = MAT_NEON_DUP(0);
-  MAT_NEON_TYPE vmax2 = MAT_NEON_DUP(0);
-  MAT_NEON_TYPE vmax3 = MAT_NEON_DUP(0);
-
-  size_t i = 0;
-  for (; i + MAT_NEON_WIDTH * 4 <= len; i += MAT_NEON_WIDTH * 4) {
-    MAT_NEON_TYPE va0 = MAT_NEON_ABS(MAT_NEON_LOAD(&pa[i]));
-    MAT_NEON_TYPE va1 = MAT_NEON_ABS(MAT_NEON_LOAD(&pa[i + MAT_NEON_WIDTH]));
-    MAT_NEON_TYPE va2 =
-        MAT_NEON_ABS(MAT_NEON_LOAD(&pa[i + MAT_NEON_WIDTH * 2]));
-    MAT_NEON_TYPE va3 =
-        MAT_NEON_ABS(MAT_NEON_LOAD(&pa[i + MAT_NEON_WIDTH * 3]));
-
-    vmax0 = MAT_NEON_MAX(vmax0, va0);
-    vmax1 = MAT_NEON_MAX(vmax1, va1);
-    vmax2 = MAT_NEON_MAX(vmax2, va2);
-    vmax3 = MAT_NEON_MAX(vmax3, va3);
-  }
-
-  for (; i + MAT_NEON_WIDTH <= len; i += MAT_NEON_WIDTH) {
-    MAT_NEON_TYPE va = MAT_NEON_ABS(MAT_NEON_LOAD(&pa[i]));
-    vmax0 = MAT_NEON_MAX(vmax0, va);
-  }
-
-  vmax0 = MAT_NEON_MAX(vmax0, vmax1);
-  vmax2 = MAT_NEON_MAX(vmax2, vmax3);
-  vmax0 = MAT_NEON_MAX(vmax0, vmax2);
-  mat_elem_t max = MAT_NEON_MAXV(vmax0);
-
-  for (; i < len; i++) {
-    mat_elem_t v = fabs(pa[i]);
-    if (v > max)
-      max = v;
-  }
-
-  return max;
-}
-#endif
-
-MAT_INTERNAL_STATIC mat_elem_t mat_norm_max_scalar_(const Mat *a) {
-  size_t len = a->rows * a->cols;
-  mat_elem_t max = fabs(a->data[0]);
-  for (size_t i = 1; i < len; i++) {
-    mat_elem_t v = fabs(a->data[i]);
-    if (v > max)
-      max = v;
-  }
-  return max;
-}
-
 MATDEF mat_elem_t mat_norm_max(const Mat *a) {
   MAT_ASSERT_MAT(a);
-
-#ifdef MAT_HAS_ARM_NEON
-  return mat_norm_max_neon_(a);
-#else
-  return mat_norm_max_scalar_(a);
-#endif
+  return mat_amax_raw_(a->data, a->rows * a->cols);
 }
 
 #ifdef MAT_HAS_ARM_NEON
@@ -3918,9 +3800,7 @@ MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R) {
         size_t vlen = m - col;
 
         // Extract column (x_data reused each iteration)
-        for (size_t i = 0; i < vlen; i++) {
-          x_data[i] = R->data[col * m + (col + i)];
-        }
+        mat_copy_raw_(x_data, &R->data[col * m + col], vlen);
 
         Vec x_sub = {.rows = vlen, .cols = 1, .data = x_data};
         Vec v_sub = {.rows = vlen, .cols = 1, .data = x_data};
@@ -4234,27 +4114,7 @@ MAT_INTERNAL_STATIC int mat_plu_blocked_(Mat *M, Perm *p) {
         mat_elem_t *col_k = &data[k * n];
         for (size_t j = k_end; j < n; j++) {
           mat_elem_t *col_j = &data[j * n];
-          mat_elem_t u_kj = col_j[k];
-          size_t len = k_end - (k + 1);
-          mat_elem_t *dst = &col_j[k + 1];
-          mat_elem_t *src = &col_k[k + 1];
-          MAT_NEON_TYPE vu = MAT_NEON_DUP(u_kj);
-          size_t i = 0;
-          for (; i + MAT_NEON_WIDTH * 4 <= len; i += MAT_NEON_WIDTH * 4) {
-            MAT_NEON_TYPE d0 = MAT_NEON_LOAD(&dst[i]);
-            MAT_NEON_TYPE d1 = MAT_NEON_LOAD(&dst[i + MAT_NEON_WIDTH]);
-            MAT_NEON_TYPE d2 = MAT_NEON_LOAD(&dst[i + MAT_NEON_WIDTH * 2]);
-            MAT_NEON_TYPE d3 = MAT_NEON_LOAD(&dst[i + MAT_NEON_WIDTH * 3]);
-            d0 = MAT_NEON_SUB(d0, MAT_NEON_MUL(vu, MAT_NEON_LOAD(&src[i])));
-            d1 = MAT_NEON_SUB(d1, MAT_NEON_MUL(vu, MAT_NEON_LOAD(&src[i + MAT_NEON_WIDTH])));
-            d2 = MAT_NEON_SUB(d2, MAT_NEON_MUL(vu, MAT_NEON_LOAD(&src[i + MAT_NEON_WIDTH * 2])));
-            d3 = MAT_NEON_SUB(d3, MAT_NEON_MUL(vu, MAT_NEON_LOAD(&src[i + MAT_NEON_WIDTH * 3])));
-            MAT_NEON_STORE(&dst[i], d0);
-            MAT_NEON_STORE(&dst[i + MAT_NEON_WIDTH], d1);
-            MAT_NEON_STORE(&dst[i + MAT_NEON_WIDTH * 2], d2);
-            MAT_NEON_STORE(&dst[i + MAT_NEON_WIDTH * 3], d3);
-          }
-          for (; i < len; i++) dst[i] -= u_kj * src[i];
+          mat_axpy_raw_(&col_j[k + 1], -col_j[k], &col_k[k + 1], k_end - (k + 1));
         }
       }
 
@@ -4407,9 +4267,7 @@ MAT_INTERNAL_STATIC int mat_lu_neon_(Mat *M, Perm *p, Perm *q) {
 
     // Compute multipliers: L[i,k] = M[i,k] / M[k,k] for i > k
     mat_elem_t pivot_inv = 1.0f / col_k[k];
-    for (size_t i = k + 1; i < n; i++) {
-      col_k[i] *= pivot_inv;
-    }
+    mat_scal_raw_(&col_k[k + 1], pivot_inv, n - k - 1);
 
     // Elimination: column-oriented rank-1 update
     // For each column j > k: col_j[k+1:n] -= col_j[k] * col_k[k+1:n]
@@ -6321,10 +6179,7 @@ MAT_INTERNAL_STATIC void mat_svd_jacobi_iter_(mat_elem_t *W_data, size_t m,
   // Compute initial column norms (columns are contiguous)
   for (size_t j = 0; j < n; j++) {
     mat_elem_t *col_j = &W_data[j * col_stride];
-    mat_elem_t sum = 0;
-    for (size_t k = 0; k < m; k++)
-      sum += col_j[k] * col_j[k];
-    col_norms[j] = sum;
+    col_norms[j] = mat_dot_raw_(col_j, col_j, m);
   }
 
   for (int sweep = 0; sweep < max_sweeps; sweep++) {
@@ -6338,9 +6193,7 @@ MAT_INTERNAL_STATIC void mat_svd_jacobi_iter_(mat_elem_t *W_data, size_t m,
         // Compute dot product of columns i and j
         mat_elem_t *col_i = &W_data[i * col_stride];
         mat_elem_t *col_j = &W_data[j * col_stride];
-        mat_elem_t c = 0;
-        for (size_t k = 0; k < m; k++)
-          c += col_i[k] * col_j[k];
+        mat_elem_t c = mat_dot_raw_(col_i, col_j, m);
 
         if (MAT_FABS(c) < tol * MAT_SQRT(a * b + tol))
           continue;
