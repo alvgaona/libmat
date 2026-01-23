@@ -21,7 +21,7 @@ static void make_spd(Mat *A) {
 
     // Add n*I to ensure positive definiteness
     for (size_t i = 0; i < n; i++) {
-        A->data[i * n + i] += (mat_elem_t)n;
+        mat_set_at(A, i, i, mat_at(A, i, i) + (mat_elem_t)n);
     }
 
     mat_free_mat(B);
@@ -34,7 +34,7 @@ static int is_lower_triangular(const Mat *L, mat_elem_t tol) {
     size_t n = L->rows;
     for (size_t i = 0; i < n; i++) {
         for (size_t j = i + 1; j < n; j++) {
-            if (MAT_FABS(L->data[i * n + j]) > tol) {
+            if (MAT_FABS(mat_at(L, i, j)) > tol) {
                 return 0;
             }
         }
@@ -53,10 +53,10 @@ static void test_chol_2x2_identity(void) {
     CHECK(result == 0);
 
     // L should be identity for identity matrix
-    CHECK_FLOAT_EQ_TOL(L->data[0], 1.0f, 1e-6f);
-    CHECK_FLOAT_EQ_TOL(L->data[1], 0.0f, 1e-6f);
-    CHECK_FLOAT_EQ_TOL(L->data[2], 0.0f, 1e-6f);
-    CHECK_FLOAT_EQ_TOL(L->data[3], 1.0f, 1e-6f);
+    CHECK_FLOAT_EQ_TOL(mat_at(L, 0, 0), 1.0f, 1e-6f);
+    CHECK_FLOAT_EQ_TOL(mat_at(L, 0, 1), 0.0f, 1e-6f);
+    CHECK_FLOAT_EQ_TOL(mat_at(L, 1, 0), 0.0f, 1e-6f);
+    CHECK_FLOAT_EQ_TOL(mat_at(L, 1, 1), 1.0f, 1e-6f);
 
     mat_free_mat(A);
     mat_free_mat(L);
@@ -79,18 +79,16 @@ static void test_chol_2x2_known(void) {
     CHECK(result == 0);
 
     // Expected L = [2 0; 1 2] (L * L^T = A)
-    CHECK_FLOAT_EQ_TOL(L->data[0], 2.0f, 1e-5f);
-    CHECK_FLOAT_EQ_TOL(L->data[1], 0.0f, 1e-5f);
-    CHECK_FLOAT_EQ_TOL(L->data[2], 1.0f, 1e-5f);
-    CHECK_FLOAT_EQ_TOL(L->data[3], 2.0f, 1e-5f);
+    CHECK_FLOAT_EQ_TOL(mat_at(L, 0, 0), 2.0f, 1e-5f);
+    CHECK_FLOAT_EQ_TOL(mat_at(L, 0, 1), 0.0f, 1e-5f);
+    CHECK_FLOAT_EQ_TOL(mat_at(L, 1, 0), 1.0f, 1e-5f);
+    CHECK_FLOAT_EQ_TOL(mat_at(L, 1, 1), 2.0f, 1e-5f);
 
     // Verify L * L^T = A
     Mat *Lt = mat_rt(L);
     Mat *LLt = mat_rmul(L, Lt);
 
-    for (size_t i = 0; i < 4; i++) {
-        CHECK_FLOAT_EQ_TOL(A->data[i], LLt->data[i], 1e-5f);
-    }
+    CHECK(mat_equals_tol(A, LLt, 1e-5f));
 
     mat_free_mat(A);
     mat_free_mat(L);
@@ -122,9 +120,7 @@ static void test_chol_3x3_known(void) {
     Mat *Lt = mat_rt(L);
     Mat *LLt = mat_rmul(L, Lt);
 
-    for (size_t i = 0; i < 9; i++) {
-        CHECK_FLOAT_EQ_TOL(A->data[i], LLt->data[i], 1e-4f);
-    }
+    CHECK(mat_equals_tol(A, LLt, 1e-4f));
 
     mat_free_mat(A);
     mat_free_mat(L);
@@ -172,9 +168,7 @@ static void test_chol_random(size_t n, const char *name, mat_elem_t tol) {
     Mat *Lt = mat_rt(L);
     Mat *LLt = mat_rmul(L, Lt);
 
-    for (size_t i = 0; i < n * n; i++) {
-        CHECK_FLOAT_EQ_TOL(A->data[i], LLt->data[i], tol);
-    }
+    CHECK(mat_equals_tol(A, LLt, tol));
 
     mat_free_mat(A);
     mat_free_mat(L);
@@ -197,7 +191,7 @@ static void test_chol_diagonal_positive(void) {
     CHECK(result == 0);
 
     for (size_t i = 0; i < 5; i++) {
-        CHECK(L->data[i * 5 + i] > 0);
+        CHECK(mat_at(L, i, i) > 0);
     }
 
     mat_free_mat(A);

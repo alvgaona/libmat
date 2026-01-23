@@ -9,7 +9,7 @@ static void apply_row_perm(Mat *out, const Mat *A, const Perm *p) {
     size_t n = A->rows;
     for (size_t i = 0; i < n; i++) {
         for (size_t j = 0; j < n; j++) {
-            out->data[i * n + j] = A->data[p->data[i] * n + j];
+            mat_set_at(out, i, j, mat_at(A, p->data[i], j));
         }
     }
 }
@@ -34,9 +34,7 @@ static void test_plu_2x2(void) {
 
     Mat *LU = mat_rmul(L, U);
 
-    for (size_t i = 0; i < 4; i++) {
-        CHECK_FLOAT_EQ_TOL(PA->data[i], LU->data[i], 1e-5f);
-    }
+    CHECK(mat_equals_tol(PA, LU, 1e-5f));
 
     mat_free_mat(A);
     mat_free_mat(L);
@@ -69,9 +67,7 @@ static void test_plu_3x3(void) {
 
     Mat *LU = mat_rmul(L, U);
 
-    for (size_t i = 0; i < 9; i++) {
-        CHECK_FLOAT_EQ_TOL(PA->data[i], LU->data[i], 1e-5f);
-    }
+    CHECK(mat_equals_tol(PA, LU, 1e-5f));
 
     mat_free_mat(A);
     mat_free_mat(L);
@@ -92,10 +88,10 @@ static void test_plu_random(size_t n, const char *name, mat_elem_t tol) {
         mat_elem_t row_sum = 0;
         for (size_t j = 0; j < n; j++) {
             mat_elem_t val = (mat_elem_t)(rand() % 100) / 10.0f - 5.0f;
-            A->data[i * n + j] = val;
+            mat_set_at(A, i, j, val);
             if (i != j) row_sum += MAT_FABS(val);
         }
-        A->data[i * n + i] = row_sum + 1.0f;
+        mat_set_at(A, i, i, row_sum + 1.0f);
     }
 
     Mat *L = mat_mat(n, n);
@@ -110,9 +106,7 @@ static void test_plu_random(size_t n, const char *name, mat_elem_t tol) {
 
     Mat *LU = mat_rmul(L, U);
 
-    for (size_t i = 0; i < n * n; i++) {
-        CHECK_FLOAT_EQ_TOL(PA->data[i], LU->data[i], tol);
-    }
+    CHECK(mat_equals_tol(PA, LU, tol));
 
     mat_free_mat(A);
     mat_free_mat(L);
@@ -146,7 +140,7 @@ static void test_det_consistency(void) {
     int swaps = mat_lu(A, L, U, p, q);
     mat_elem_t det_lu = (swaps % 2 == 0) ? 1 : -1;
     for (size_t i = 0; i < 3; i++) {
-        det_lu *= U->data[i * 3 + i];
+        det_lu *= mat_at(U, i, i);
     }
 
     CHECK_FLOAT_EQ_TOL(det_plu, det_lu, 1e-4f);

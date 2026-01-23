@@ -7,24 +7,22 @@
 // Helper: Create SPD matrix A = M * M^T + epsilon * I
 static void make_spd(Mat *A, size_t n) {
   Mat *M = mat_mat(n, n);
-  for (size_t i = 0; i < n * n; i++) {
-    M->data[i] = (mat_elem_t)(rand() % 100) / 10.0f - 5.0f;
-  }
-  // A = M * M^T
   for (size_t i = 0; i < n; i++) {
     for (size_t j = 0; j < n; j++) {
-      mat_elem_t sum = 0;
-      for (size_t k = 0; k < n; k++) {
-        sum += M->data[i * n + k] * M->data[j * n + k];
-      }
-      A->data[i * n + j] = sum;
+      mat_set_at(M, i, j, (mat_elem_t)(rand() % 100) / 10.0f - 5.0f);
     }
   }
+  // A = M * M^T
+  Mat *Mt = mat_rt(M);
+  Mat *MMt = mat_rmul(M, Mt);
+  mat_deep_copy(A, MMt);
   // Add epsilon * I for numerical stability
   for (size_t i = 0; i < n; i++) {
-    A->data[i * n + i] += 0.1f;
+    mat_set_at(A, i, i, mat_at(A, i, i) + 0.1f);
   }
   mat_free_mat(M);
+  mat_free_mat(Mt);
+  mat_free_mat(MMt);
 }
 
 static void test_solve_spd_identity(void) {

@@ -131,10 +131,10 @@ static void test_solve_trilt_random(size_t n, const char *name, mat_elem_t tol) 
     mat_elem_t row_sum = 0;
     for (size_t j = 0; j < i; j++) {
       mat_elem_t val = (mat_elem_t)(rand() % 100) / 100.0f - 0.5f;
-      L->data[i * n + j] = val;
+      mat_set_at(L, i, j, val);
       row_sum += (val > 0 ? val : -val);
     }
-    L->data[i * n + i] = row_sum + 1.0f; // Diagonal dominant
+    mat_set_at(L, i, i, row_sum + 1.0f); // Diagonal dominant
   }
 
   // Random b
@@ -152,7 +152,7 @@ static void test_solve_trilt_random(size_t n, const char *name, mat_elem_t tol) 
   for (size_t i = 0; i < n; i++) {
     mat_elem_t sum = 0;
     for (size_t j = i; j < n; j++) {
-      sum += L->data[j * n + i] * x->data[j];
+      sum += mat_at(L, j, i) * x->data[j];
     }
     Lt_x->data[i] = sum;
   }

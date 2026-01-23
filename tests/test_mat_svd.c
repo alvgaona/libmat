@@ -36,7 +36,7 @@ static int check_reconstruction(const Mat *A, const Mat *U, const Vec *S, const 
     // Build Sigma (m x n) with S on diagonal
     Mat *Sigma = mat_zeros(m, n);
     for (size_t i = 0; i < k; i++) {
-        Sigma->data[i * n + i] = S->data[i];
+        mat_set_at(Sigma, i, i, S->data[i]);
     }
 
     // Compute U * Sigma

@@ -21,7 +21,7 @@ static void test_inv_2x2(void) {
     for (size_t i = 0; i < 2; i++) {
         for (size_t j = 0; j < 2; j++) {
             mat_elem_t expected = (i == j) ? 1.0f : 0.0f;
-            CHECK_FLOAT_EQ_TOL(I->data[i * 2 + j], expected, 1e-5f);
+            CHECK_FLOAT_EQ_TOL(mat_at(I, i, j), expected, 1e-5f);
         }
     }
 
@@ -50,7 +50,7 @@ static void test_inv_3x3(void) {
     for (size_t i = 0; i < 3; i++) {
         for (size_t j = 0; j < 3; j++) {
             mat_elem_t expected = (i == j) ? 1.0f : 0.0f;
-            CHECK_FLOAT_EQ_TOL(I->data[i * 3 + j], expected, 1e-5f);
+            CHECK_FLOAT_EQ_TOL(mat_at(I, i, j), expected, 1e-5f);
         }
     }
 
@@ -71,7 +71,7 @@ static void test_inv_identity(void) {
     for (size_t i = 0; i < 5; i++) {
         for (size_t j = 0; j < 5; j++) {
             mat_elem_t expected = (i == j) ? 1.0f : 0.0f;
-            CHECK_FLOAT_EQ_TOL(Iinv->data[i * 5 + j], expected, 1e-5f);
+            CHECK_FLOAT_EQ_TOL(mat_at(Iinv, i, j), expected, 1e-5f);
         }
     }
 
@@ -90,22 +90,24 @@ static void test_inv_random(size_t n, const char *name) {
         mat_elem_t row_sum = 0;
         for (size_t j = 0; j < n; j++) {
             mat_elem_t val = (mat_elem_t)(rand() % 100) / 10.0f - 5.0f;
-            A->data[i * n + j] = val;
+            mat_set_at(A, i, j, val);
             if (i != j) row_sum += MAT_FABS(val);
         }
-        A->data[i * n + i] = row_sum + 1.0f;
+        mat_set_at(A, i, i, row_sum + 1.0f);
     }
 
     Mat *Ainv = mat_mat(n, n);
     mat_inv(Ainv, A);
 
     // Check A * A^-1 = I
+    // Use looser tolerance for large matrices (float precision limits)
     Mat *I = mat_rmul(A, Ainv);
+    mat_elem_t tol = (n >= 100) ? 1e-3f : 1e-4f;
 
     for (size_t i = 0; i < n; i++) {
         for (size_t j = 0; j < n; j++) {
             mat_elem_t expected = (i == j) ? 1.0f : 0.0f;
-            CHECK_FLOAT_EQ_TOL(I->data[i * n + j], expected, 1e-4f);
+            CHECK_FLOAT_EQ_TOL(mat_at(I, i, j), expected, tol);
         }
     }
 
