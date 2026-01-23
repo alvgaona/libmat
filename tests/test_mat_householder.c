@@ -159,10 +159,10 @@ void test_householder_left_zeros_column(void) {
         4, 11, 12
     });
 
-    // Extract first column (row-major: stride = ncols)
+    // Extract first column
     Vec *x = mat_vec(4);
     for (size_t i = 0; i < 4; i++) {
-        x->data[i] = A->data[i * 3];  // First column: indices 0, 3, 6, 9
+        x->data[i] = mat_at(A, i, 0);
     }
 
     Vec *v = mat_vec(4);
@@ -174,11 +174,10 @@ void test_householder_left_zeros_column(void) {
     mat_householder_left(A, v, tau);
 
     // First column should be [beta, 0, 0, 0]
-    // First column indices in row-major 4x3: 0, 3, 6, 9
-    CHECK_FLOAT_EQ_TOL(A->data[0 * 3], beta, 1e-4f);
-    CHECK_FLOAT_EQ_TOL(A->data[1 * 3], 0.0f, 1e-4f);
-    CHECK_FLOAT_EQ_TOL(A->data[2 * 3], 0.0f, 1e-4f);
-    CHECK_FLOAT_EQ_TOL(A->data[3 * 3], 0.0f, 1e-4f);
+    CHECK_FLOAT_EQ_TOL(mat_at(A, 0, 0), beta, 1e-4f);
+    CHECK_FLOAT_EQ_TOL(mat_at(A, 1, 0), 0.0f, 1e-4f);
+    CHECK_FLOAT_EQ_TOL(mat_at(A, 2, 0), 0.0f, 1e-4f);
+    CHECK_FLOAT_EQ_TOL(mat_at(A, 3, 0), 0.0f, 1e-4f);
 
     mat_free_mat(A);
     mat_free_mat(x);
@@ -195,7 +194,7 @@ void test_householder_qr_manual(void) {
         6, 167, -68,
         -4, 24, -41
     });
-    Mat *R = mat_copy(A);
+    Mat *R = mat_rdeep_copy(A);
     Mat *Q = mat_reye(3);
 
     // Column 0

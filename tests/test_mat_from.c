@@ -8,8 +8,8 @@ void test_mat_from_basic(void) {
     Mat *a = mat_from(2, 2, (mat_elem_t[]){1, 2, 3, 4});
 
     CHECK(a->rows == 2 && a->cols == 2);
-    CHECK(a->data[0] == 1 && a->data[1] == 2);
-    CHECK(a->data[2] == 3 && a->data[3] == 4);
+    CHECK(mat_at(a, 0, 0) == 1 && mat_at(a, 0, 1) == 2);
+    CHECK(mat_at(a, 1, 0) == 3 && mat_at(a, 1, 1) == 4);
 
     mat_free_mat(a);
     TEST_END();

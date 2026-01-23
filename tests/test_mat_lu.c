@@ -23,15 +23,13 @@ static void test_lu_3x3(void) {
     Mat *PAQ = mat_mat(3, 3);
     for (size_t i = 0; i < 3; i++) {
         for (size_t j = 0; j < 3; j++) {
-            PAQ->data[i * 3 + j] = A->data[p->data[i] * 3 + q->data[j]];
+            mat_set_at(PAQ, i, j, mat_at(A, p->data[i], q->data[j]));
         }
     }
 
     Mat *LU = mat_rmul(L, U);
 
-    for (size_t i = 0; i < 9; i++) {
-        CHECK_FLOAT_EQ_TOL(LU->data[i], PAQ->data[i], 1e-5f);
-    }
+    CHECK(mat_equals_tol(LU, PAQ, 1e-5f));
 
     mat_free_mat(A); mat_free_mat(L); mat_free_mat(U);
     mat_free_mat(PAQ); mat_free_mat(LU);
@@ -60,15 +58,13 @@ static void test_lu_4x4(void) {
     Mat *PAQ = mat_mat(4, 4);
     for (size_t i = 0; i < 4; i++) {
         for (size_t j = 0; j < 4; j++) {
-            PAQ->data[i * 4 + j] = A->data[p->data[i] * 4 + q->data[j]];
+            mat_set_at(PAQ, i, j, mat_at(A, p->data[i], q->data[j]));
         }
     }
 
     Mat *LU = mat_rmul(L, U);
 
-    for (size_t i = 0; i < 16; i++) {
-        CHECK_FLOAT_EQ_TOL(LU->data[i], PAQ->data[i], 1e-5f);
-    }
+    CHECK(mat_equals_tol(LU, PAQ, 1e-5f));
 
     mat_free_mat(A); mat_free_mat(L); mat_free_mat(U);
     mat_free_mat(PAQ); mat_free_mat(LU);
@@ -81,8 +77,10 @@ static void test_lu_random(size_t n, const char *name) {
     TEST_BEGIN(name);
 
     Mat *A = mat_mat(n, n);
-    for (size_t i = 0; i < n * n; i++) {
-        A->data[i] = (mat_elem_t)(rand() % 200 - 100) / 10.0f;
+    for (size_t i = 0; i < n; i++) {
+        for (size_t j = 0; j < n; j++) {
+            mat_set_at(A, i, j, (mat_elem_t)(rand() % 200 - 100) / 10.0f);
+        }
     }
 
     Mat *L = mat_mat(n, n);
@@ -95,15 +93,13 @@ static void test_lu_random(size_t n, const char *name) {
     Mat *PAQ = mat_mat(n, n);
     for (size_t i = 0; i < n; i++) {
         for (size_t j = 0; j < n; j++) {
-            PAQ->data[i * n + j] = A->data[p->data[i] * n + q->data[j]];
+            mat_set_at(PAQ, i, j, mat_at(A, p->data[i], q->data[j]));
         }
     }
 
     Mat *LU = mat_rmul(L, U);
 
-    for (size_t i = 0; i < n * n; i++) {
-        CHECK_FLOAT_EQ_TOL(LU->data[i], PAQ->data[i], 1e-4f);
-    }
+    CHECK(mat_equals_tol(LU, PAQ, 1e-4f));
 
     mat_free_mat(A); mat_free_mat(L); mat_free_mat(U);
     mat_free_mat(PAQ); mat_free_mat(LU);

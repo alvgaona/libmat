@@ -85,10 +85,10 @@ static void test_solve_verify_residual(size_t n, const char *name, mat_elem_t to
         mat_elem_t row_sum = 0;
         for (size_t j = 0; j < n; j++) {
             mat_elem_t val = (mat_elem_t)(rand() % 100) / 10.0f - 5.0f;
-            A->data[i * n + j] = val;
+            mat_set_at(A, i, j, val);
             if (i != j) row_sum += MAT_FABS(val);
         }
-        A->data[i * n + i] = row_sum + 1.0f;
+        mat_set_at(A, i, i, row_sum + 1.0f);
     }
 
     // Generate random b
