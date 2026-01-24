@@ -5988,6 +5988,482 @@ MATDEF mat_elem_t mat_det(const Mat *A) {
 // Column-major SVD helpers - columns are contiguous for efficient SIMD
 // W->data is column-major: W->data[row + col*m] = W[row, col]
 
+// ============================================================================
+// Bidiagonalization for SVD (Golub-Kahan)
+// Reduces A (m x n, m >= n) to bidiagonal form: A = U_b * B * V_b^T
+// B has main diagonal d[0..n-1] and superdiagonal e[0..n-2]
+// ============================================================================
+
+// Apply Householder from left to zero out column below diagonal
+// H = I - tau * v * v^T, applied as A = H * A = A - tau * v * (v^T * A)
+MAT_INTERNAL_STATIC void mat_bidiag_left_(mat_elem_t *A, size_t m, size_t n,
+                                          size_t lda, size_t k,
+                                          mat_elem_t *v, mat_elem_t tau) {
+  if (tau == 0) return;
+
+  // For each column j >= k: A[:,j] -= tau * v * (v^T * A[:,j])
+  for (size_t j = k; j < n; j++) {
+    mat_elem_t *col_j = &A[j * lda];
+    mat_elem_t dot = mat_dot_raw_(&col_j[k], v, m - k);
+    mat_axpy_raw_(&col_j[k], -tau * dot, v, m - k);
+  }
+}
+
+// Apply Householder from right to zero out row after superdiagonal
+// H = I - tau * v * v^T, applied as A = A * H = A - tau * (A * v) * v^T
+// A * v = sum_j v[j] * A[:,k+1+j]  (for rows k:m)
+MAT_INTERNAL_STATIC void mat_bidiag_right_(mat_elem_t *A, size_t m, size_t n,
+                                           size_t lda, size_t k,
+                                           mat_elem_t *v, mat_elem_t tau) {
+  if (tau == 0) return;
+
+  size_t vlen = n - k - 1;
+  size_t row_len = m - k;
+
+  // Compute w = A[k:m, k+1:n] * v = sum_j v[j] * A[k:m, k+1+j]
+  mat_elem_t *w = (mat_elem_t *)MAT_MALLOC(row_len * sizeof(mat_elem_t));
+  memset(w, 0, row_len * sizeof(mat_elem_t));
+  for (size_t j = 0; j < vlen; j++) {
+    mat_axpy_raw_(w, v[j], &A[(k + 1 + j) * lda + k], row_len);
+  }
+
+  // A[k:m, k+1+j] -= tau * v[j] * w for each j
+  for (size_t j = 0; j < vlen; j++) {
+    mat_axpy_raw_(&A[(k + 1 + j) * lda + k], -tau * v[j], w, row_len);
+  }
+
+  MAT_FREE(w);
+}
+
+// Bidiagonalize matrix A (m x n, m >= n) in place
+// Returns diagonal d[n] and superdiagonal e[n-1]
+// Optionally accumulates U (m x m) and V (n x n) if non-NULL
+// A is column-major with leading dimension lda
+MAT_INTERNAL_STATIC void mat_bidiag_(mat_elem_t *A, size_t m, size_t n,
+                                     size_t lda, mat_elem_t *d, mat_elem_t *e,
+                                     mat_elem_t *U, mat_elem_t *V) {
+  // Workspace for Householder vectors
+  mat_elem_t *v_left = (mat_elem_t *)MAT_MALLOC(m * sizeof(mat_elem_t));
+  mat_elem_t *v_right = (mat_elem_t *)MAT_MALLOC(n * sizeof(mat_elem_t));
+
+  // Initialize U and V to identity if provided
+  if (U) {
+    memset(U, 0, m * m * sizeof(mat_elem_t));
+    for (size_t i = 0; i < m; i++) U[i * m + i] = 1;
+  }
+  if (V) {
+    memset(V, 0, n * n * sizeof(mat_elem_t));
+    for (size_t i = 0; i < n; i++) V[i * n + i] = 1;
+  }
+
+  for (size_t k = 0; k < n; k++) {
+    // Left Householder: zero out A[k+1:m, k]
+    if (k < m - 1) {
+      mat_elem_t *col_k = &A[k * lda];
+      size_t vlen = m - k;
+
+      // Copy column to v_left and compute Householder
+      mat_copy_raw_(v_left, &col_k[k], vlen);
+
+      mat_elem_t norm = MAT_SQRT(mat_dot_raw_(v_left, v_left, vlen));
+      mat_elem_t tau_l = 0;
+
+      if (norm > MAT_DEFAULT_EPSILON) {
+        mat_elem_t x0 = v_left[0];
+        mat_elem_t beta = (x0 >= 0) ? -norm : norm;
+        tau_l = (beta - x0) / beta;
+        mat_elem_t scale = 1.0f / (x0 - beta);
+        for (size_t i = 1; i < vlen; i++) v_left[i] *= scale;
+        v_left[0] = 1;
+        d[k] = beta;  // Diagonal element
+      } else {
+        d[k] = col_k[k];
+      }
+
+      // Apply to A (columns k to n-1)
+      mat_bidiag_left_(A, m, n, lda, k, v_left, tau_l);
+      col_k[k] = d[k];  // Restore diagonal
+
+      // Accumulate U: U = U * H_l where H_l = I - tau * v * v^T
+      // (U * H)[:,j] = U[:,j] - tau * v[j] * (U * v)
+      // U * v = sum_r v[r] * U[:,k+r]  (linear combination of columns)
+      if (U && tau_l != 0) {
+        mat_elem_t *w = (mat_elem_t *)MAT_MALLOC(m * sizeof(mat_elem_t));
+        memset(w, 0, m * sizeof(mat_elem_t));
+        // w = sum_r v[r] * U[:,k+r]
+        for (size_t r = 0; r < vlen; r++) {
+          mat_axpy_raw_(w, v_left[r], &U[(k + r) * m], m);
+        }
+        // U[:,j] -= tau * v[j-k] * w for j in [k, m)
+        for (size_t j = k; j < m; j++) {
+          mat_axpy_raw_(&U[j * m], -tau_l * v_left[j - k], w, m);
+        }
+        MAT_FREE(w);
+      }
+    } else {
+      d[k] = A[k * lda + k];
+    }
+
+    // Right Householder: zero out A[k, k+2:n]
+    if (k < n - 2) {
+      size_t vlen = n - k - 1;
+
+      // Extract row k, columns k+1 to n-1
+      for (size_t j = 0; j < vlen; j++) {
+        v_right[j] = A[(k + 1 + j) * lda + k];
+      }
+
+      mat_elem_t norm = MAT_SQRT(mat_dot_raw_(v_right, v_right, vlen));
+      mat_elem_t tau_r = 0;
+
+      if (norm > MAT_DEFAULT_EPSILON) {
+        mat_elem_t x0 = v_right[0];
+        mat_elem_t beta = (x0 >= 0) ? -norm : norm;
+        tau_r = (beta - x0) / beta;
+        mat_elem_t scale = 1.0f / (x0 - beta);
+        for (size_t i = 1; i < vlen; i++) v_right[i] *= scale;
+        v_right[0] = 1;
+        e[k] = beta;  // Superdiagonal element
+      } else {
+        e[k] = A[(k + 1) * lda + k];
+      }
+
+      // Apply to A (rows k to m-1)
+      mat_bidiag_right_(A, m, n, lda, k, v_right, tau_r);
+      A[(k + 1) * lda + k] = e[k];  // Restore superdiagonal
+
+      // Accumulate V: V = V * H_r where H_r = I - tau * v * v^T
+      // V * v = sum_r v[r] * V[:,k+1+r]  (linear combination of columns)
+      if (V && tau_r != 0) {
+        mat_elem_t *w = (mat_elem_t *)MAT_MALLOC(n * sizeof(mat_elem_t));
+        memset(w, 0, n * sizeof(mat_elem_t));
+        // w = sum_r v[r] * V[:,k+1+r]
+        for (size_t r = 0; r < vlen; r++) {
+          mat_axpy_raw_(w, v_right[r], &V[(k + 1 + r) * n], n);
+        }
+        // V[:,j] -= tau * v[j-(k+1)] * w for j in [k+1, n)
+        for (size_t j = k + 1; j < n; j++) {
+          mat_axpy_raw_(&V[j * n], -tau_r * v_right[j - (k + 1)], w, n);
+        }
+        MAT_FREE(w);
+      }
+    } else if (k < n - 1) {
+      e[k] = A[(k + 1) * lda + k];
+    }
+  }
+
+  MAT_FREE(v_left);
+  MAT_FREE(v_right);
+}
+
+// ============================================================================
+// QR iteration for bidiagonal SVD (Golub-Kahan)
+// Computes singular values of bidiagonal matrix B (diagonal d, superdiagonal e)
+// Optionally accumulates Givens rotations into U (m x m) and V (n x n)
+// ============================================================================
+
+// Compute Givens rotation to zero out b given [a; b]
+// Returns c, s such that [c s; -s c]^T * [a; b] = [r; 0]
+MAT_INTERNAL_STATIC void mat_givens_(mat_elem_t a, mat_elem_t b,
+                                     mat_elem_t *c, mat_elem_t *s) {
+  if (b == 0) {
+    *c = (a >= 0) ? 1 : -1;
+    *s = 0;
+  } else if (a == 0) {
+    *c = 0;
+    *s = (b >= 0) ? 1 : -1;
+  } else if (MAT_FABS(b) > MAT_FABS(a)) {
+    mat_elem_t t = a / b;
+    mat_elem_t u = MAT_SQRT(1 + t * t);
+    if (b < 0) u = -u;
+    *s = 1 / u;
+    *c = (*s) * t;
+  } else {
+    mat_elem_t t = b / a;
+    mat_elem_t u = MAT_SQRT(1 + t * t);
+    if (a < 0) u = -u;
+    *c = 1 / u;
+    *s = (*c) * t;
+  }
+}
+
+// Apply Givens rotation to rows i, j of matrix (column-major, ld = leading dim)
+// [row_i; row_j] = [c s; -s c] * [row_i; row_j]
+MAT_INTERNAL_STATIC void mat_givens_rows_(mat_elem_t *A, size_t ld, size_t ncols,
+                                          size_t i, size_t j,
+                                          mat_elem_t c, mat_elem_t s) {
+  for (size_t k = 0; k < ncols; k++) {
+    mat_elem_t ai = A[k * ld + i];
+    mat_elem_t aj = A[k * ld + j];
+    A[k * ld + i] = c * ai + s * aj;
+    A[k * ld + j] = -s * ai + c * aj;
+  }
+}
+
+// Apply Givens rotation to columns i, j of matrix
+// [col_i col_j] = [col_i col_j] * [c -s; s c]
+MAT_INTERNAL_STATIC void mat_givens_cols_(mat_elem_t *A, size_t ld, size_t nrows,
+                                          size_t i, size_t j,
+                                          mat_elem_t c, mat_elem_t s) {
+  mat_elem_t *col_i = &A[i * ld];
+  mat_elem_t *col_j = &A[j * ld];
+  for (size_t k = 0; k < nrows; k++) {
+    mat_elem_t ci = col_i[k];
+    mat_elem_t cj = col_j[k];
+    col_i[k] = c * ci + s * cj;
+    col_j[k] = -s * ci + c * cj;
+  }
+}
+
+// One QR iteration step on bidiagonal matrix (Golub-Kahan SVD step)
+// Works on submatrix from index p to q (inclusive)
+// d[p:q+1] is diagonal, e[p:q] is superdiagonal
+MAT_INTERNAL_STATIC void mat_svd_qr_step_(mat_elem_t *d, mat_elem_t *e,
+                                          size_t p, size_t q,
+                                          mat_elem_t *U, size_t m,
+                                          mat_elem_t *V, size_t n) {
+  // Wilkinson shift from trailing 2x2 of T = B^T * B
+  // T[n-1,n-1] = d[q]^2 + e[q-1]^2 (if q > p)
+  // T[n-2,n-1] = d[q-1] * e[q-1]
+  // T[n-2,n-2] = d[q-1]^2 + e[q-2]^2 (if q > p+1)
+  mat_elem_t e_qm1 = (q > p) ? e[q - 1] : 0;
+  mat_elem_t t_nn = d[q] * d[q] + e_qm1 * e_qm1;
+  mat_elem_t t_nm1n = (q > p) ? d[q - 1] * e[q - 1] : 0;
+  mat_elem_t e_qm2 = (q > p + 1) ? e[q - 2] : 0;
+  mat_elem_t t_nm1nm1 = (q > p) ? (d[q - 1] * d[q - 1] + e_qm2 * e_qm2) : 0;
+
+  mat_elem_t delta = (t_nm1nm1 - t_nn) / 2;
+  mat_elem_t shift;
+  if (delta == 0 && t_nm1n == 0) {
+    shift = 0;
+  } else if (delta == 0) {
+    shift = t_nn - MAT_FABS(t_nm1n);
+  } else {
+    mat_elem_t sign = (delta >= 0) ? 1 : -1;
+    shift = t_nn - t_nm1n * t_nm1n / (delta + sign * MAT_SQRT(delta * delta + t_nm1n * t_nm1n));
+  }
+
+  // Chase the bulge
+  mat_elem_t f = d[p] * d[p] - shift;
+  mat_elem_t g = d[p] * e[p];
+
+  for (size_t k = p; k < q; k++) {
+    mat_elem_t c, s;
+
+    // Right Givens rotation to zero g
+    mat_givens_(f, g, &c, &s);
+
+    if (k > p) e[k - 1] = f * c + g * s;  // This should equal the computed r
+
+    // Apply to columns k, k+1 of B:
+    // [d[k] e[k]] [c  s]   [c*d[k]+s*e[k]   -s*d[k]+c*e[k]]
+    // [0    d[k+1]] [-s c] = [s*d[k+1]        c*d[k+1]      ]
+    mat_elem_t dk = d[k], ek = e[k], dk1 = d[k + 1];
+    mat_elem_t new_dk = c * dk + s * ek;
+    mat_elem_t new_ek = -s * dk + c * ek;
+    mat_elem_t bulge = s * dk1;
+    mat_elem_t new_dk1 = c * dk1;
+
+    // Accumulate V
+    if (V) mat_givens_cols_(V, n, n, k, k + 1, c, s);
+
+    // Left Givens rotation to zero bulge
+    mat_givens_(new_dk, bulge, &c, &s);
+
+    // Apply to rows k, k+1 of B:
+    d[k] = c * new_dk + s * bulge;  // = r from Givens
+    // [new_ek  new_dk1]   [c -s]   [c*new_ek+s*new_dk1  ...]
+    // [0       e[k+1] ] * [s  c] = [s*e[k+1]            ...]
+    mat_elem_t next_ek = c * new_ek + s * new_dk1;
+    d[k + 1] = -s * new_ek + c * new_dk1;
+    e[k] = next_ek;
+
+    // Accumulate U
+    if (U) mat_givens_cols_(U, m, m, k, k + 1, c, s);
+
+    if (k + 1 < q) {
+      // Bulge appears at e[k+1] position
+      mat_elem_t old_ek1 = e[k + 1];
+      f = e[k];
+      g = s * old_ek1;
+      e[k + 1] = c * old_ek1;
+    }
+  }
+}
+
+// QR iteration for bidiagonal SVD
+// Input: d[n] diagonal, e[n-1] superdiagonal
+// Output: d[n] contains singular values (may be negative, need abs)
+// U (m x m) and V (n x n) accumulate rotations if non-NULL
+MAT_INTERNAL_STATIC void mat_svd_qr_bidiag_(mat_elem_t *d, mat_elem_t *e, size_t n,
+                                            mat_elem_t *U, size_t m,
+                                            mat_elem_t *V) {
+  const int max_iters = 30 * (int)n;
+  const mat_elem_t tol = MAT_DEFAULT_EPSILON;
+
+  size_t q = n - 1;  // End of active submatrix
+  int iter = 0;
+
+  while (q > 0 && iter < max_iters) {
+    // Check for negligible e[q-1] (convergence)
+    mat_elem_t thresh = tol * (MAT_FABS(d[q - 1]) + MAT_FABS(d[q]));
+    if (MAT_FABS(e[q - 1]) <= thresh) {
+      e[q - 1] = 0;
+      q--;
+      continue;
+    }
+
+    // Find start of active submatrix (p)
+    size_t p = q - 1;
+    while (p > 0) {
+      thresh = tol * (MAT_FABS(d[p - 1]) + MAT_FABS(d[p]));
+      if (MAT_FABS(e[p - 1]) <= thresh) {
+        e[p - 1] = 0;
+        break;
+      }
+      p--;
+    }
+
+    // Check for zero diagonal in active submatrix
+    int found_zero = 0;
+    for (size_t k = p; k <= q; k++) {
+      if (MAT_FABS(d[k]) < tol) {
+        // Zero out row k by chasing with Givens rotations
+        d[k] = 0;
+        if (k < q) {
+          for (size_t j = k; j < q; j++) {
+            mat_elem_t c, s;
+            mat_givens_(d[j + 1], e[j], &c, &s);
+            d[j + 1] = c * d[j + 1] + s * e[j];
+            if (j + 1 < q) {
+              mat_elem_t tmp = -s * e[j + 1];
+              e[j + 1] = c * e[j + 1];
+              e[j] = tmp;
+            } else {
+              e[j] = 0;
+            }
+            if (U) mat_givens_cols_(U, m, m, k, j + 1, c, s);
+          }
+        }
+        found_zero = 1;
+        break;
+      }
+    }
+
+    if (found_zero) continue;
+
+    // Perform one QR step
+    mat_svd_qr_step_(d, e, p, q, U, m, V, n);
+    iter++;
+  }
+
+  // Make singular values positive
+  for (size_t i = 0; i < n; i++) {
+    if (d[i] < 0) {
+      d[i] = -d[i];
+      // Flip sign of corresponding V column
+      if (V) {
+        for (size_t j = 0; j < n; j++) {
+          V[i * n + j] = -V[i * n + j];
+        }
+      }
+    }
+  }
+}
+
+// Complete bidiagonalization + QR iteration SVD
+// Input: A (m x n, m >= n), column-major
+// Output: U (m x m), S (n singular values), Vt (n x n)
+MAT_INTERNAL_STATIC void mat_svd_bidiag_qr_(const Mat *A, Mat *U, Vec *S, Mat *Vt) {
+  size_t m = A->rows;
+  size_t n = A->cols;
+
+  // Workspace
+  mat_elem_t *B = (mat_elem_t *)MAT_MALLOC(m * n * sizeof(mat_elem_t));
+  mat_elem_t *d = (mat_elem_t *)MAT_MALLOC(n * sizeof(mat_elem_t));
+  mat_elem_t *e = (mat_elem_t *)MAT_MALLOC(n * sizeof(mat_elem_t));
+  mat_elem_t *U_b = (mat_elem_t *)MAT_MALLOC(m * m * sizeof(mat_elem_t));
+  mat_elem_t *V_b = (mat_elem_t *)MAT_MALLOC(n * n * sizeof(mat_elem_t));
+  mat_elem_t *U_qr = (mat_elem_t *)MAT_MALLOC(m * m * sizeof(mat_elem_t));
+  mat_elem_t *V_qr = (mat_elem_t *)MAT_MALLOC(n * n * sizeof(mat_elem_t));
+
+  // Copy A to workspace (column-major)
+  for (size_t j = 0; j < n; j++) {
+    for (size_t i = 0; i < m; i++) {
+      B[j * m + i] = MAT_AT(A, i, j);
+    }
+  }
+
+  // Step 1: Bidiagonalize
+  mat_bidiag_(B, m, n, m, d, e, U_b, V_b);
+
+  // Step 2: Initialize U_qr, V_qr to identity
+  memset(U_qr, 0, m * m * sizeof(mat_elem_t));
+  memset(V_qr, 0, n * n * sizeof(mat_elem_t));
+  for (size_t i = 0; i < m; i++) U_qr[i * m + i] = 1;
+  for (size_t i = 0; i < n; i++) V_qr[i * n + i] = 1;
+
+  // Step 3: QR iteration
+  mat_svd_qr_bidiag_(d, e, n, U_qr, m, V_qr);
+
+  // Step 4: Sort singular values descending and track permutation
+  size_t *perm = (size_t *)MAT_MALLOC(n * sizeof(size_t));
+  for (size_t i = 0; i < n; i++) perm[i] = i;
+  for (size_t i = 0; i < n - 1; i++) {
+    for (size_t j = i + 1; j < n; j++) {
+      if (d[perm[j]] > d[perm[i]]) {
+        size_t tmp = perm[i]; perm[i] = perm[j]; perm[j] = tmp;
+      }
+    }
+  }
+
+  // Step 5: Reorder U_qr columns according to perm, then compute U = U_b * U_qr
+  // First permute columns of U_qr in place for the first n columns
+  mat_elem_t *U_qr_perm = (mat_elem_t *)MAT_MALLOC(m * m * sizeof(mat_elem_t));
+  for (size_t j = 0; j < m; j++) {
+    size_t src_col = (j < n) ? perm[j] : j;
+    mat_copy_raw_(&U_qr_perm[j * m], &U_qr[src_col * m], m);
+  }
+
+  // U = U_b * U_qr_perm using optimized GEMM
+  Mat U_b_mat = {.rows = m, .cols = m, .data = U_b};
+  Mat U_qr_mat = {.rows = m, .cols = m, .data = U_qr_perm};
+  mat_gemm(U, 1, &U_b_mat, &U_qr_mat, 0);
+  MAT_FREE(U_qr_perm);
+
+  // Step 6: Reorder V_qr columns according to perm, compute V = V_b * V_qr, output Vt
+  mat_elem_t *V_qr_perm = (mat_elem_t *)MAT_MALLOC(n * n * sizeof(mat_elem_t));
+  for (size_t j = 0; j < n; j++) {
+    mat_copy_raw_(&V_qr_perm[j * n], &V_qr[perm[j] * n], n);
+  }
+
+  // V_temp = V_b * V_qr_perm, then Vt = V_temp^T
+  mat_elem_t *V_temp = (mat_elem_t *)MAT_MALLOC(n * n * sizeof(mat_elem_t));
+  Mat V_b_mat = {.rows = n, .cols = n, .data = V_b};
+  Mat V_qr_mat = {.rows = n, .cols = n, .data = V_qr_perm};
+  Mat V_temp_mat = {.rows = n, .cols = n, .data = V_temp};
+  mat_gemm(&V_temp_mat, 1, &V_b_mat, &V_qr_mat, 0);
+
+  // Transpose V_temp to get Vt
+  for (size_t i = 0; i < n; i++) {
+    for (size_t j = 0; j < n; j++) {
+      MAT_SET(Vt, i, j, V_temp[i * n + j]);  // V_temp is col-major: V[i,j] = V_temp[j*n+i]
+    }
+  }
+  MAT_FREE(V_qr_perm);
+  MAT_FREE(V_temp);
+
+  // Step 7: Copy sorted singular values to S
+  for (size_t i = 0; i < n; i++) {
+    S->data[i] = d[perm[i]];
+  }
+
+  MAT_FREE(B); MAT_FREE(d); MAT_FREE(e);
+  MAT_FREE(U_b); MAT_FREE(V_b);
+  MAT_FREE(U_qr); MAT_FREE(V_qr);
+  MAT_FREE(perm);
+}
+
 // Apply Jacobi rotation to columns i and j (column-major data)
 // new_i = cs * col_i - sn * col_j
 // new_j = sn * col_i + cs * col_j
@@ -6252,6 +6728,14 @@ MATDEF void mat_svd(const Mat *A, Mat *U, Vec *S, Mat *Vt) {
   }
 
   // Now m >= n
+  // Use Bidiag+QR for larger matrices (faster), Jacobi for smaller (simpler)
+#define MAT_SVD_BIDIAG_THRESHOLD 20
+  if (n >= MAT_SVD_BIDIAG_THRESHOLD) {
+    mat_svd_bidiag_qr_(A, U, S, Vt);
+    return;
+  }
+
+  // Jacobi SVD for small matrices
   // W is m×n working matrix: columns will become scaled left singular vectors
   // V is n×n: columns will become right singular vectors
   // For efficient SIMD, we want columns contiguous.

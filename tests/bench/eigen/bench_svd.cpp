@@ -36,8 +36,8 @@ void bench_svd(size_t m, size_t n, int iterations) {
   // Fill with random data
   BENCH_FILL(A->data, m * n);
 
-  // Eigen matrix (column-major by default, but we use row-major Map)
-  Eigen::Map<Eigen::Matrix<mat_elem_t, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> eA(A->data, m, n);
+  // Eigen matrix - use ColMajor to match libmat's storage
+  Eigen::Map<EigenMatrix> eA(A->data, m, n);
 
   // Warmup
   for (int i = 0; i < BENCH_WARMUP; i++) {
@@ -49,7 +49,7 @@ void bench_svd(size_t m, size_t n, int iterations) {
   double libmat_times[BENCH_ROUNDS], jacobi_times[BENCH_ROUNDS], bdcsvd_times[BENCH_ROUNDS];
 
   for (int r = 0; r < BENCH_ROUNDS; r++) {
-    // libmat (Jacobi)
+    // libmat
     uint64_t start = bench_now();
     for (int i = 0; i < iterations; i++) {
       mat_svd(A, U, S, Vt);
@@ -69,7 +69,7 @@ void bench_svd(size_t m, size_t n, int iterations) {
     // Eigen BDCSVD (divide & conquer)
     start = bench_now();
     for (int i = 0; i < iterations; i++) {
-      Eigen::BDCSVD<EigenMatrix> bdcSvd(eA, Eigen::ComputeFullU | Eigen::ComputeFullV);
+      Eigen::BDCSVD<EigenMatrix, Eigen::ComputeFullU | Eigen::ComputeFullV> bdcSvd(eA);
       (void)bdcSvd;
     }
     end = bench_now();
@@ -80,9 +80,13 @@ void bench_svd(size_t m, size_t n, int iterations) {
   BenchStats js = bench_stats(jacobi_times, BENCH_ROUNDS);
   BenchStats bs = bench_stats(bdcsvd_times, BENCH_ROUNDS);
 
-  printf("libmat (Jacobi):  %10.1f ± %5.1f us\n", ls.avg, ls.std);
-  printf("Eigen JacobiSVD:  %10.1f ± %5.1f us  (%.1fx)\n", js.avg, js.std, ls.avg / js.avg);
-  printf("Eigen BDCSVD:     %10.1f ± %5.1f us  (%.1fx)\n", bs.avg, bs.std, ls.avg / bs.avg);
+  // Show ratio as speedup (>1 = libmat faster)
+  printf("libmat:       %8.1f ± %4.1f us\n", ls.avg, ls.std);
+  printf("Eigen Jacobi: %8.1f ± %4.1f us  (libmat %.2fx %s)\n",
+         js.avg, js.std, js.avg / ls.avg, js.avg > ls.avg ? "faster" : "slower");
+  printf("Eigen BDCSVD: %8.1f ± %4.1f us  (libmat %.2fx %s)\n",
+         bs.avg, bs.std, bs.avg > ls.avg ? bs.avg / ls.avg : ls.avg / bs.avg,
+         bs.avg > ls.avg ? "faster" : "slower");
 
   mat_free_mat(A);
   mat_free_mat(U);
@@ -96,16 +100,17 @@ int main() {
   Eigen::setNbThreads(1);
 
   printf("=== SVD BENCHMARK: libmat vs Eigen [%s] ===\n", PRECISION_NAME);
-  printf("libmat: one-sided Jacobi\n");
-  printf("JacobiSVD: Eigen's two-sided Jacobi\n");
-  printf("BDCSVD: bidiag + divide & conquer\n");
-  printf("Rounds: %d\n", BENCH_ROUNDS);
+  printf("libmat: Jacobi (n<20) / Bidiag+QR (n>=20)\n");
+  printf("Eigen Jacobi: two-sided Jacobi\n");
+  printf("Eigen BDCSVD: bidiag + divide & conquer\n");
 
   bench_svd(10, 10, 1000);
   bench_svd(20, 20, 500);
   bench_svd(50, 50, 100);
   bench_svd(100, 100, 20);
   bench_svd(200, 200, 5);
+  bench_svd(300, 300, 2);
+  bench_svd(400, 400, 1);
   bench_svd(50, 30, 100);   // tall
   bench_svd(30, 50, 100);   // wide
 
