@@ -27,8 +27,8 @@ ZAP_BENCHES = $(ZAP_BENCH_DIR)/bench_zap_blas1 \
               $(ZAP_BENCH_DIR)/bench_zap_norms \
               $(ZAP_BENCH_DIR)/bench_zap_misc
 
-.PHONY: all examples test check bench clean \
-        bench-zap bench-zap-blas1 bench-zap-blas2 bench-zap-blas3 \
+.PHONY: all examples test check clean \
+        bench bench-zap bench-zap-blas1 bench-zap-blas2 bench-zap-blas3 \
         bench-zap-reductions bench-zap-decomp bench-zap-solvers \
         bench-zap-matrix-ops bench-zap-advanced bench-zap-trsv \
         bench-zap-elementwise bench-zap-stats bench-zap-norms bench-zap-misc
@@ -57,15 +57,12 @@ check: test
 	@for t in $(TESTS); do echo "Running $$t..."; ./$$t || exit 1; done
 	@echo "All tests passed!"
 
-tests/bench/bench_all: tests/bench/bench_all.c mat.h
-	$(CC) $(CFLAGS) -O3 -o $@ $< $(LDLIBS)
-
-bench: tests/bench/bench_all
-	./tests/bench/bench_all
-
 # ZAP benchmark build rules
 $(ZAP_BENCH_DIR)/%: $(ZAP_BENCH_DIR)/%.c $(ZAP_BENCH_DIR)/zap.h mat.h
 	$(CC) $(CFLAGS) -O3 -o $@ $< $(LDLIBS)
+
+# Main benchmark target (uses ZAP)
+bench: bench-zap
 
 # ZAP benchmark targets
 bench-zap: $(ZAP_BENCHES)
