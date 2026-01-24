@@ -11,7 +11,17 @@ EXAMPLES_CXX = $(patsubst %.cpp,%,$(wildcard examples/*.cpp))
 # Tests
 TESTS = $(patsubst %.c,%,$(wildcard tests/*.c))
 
-.PHONY: all examples test check bench clean
+# ZAP benchmarks
+ZAP_BENCH_DIR = tests/bench/zap
+ZAP_BENCHES = $(ZAP_BENCH_DIR)/bench_zap_blas1 \
+              $(ZAP_BENCH_DIR)/bench_zap_blas3 \
+              $(ZAP_BENCH_DIR)/bench_zap_reductions \
+              $(ZAP_BENCH_DIR)/bench_zap_decomp \
+              $(ZAP_BENCH_DIR)/bench_zap_solvers
+
+.PHONY: all examples test check bench clean \
+        bench-zap bench-zap-blas1 bench-zap-blas3 bench-zap-reductions \
+        bench-zap-decomp bench-zap-solvers
 
 all: examples test
 
@@ -25,8 +35,13 @@ examples/%: examples/%.c mat.h
 examples/%: examples/%.cpp mat.h
 	$(CXX) $(CXXFLAGS) -o $@ $< $(LDLIBS)
 
+# Exclude ZAP benchmarks from generic test rule (they need -O3)
 tests/%: tests/%.c mat.h
-	$(CC) $(CFLAGS) -o $@ $< $(LDLIBS)
+	@if echo "$@" | grep -q "bench/zap"; then \
+		$(CC) $(CFLAGS) -O3 -o $@ $< $(LDLIBS); \
+	else \
+		$(CC) $(CFLAGS) -o $@ $< $(LDLIBS); \
+	fi
 
 check: test
 	@for t in $(TESTS); do echo "Running $$t..."; ./$$t || exit 1; done
@@ -37,6 +52,29 @@ tests/bench/bench_all: tests/bench/bench_all.c mat.h
 
 bench: tests/bench/bench_all
 	./tests/bench/bench_all
+
+# ZAP benchmark build rules
+$(ZAP_BENCH_DIR)/%: $(ZAP_BENCH_DIR)/%.c $(ZAP_BENCH_DIR)/zap.h mat.h
+	$(CC) $(CFLAGS) -O3 -o $@ $< $(LDLIBS)
+
+# ZAP benchmark targets
+bench-zap: $(ZAP_BENCHES)
+	@for b in $(ZAP_BENCHES); do echo "Running $$b..."; ./$$b || exit 1; done
+
+bench-zap-blas1: $(ZAP_BENCH_DIR)/bench_zap_blas1
+	./$(ZAP_BENCH_DIR)/bench_zap_blas1
+
+bench-zap-blas3: $(ZAP_BENCH_DIR)/bench_zap_blas3
+	./$(ZAP_BENCH_DIR)/bench_zap_blas3
+
+bench-zap-reductions: $(ZAP_BENCH_DIR)/bench_zap_reductions
+	./$(ZAP_BENCH_DIR)/bench_zap_reductions
+
+bench-zap-decomp: $(ZAP_BENCH_DIR)/bench_zap_decomp
+	./$(ZAP_BENCH_DIR)/bench_zap_decomp
+
+bench-zap-solvers: $(ZAP_BENCH_DIR)/bench_zap_solvers
+	./$(ZAP_BENCH_DIR)/bench_zap_solvers
 
 clean:
 	find examples tests -type f ! -name "*.c" ! -name "*.cpp" ! -name "*.h" -delete
