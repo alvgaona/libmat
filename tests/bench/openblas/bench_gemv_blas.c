@@ -76,10 +76,10 @@ int main() {
   srand(42);
   bench_init();
 
-  printf("=== GEMV BENCHMARK: libmat vs OpenBLAS [%s] ===\n", PRECISION_NAME);
+  bench_print_summary("libmat vs OpenBLAS: GEMV");
+  printf("Precision: %s\n", PRECISION_NAME);
   printf("y = alpha * A * x + beta * y\n");
-  printf("Iterations per round: %d\n", ITERATIONS);
-  printf("Rounds: %d\n", BENCH_ROUNDS);
+  printf("Iterations: %d, Rounds: %d\n", ITERATIONS, BENCH_ROUNDS);
 
   // Square matrices
   bench_speed(64, 64);

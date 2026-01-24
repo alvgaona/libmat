@@ -70,7 +70,8 @@ int main() {
   srand(42);
   bench_init();
 
-  printf("=== SCAL BENCHMARK: libmat vs OpenBLAS [%s] ===\n", PRECISION_NAME);
+  bench_print_summary("libmat vs OpenBLAS: SCAL");
+  printf("Precision: %s\n", PRECISION_NAME);
   printf("x = alpha * x\n");
 
   bench_speed(1000);

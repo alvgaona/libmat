@@ -129,12 +129,10 @@ int main() {
   srand(42);
   bench_init();
 
-  printf("=== SVD BENCHMARK: libmat vs LAPACK [%s] ===\n", PRECISION_NAME);
-  printf("libmat: one-sided Jacobi\n");
-  printf("gesvj:  LAPACK Jacobi (m >= n only)\n");
-  printf("gesdd:  bidiag + divide & conquer\n");
-  printf("Rounds: %d\n", BENCH_ROUNDS);
-  printf("OpenBLAS threads: %d\n", openblas_get_num_threads());
+  bench_print_summary("libmat vs LAPACK: SVD");
+  printf("Precision: %s\n", PRECISION_NAME);
+  printf("libmat: one-sided Jacobi | gesvj: LAPACK Jacobi (m>=n) | gesdd: divide & conquer\n");
+  printf("Rounds: %d, OpenBLAS threads: %d\n", BENCH_ROUNDS, openblas_get_num_threads());
 
   bench_svd(10, 10, 1000);
   bench_svd(20, 20, 500);
