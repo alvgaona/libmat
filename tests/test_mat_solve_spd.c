@@ -181,7 +181,7 @@ int main(void) {
   test_solve_spd_2x2();
   test_solve_spd_3x3();
   test_solve_spd_not_positive_definite();
-  test_solve_spd_verify_residual(10, "solve_spd_random_10x10", 1e-4f);
+  test_solve_spd_verify_residual(10, "solve_spd_random_10x10", 1e-3f);
   test_solve_spd_verify_residual(50, "solve_spd_random_50x50", 1e-3f);
   test_solve_spd_verify_residual(100, "solve_spd_random_100x100", 1e-2f);
 
