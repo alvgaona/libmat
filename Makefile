@@ -14,14 +14,24 @@ TESTS = $(patsubst %.c,%,$(wildcard tests/*.c))
 # ZAP benchmarks
 ZAP_BENCH_DIR = tests/bench/zap
 ZAP_BENCHES = $(ZAP_BENCH_DIR)/bench_zap_blas1 \
+              $(ZAP_BENCH_DIR)/bench_zap_blas2 \
               $(ZAP_BENCH_DIR)/bench_zap_blas3 \
               $(ZAP_BENCH_DIR)/bench_zap_reductions \
               $(ZAP_BENCH_DIR)/bench_zap_decomp \
-              $(ZAP_BENCH_DIR)/bench_zap_solvers
+              $(ZAP_BENCH_DIR)/bench_zap_solvers \
+              $(ZAP_BENCH_DIR)/bench_zap_matrix_ops \
+              $(ZAP_BENCH_DIR)/bench_zap_advanced \
+              $(ZAP_BENCH_DIR)/bench_zap_trsv \
+              $(ZAP_BENCH_DIR)/bench_zap_elementwise \
+              $(ZAP_BENCH_DIR)/bench_zap_stats \
+              $(ZAP_BENCH_DIR)/bench_zap_norms \
+              $(ZAP_BENCH_DIR)/bench_zap_misc
 
 .PHONY: all examples test check bench clean \
-        bench-zap bench-zap-blas1 bench-zap-blas3 bench-zap-reductions \
-        bench-zap-decomp bench-zap-solvers
+        bench-zap bench-zap-blas1 bench-zap-blas2 bench-zap-blas3 \
+        bench-zap-reductions bench-zap-decomp bench-zap-solvers \
+        bench-zap-matrix-ops bench-zap-advanced bench-zap-trsv \
+        bench-zap-elementwise bench-zap-stats bench-zap-norms bench-zap-misc
 
 all: examples test
 
@@ -64,6 +74,9 @@ bench-zap: $(ZAP_BENCHES)
 bench-zap-blas1: $(ZAP_BENCH_DIR)/bench_zap_blas1
 	./$(ZAP_BENCH_DIR)/bench_zap_blas1
 
+bench-zap-blas2: $(ZAP_BENCH_DIR)/bench_zap_blas2
+	./$(ZAP_BENCH_DIR)/bench_zap_blas2
+
 bench-zap-blas3: $(ZAP_BENCH_DIR)/bench_zap_blas3
 	./$(ZAP_BENCH_DIR)/bench_zap_blas3
 
@@ -75,6 +88,27 @@ bench-zap-decomp: $(ZAP_BENCH_DIR)/bench_zap_decomp
 
 bench-zap-solvers: $(ZAP_BENCH_DIR)/bench_zap_solvers
 	./$(ZAP_BENCH_DIR)/bench_zap_solvers
+
+bench-zap-matrix-ops: $(ZAP_BENCH_DIR)/bench_zap_matrix_ops
+	./$(ZAP_BENCH_DIR)/bench_zap_matrix_ops
+
+bench-zap-advanced: $(ZAP_BENCH_DIR)/bench_zap_advanced
+	./$(ZAP_BENCH_DIR)/bench_zap_advanced
+
+bench-zap-trsv: $(ZAP_BENCH_DIR)/bench_zap_trsv
+	./$(ZAP_BENCH_DIR)/bench_zap_trsv
+
+bench-zap-elementwise: $(ZAP_BENCH_DIR)/bench_zap_elementwise
+	./$(ZAP_BENCH_DIR)/bench_zap_elementwise
+
+bench-zap-stats: $(ZAP_BENCH_DIR)/bench_zap_stats
+	./$(ZAP_BENCH_DIR)/bench_zap_stats
+
+bench-zap-norms: $(ZAP_BENCH_DIR)/bench_zap_norms
+	./$(ZAP_BENCH_DIR)/bench_zap_norms
+
+bench-zap-misc: $(ZAP_BENCH_DIR)/bench_zap_misc
+	./$(ZAP_BENCH_DIR)/bench_zap_misc
 
 clean:
 	find examples tests -type f ! -name "*.c" ! -name "*.cpp" ! -name "*.h" -delete

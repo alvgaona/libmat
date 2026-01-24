@@ -3348,19 +3348,88 @@ MATDEF size_t mat_argmax(const Mat *a) {
   return max_idx;
 }
 
+#ifdef MAT_HAS_ARM_NEON
+MAT_INTERNAL_STATIC mat_elem_t mat_std_neon_(const Mat *a, mat_elem_t mean) {
+  size_t len = a->rows * a->cols;
+  mat_elem_t *pa = a->data;
+
+  MAT_NEON_TYPE vmean = MAT_NEON_DUP(mean);
+  MAT_NEON_TYPE vsum0 = MAT_NEON_DUP(0);
+  MAT_NEON_TYPE vsum1 = MAT_NEON_DUP(0);
+  MAT_NEON_TYPE vsum2 = MAT_NEON_DUP(0);
+  MAT_NEON_TYPE vsum3 = MAT_NEON_DUP(0);
+
+  size_t i = 0;
+  for (; i + MAT_NEON_WIDTH * 4 <= len; i += MAT_NEON_WIDTH * 4) {
+    MAT_NEON_TYPE vd0 = MAT_NEON_SUB(MAT_NEON_LOAD(&pa[i]), vmean);
+    MAT_NEON_TYPE vd1 = MAT_NEON_SUB(MAT_NEON_LOAD(&pa[i + MAT_NEON_WIDTH]), vmean);
+    MAT_NEON_TYPE vd2 = MAT_NEON_SUB(MAT_NEON_LOAD(&pa[i + MAT_NEON_WIDTH * 2]), vmean);
+    MAT_NEON_TYPE vd3 = MAT_NEON_SUB(MAT_NEON_LOAD(&pa[i + MAT_NEON_WIDTH * 3]), vmean);
+
+    vsum0 = MAT_NEON_FMA(vsum0, vd0, vd0);
+    vsum1 = MAT_NEON_FMA(vsum1, vd1, vd1);
+    vsum2 = MAT_NEON_FMA(vsum2, vd2, vd2);
+    vsum3 = MAT_NEON_FMA(vsum3, vd3, vd3);
+  }
+
+  vsum0 = MAT_NEON_ADD(vsum0, vsum1);
+  vsum2 = MAT_NEON_ADD(vsum2, vsum3);
+  vsum0 = MAT_NEON_ADD(vsum0, vsum2);
+  mat_elem_t sum_sq = MAT_NEON_ADDV(vsum0);
+
+  for (; i < len; i++) {
+    mat_elem_t diff = pa[i] - mean;
+    sum_sq += diff * diff;
+  }
+
+  return sum_sq;
+}
+#endif
+
+MAT_INTERNAL_STATIC mat_elem_t mat_std_scalar_(const Mat *a, mat_elem_t mean) {
+  size_t len = a->rows * a->cols;
+  mat_elem_t *pa = a->data;
+
+  mat_elem_t sum0 = 0, sum1 = 0, sum2 = 0, sum3 = 0;
+
+  size_t i = 0;
+  for (; i + 4 <= len; i += 4) {
+    mat_elem_t d0 = pa[i] - mean;
+    mat_elem_t d1 = pa[i + 1] - mean;
+    mat_elem_t d2 = pa[i + 2] - mean;
+    mat_elem_t d3 = pa[i + 3] - mean;
+    sum0 += d0 * d0;
+    sum1 += d1 * d1;
+    sum2 += d2 * d2;
+    sum3 += d3 * d3;
+  }
+
+  mat_elem_t sum_sq = sum0 + sum1 + sum2 + sum3;
+
+  for (; i < len; i++) {
+    mat_elem_t diff = pa[i] - mean;
+    sum_sq += diff * diff;
+  }
+
+  return sum_sq;
+}
+
+MAT_INTERNAL_STATIC mat_elem_t mat_std_dispatch_(const Mat *a, mat_elem_t mean) {
+#if defined(MAT_HAS_ARM_NEON)
+  return mat_std_neon_(a, mean);
+#elif defined(MAT_HAS_AVX2)
+  return mat_std_scalar_(a, mean);  // TODO: AVX2 implementation
+#else
+  return mat_std_scalar_(a, mean);
+#endif
+}
+
 MATDEF mat_elem_t mat_std(const Mat *a) {
   MAT_ASSERT_MAT(a);
 
   size_t n = a->rows * a->cols;
   mat_elem_t mean = mat_mean(a);
-
-  mat_elem_t *pa = a->data;
-  mat_elem_t sum_sq = 0;
-
-  for (size_t i = 0; i < n; i++) {
-    mat_elem_t diff = pa[i] - mean;
-    sum_sq += diff * diff;
-  }
+  mat_elem_t sum_sq = mat_std_dispatch_(a, mean);
 
 #ifdef MAT_DOUBLE_PRECISION
   return sqrt(sum_sq / (mat_elem_t)n);
