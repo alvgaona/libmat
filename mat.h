@@ -4546,6 +4546,7 @@ MATDEF int mat_lu(const Mat *A, Mat *L, Mat *U, Perm *p, Perm *q) {
 
   // Dispatch: select implementation based on available SIMD
   int swap_count;
+  mat_elem_t *data = M->data;
 #if defined(MAT_HAS_ARM_NEON)
   // Column-major LU decomposition (NEON optimized)
   swap_count = mat_lu_neon_(M, p, q);
@@ -4555,7 +4556,6 @@ MATDEF int mat_lu(const Mat *A, Mat *L, Mat *U, Perm *p, Perm *q) {
 #else
   // Scalar fallback - column-major LU decomposition
   swap_count = 0;
-  mat_elem_t *data = M->data;
   for (size_t k = 0; k < n - 1; k++) {
     // Find pivot
     size_t pivot_row = k, pivot_col = k;
@@ -4615,7 +4615,6 @@ MATDEF int mat_lu(const Mat *A, Mat *L, Mat *U, Perm *p, Perm *q) {
   mat_eye(L);
   memset(U->data, 0, n * n * sizeof(mat_elem_t));
 
-  mat_elem_t *data = M->data;
   for (size_t j = 0; j < n; j++) {
     mat_elem_t *Mcol = &data[j * n];
     mat_elem_t *Lcol = &L->data[j * n];
@@ -6078,8 +6077,8 @@ MATDEF int mat_chol(const Mat *A, Mat *L) {
   }
 
   // Column-major: use AXPY-based implementation (correct left-looking algorithm)
-  mat_elem_t *Ldata = L->data;
 #ifdef MAT_HAS_ARM_NEON
+  mat_elem_t *Ldata = L->data;
   if (n < MAT_CHOL_BLOCK_SIZE) {
     return mat_chol_unblocked_axpy_(Ldata, n, n);
   } else {
