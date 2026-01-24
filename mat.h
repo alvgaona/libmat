@@ -14,6 +14,30 @@
 #include <arm_neon.h>
 #endif
 
+// x86 AVX2 detection
+#if defined(__AVX2__)
+#define MAT_HAS_AVX2
+#include <immintrin.h>
+#endif
+
+// ============================================================================
+// SIMD Dispatch Architecture
+// ============================================================================
+// This library uses a section-based SIMD dispatch pattern:
+//
+// 1. SCALAR KERNELS: _scalar_ suffix functions (always compiled)
+// 2. NEON KERNELS:   _neon_ suffix functions (ARM NEON, guarded by #ifdef)
+// 3. AVX2 KERNELS:   _avx2_ suffix functions (x86 AVX2, guarded by #ifdef)
+// 4. DISPATCH LAYER: _dispatch_ suffix functions select best implementation
+// 5. PUBLIC API:     Clean functions call dispatchers (no #ifdefs)
+//
+// To add a new SIMD architecture:
+// 1. Add detection macro (e.g., MAT_HAS_SVE)
+// 2. Add abstraction macros (e.g., MAT_SVE_*)
+// 3. Implement _sve_ suffix functions
+// 4. Update _dispatch_ functions with new #elif branch
+// ============================================================================
+
 // OpenMP detection (auto-enabled when compiled with -fopenmp)
 #if defined(_OPENMP)
 #include <omp.h>
@@ -251,6 +275,16 @@ typedef float mat_elem_t;
   } while (0)
 #endif
 #endif // __ARM_NEON
+
+// ============================================================================
+// AVX2 SIMD macros (placeholder for future implementation)
+// ============================================================================
+#ifdef MAT_HAS_AVX2
+// AVX2 double precision (4 doubles per 256-bit register)
+// AVX2 single precision (8 floats per 256-bit register)
+// TODO: Add AVX2 abstraction macros similar to NEON
+// When implementing, use _mm256_* intrinsics from <immintrin.h>
+#endif // MAT_HAS_AVX2
 
 // Control visibility of internal implementations
 #ifdef MAT_EXPOSE_INTERNALS
@@ -1390,6 +1424,18 @@ MAT_INTERNAL_STATIC bool mat_equals_tol_scalar_(const Mat *a, const Mat *b,
   return true;
 }
 
+// Dispatch: select implementation based on available SIMD
+MAT_INTERNAL_STATIC bool mat_equals_tol_dispatch_(const Mat *a, const Mat *b,
+                                                   mat_elem_t epsilon) {
+#if defined(MAT_HAS_ARM_NEON)
+  return mat_equals_tol_neon_(a, b, epsilon);
+#elif defined(MAT_HAS_AVX2)
+  return mat_equals_tol_avx2_(a, b, epsilon);  // Future
+#else
+  return mat_equals_tol_scalar_(a, b, epsilon);
+#endif
+}
+
 MATDEF bool mat_equals_tol(const Mat *a, const Mat *b, mat_elem_t epsilon) {
   MAT_ASSERT_MAT(a);
   MAT_ASSERT_MAT(b);
@@ -1397,11 +1443,7 @@ MATDEF bool mat_equals_tol(const Mat *a, const Mat *b, mat_elem_t epsilon) {
   if (a->rows != b->rows || a->cols != b->cols)
     return false;
 
-#ifdef MAT_HAS_ARM_NEON
-  return mat_equals_tol_neon_(a, b, epsilon);
-#else
-  return mat_equals_tol_scalar_(a, b, epsilon);
-#endif
+  return mat_equals_tol_dispatch_(a, b, epsilon);
 }
 
 /* Element-wise Unary */
@@ -1824,6 +1866,18 @@ MAT_INTERNAL_STATIC void mat_outer_scalar_(Mat *out, const Vec *v1,
   }
 }
 
+// Dispatch: select implementation based on available SIMD
+MAT_INTERNAL_STATIC void mat_outer_dispatch_(Mat *out, const Vec *v1,
+                                              const Vec *v2) {
+#if defined(MAT_HAS_ARM_NEON)
+  mat_outer_neon_(out, v1, v2);
+#elif defined(MAT_HAS_AVX2)
+  mat_outer_avx2_(out, v1, v2);  // Future
+#else
+  mat_outer_scalar_(out, v1, v2);
+#endif
+}
+
 MATDEF void mat_outer(Mat *out, const Vec *v1, const Vec *v2) {
   MAT_ASSERT_MAT(out);
   MAT_ASSERT_MAT(v1);
@@ -1833,11 +1887,7 @@ MATDEF void mat_outer(Mat *out, const Vec *v1, const Vec *v2) {
   size_t n = v2->rows * v2->cols;
   MAT_ASSERT(out->rows == m && out->cols == n);
 
-#ifdef MAT_HAS_ARM_NEON
-  mat_outer_neon_(out, v1, v2);
-#else
-  mat_outer_scalar_(out, v1, v2);
-#endif
+  mat_outer_dispatch_(out, v1, v2);
 }
 
 MATDEF mat_elem_t mat_bilinear(const Vec *x, const Mat *A, const Vec *y) {
@@ -1999,6 +2049,19 @@ MAT_INTERNAL_STATIC void mat_gemv_scalar_(Vec *y, mat_elem_t alpha,
   }
 }
 
+// Dispatch: select implementation based on available SIMD
+MAT_INTERNAL_STATIC void mat_gemv_dispatch_(Vec *y, mat_elem_t alpha,
+                                             const Mat *A, const Vec *x,
+                                             mat_elem_t beta) {
+#if defined(MAT_HAS_ARM_NEON)
+  mat_gemv_neon_(y, alpha, A, x, beta);
+#elif defined(MAT_HAS_AVX2)
+  mat_gemv_avx2_(y, alpha, A, x, beta);  // Future
+#else
+  mat_gemv_scalar_(y, alpha, A, x, beta);
+#endif
+}
+
 MATDEF void mat_gemv(Vec *y, mat_elem_t alpha, const Mat *A, const Vec *x,
                      mat_elem_t beta) {
   MAT_ASSERT_MAT(y);
@@ -2007,11 +2070,7 @@ MATDEF void mat_gemv(Vec *y, mat_elem_t alpha, const Mat *A, const Vec *x,
   MAT_ASSERT(A->rows == y->rows);
   MAT_ASSERT(A->cols == x->rows);
 
-#ifdef MAT_HAS_ARM_NEON
-  mat_gemv_neon_(y, alpha, A, x, beta);
-#else
-  mat_gemv_scalar_(y, alpha, A, x, beta);
-#endif
+  mat_gemv_dispatch_(y, alpha, A, x, beta);
 }
 
 // y = alpha * A^T * x + beta * y (GEMV transposed)
@@ -2105,6 +2164,19 @@ MAT_INTERNAL_STATIC void mat_gemv_t_scalar_(Vec *y, mat_elem_t alpha,
   }
 }
 
+// Dispatch: select implementation based on available SIMD
+MAT_INTERNAL_STATIC void mat_gemv_t_dispatch_(Vec *y, mat_elem_t alpha,
+                                               const Mat *A, const Vec *x,
+                                               mat_elem_t beta) {
+#if defined(MAT_HAS_ARM_NEON)
+  mat_gemv_t_neon_(y, alpha, A, x, beta);
+#elif defined(MAT_HAS_AVX2)
+  mat_gemv_t_avx2_(y, alpha, A, x, beta);  // Future
+#else
+  mat_gemv_t_scalar_(y, alpha, A, x, beta);
+#endif
+}
+
 MATDEF void mat_gemv_t(Vec *y, mat_elem_t alpha, const Mat *A, const Vec *x,
                        mat_elem_t beta) {
   MAT_ASSERT_MAT(y);
@@ -2113,11 +2185,7 @@ MATDEF void mat_gemv_t(Vec *y, mat_elem_t alpha, const Mat *A, const Vec *x,
   MAT_ASSERT(A->cols == y->rows); // A^T has n rows
   MAT_ASSERT(A->rows == x->rows); // A^T has m cols
 
-#ifdef MAT_HAS_ARM_NEON
-  mat_gemv_t_neon_(y, alpha, A, x, beta);
-#else
-  mat_gemv_t_scalar_(y, alpha, A, x, beta);
-#endif
+  mat_gemv_t_dispatch_(y, alpha, A, x, beta);
 }
 
 // A += alpha * x * y^T (BLAS Level-2: ger - rank-1 update)
@@ -2657,6 +2725,19 @@ MAT_INTERNAL_STATIC void mat_gemm_scalar_(Mat *C, mat_elem_t alpha,
   }
 }
 
+// Dispatch: select implementation based on available SIMD
+MAT_INTERNAL_STATIC void mat_gemm_dispatch_(Mat *C, mat_elem_t alpha,
+                                             const Mat *A, const Mat *B,
+                                             mat_elem_t beta) {
+#if defined(MAT_HAS_ARM_NEON)
+  mat_gemm_neon_(C, alpha, A, B, beta);
+#elif defined(MAT_HAS_AVX2)
+  mat_gemm_avx2_(C, alpha, A, B, beta);  // Future
+#else
+  mat_gemm_scalar_(C, alpha, A, B, beta);
+#endif
+}
+
 MATDEF void mat_gemm(Mat *C, mat_elem_t alpha, const Mat *A, const Mat *B,
                      mat_elem_t beta) {
   MAT_ASSERT_MAT(C);
@@ -2665,11 +2746,7 @@ MATDEF void mat_gemm(Mat *C, mat_elem_t alpha, const Mat *A, const Mat *B,
   MAT_ASSERT(A->cols == B->rows);
   MAT_ASSERT(C->rows == A->rows && C->cols == B->cols);
 
-#ifdef MAT_HAS_ARM_NEON
-  mat_gemm_neon_(C, alpha, A, B, beta);
-#else
-  mat_gemm_scalar_(C, alpha, A, B, beta);
-#endif
+  mat_gemm_dispatch_(C, alpha, A, B, beta);
 }
 
 /* Structure Operations */
@@ -2789,16 +2866,23 @@ MAT_INTERNAL_STATIC void mat_t_scalar_(Mat *out, const Mat *m) {
   }
 }
 
+// Dispatch: select implementation based on available SIMD
+MAT_INTERNAL_STATIC void mat_t_dispatch_(Mat *out, const Mat *m) {
+#if defined(MAT_HAS_ARM_NEON)
+  mat_t_neon_(out, m);
+#elif defined(MAT_HAS_AVX2)
+  mat_t_avx2_(out, m);  // Future
+#else
+  mat_t_scalar_(out, m);
+#endif
+}
+
 MATDEF void mat_t(Mat *out, const Mat *m) {
   MAT_ASSERT_MAT(out);
   MAT_ASSERT_MAT(m);
   MAT_ASSERT(out->rows == m->cols && out->cols == m->rows);
 
-#ifdef MAT_HAS_ARM_NEON
-  mat_t_neon_(out, m);
-#else
-  mat_t_scalar_(out, m);
-#endif
+  mat_t_dispatch_(out, m);
 }
 
 MATDEF Mat *mat_rt(const Mat *m) {
@@ -3010,14 +3094,21 @@ MAT_INTERNAL_STATIC mat_elem_t mat_sum_scalar_(const Mat *a) {
   return sum;
 }
 
-MATDEF mat_elem_t mat_sum(const Mat *a) {
-  MAT_ASSERT_MAT(a);
-
-#ifdef MAT_HAS_ARM_NEON
+// Dispatch: select implementation based on available SIMD
+MAT_INTERNAL_STATIC mat_elem_t mat_sum_dispatch_(const Mat *a) {
+#if defined(MAT_HAS_ARM_NEON)
   return mat_sum_neon_(a);
+#elif defined(MAT_HAS_AVX2)
+  return mat_sum_avx2_(a);  // Future
 #else
   return mat_sum_scalar_(a);
 #endif
+}
+
+MATDEF mat_elem_t mat_sum(const Mat *a) {
+  MAT_ASSERT_MAT(a);
+
+  return mat_sum_dispatch_(a);
 }
 
 MATDEF mat_elem_t mat_mean(const Mat *a) {
@@ -3090,14 +3181,21 @@ MAT_INTERNAL_STATIC mat_elem_t mat_min_scalar_(const Mat *a) {
   return min_val;
 }
 
-MATDEF mat_elem_t mat_min(const Mat *a) {
-  MAT_ASSERT_MAT(a);
-
-#ifdef MAT_HAS_ARM_NEON
+// Dispatch: select implementation based on available SIMD
+MAT_INTERNAL_STATIC mat_elem_t mat_min_dispatch_(const Mat *a) {
+#if defined(MAT_HAS_ARM_NEON)
   return mat_min_neon_(a);
+#elif defined(MAT_HAS_AVX2)
+  return mat_min_avx2_(a);  // Future
 #else
   return mat_min_scalar_(a);
 #endif
+}
+
+MATDEF mat_elem_t mat_min(const Mat *a) {
+  MAT_ASSERT_MAT(a);
+
+  return mat_min_dispatch_(a);
 }
 
 #ifdef MAT_HAS_ARM_NEON
@@ -3151,14 +3249,21 @@ MAT_INTERNAL_STATIC mat_elem_t mat_max_scalar_(const Mat *a) {
   return max_val;
 }
 
-MATDEF mat_elem_t mat_max(const Mat *a) {
-  MAT_ASSERT_MAT(a);
-
-#ifdef MAT_HAS_ARM_NEON
+// Dispatch: select implementation based on available SIMD
+MAT_INTERNAL_STATIC mat_elem_t mat_max_dispatch_(const Mat *a) {
+#if defined(MAT_HAS_ARM_NEON)
   return mat_max_neon_(a);
+#elif defined(MAT_HAS_AVX2)
+  return mat_max_avx2_(a);  // Future
 #else
   return mat_max_scalar_(a);
 #endif
+}
+
+MATDEF mat_elem_t mat_max(const Mat *a) {
+  MAT_ASSERT_MAT(a);
+
+  return mat_max_dispatch_(a);
 }
 
 MATDEF void mat_sum_axis(Vec *out, const Mat *a, int axis) {
@@ -3318,14 +3423,21 @@ MAT_INTERNAL_STATIC mat_elem_t mat_norm_fro_scalar_(const Mat *a) {
   return MAT_SQRT(mat_dot_raw_(a->data, a->data, len));
 }
 
-MATDEF mat_elem_t mat_norm_fro(const Mat *a) {
-  MAT_ASSERT_MAT(a);
-
-#ifdef MAT_HAS_ARM_NEON
+// Dispatch: select implementation based on available SIMD
+MAT_INTERNAL_STATIC mat_elem_t mat_norm_fro_dispatch_(const Mat *a) {
+#if defined(MAT_HAS_ARM_NEON)
   return mat_norm_fro_neon_(a);
+#elif defined(MAT_HAS_AVX2)
+  return mat_norm_fro_avx2_(a);  // Future
 #else
   return mat_norm_fro_scalar_(a);
 #endif
+}
+
+MATDEF mat_elem_t mat_norm_fro(const Mat *a) {
+  MAT_ASSERT_MAT(a);
+
+  return mat_norm_fro_dispatch_(a);
 }
 
 #ifdef MAT_HAS_ARM_NEON
@@ -3369,14 +3481,21 @@ MAT_INTERNAL_STATIC mat_elem_t mat_norm_fro_fast_neon_(const Mat *a) {
 }
 #endif
 
-MATDEF mat_elem_t mat_norm_fro_fast(const Mat *a) {
-  MAT_ASSERT_MAT(a);
-
-#ifdef MAT_HAS_ARM_NEON
+// Dispatch: select implementation based on available SIMD
+MAT_INTERNAL_STATIC mat_elem_t mat_norm_fro_fast_dispatch_(const Mat *a) {
+#if defined(MAT_HAS_ARM_NEON)
   return mat_norm_fro_fast_neon_(a);
+#elif defined(MAT_HAS_AVX2)
+  return mat_norm_fro_fast_avx2_(a);  // Future
 #else
   return mat_norm_fro_scalar_(a);
 #endif
+}
+
+MATDEF mat_elem_t mat_norm_fro_fast(const Mat *a) {
+  MAT_ASSERT_MAT(a);
+
+  return mat_norm_fro_fast_dispatch_(a);
 }
 
 /* Matrix Properties */
@@ -3467,14 +3586,21 @@ MAT_INTERNAL_STATIC mat_elem_t mat_nnz_scalar_(const Mat *a) {
   return count;
 }
 
-MATDEF mat_elem_t mat_nnz(const Mat *a) {
-  MAT_ASSERT_MAT(a);
-
-#ifdef MAT_HAS_ARM_NEON
+// Dispatch: select implementation based on available SIMD
+MAT_INTERNAL_STATIC mat_elem_t mat_nnz_dispatch_(const Mat *a) {
+#if defined(MAT_HAS_ARM_NEON)
   return mat_nnz_neon_(a);
+#elif defined(MAT_HAS_AVX2)
+  return mat_nnz_avx2_(a);  // Future
 #else
   return mat_nnz_scalar_(a);
 #endif
+}
+
+MATDEF mat_elem_t mat_nnz(const Mat *a) {
+  MAT_ASSERT_MAT(a);
+
+  return mat_nnz_dispatch_(a);
 }
 
 // ============================================================================
@@ -4339,12 +4465,17 @@ MATDEF int mat_lu(const Mat *A, Mat *L, Mat *U, Perm *p, Perm *q) {
   mat_perm_identity(p);
   mat_perm_identity(q);
 
-#ifdef MAT_HAS_ARM_NEON
-  // Column-major LU decomposition
-  int swap_count = mat_lu_neon_(M, p, q);
+  // Dispatch: select implementation based on available SIMD
+  int swap_count;
+#if defined(MAT_HAS_ARM_NEON)
+  // Column-major LU decomposition (NEON optimized)
+  swap_count = mat_lu_neon_(M, p, q);
+#elif defined(MAT_HAS_AVX2)
+  // Column-major LU decomposition (AVX2 - future)
+  swap_count = mat_lu_avx2_(M, p, q);
 #else
-  // Scalar fallback - use simpler algorithm
-  int swap_count = 0;
+  // Scalar fallback - column-major LU decomposition
+  swap_count = 0;
   mat_elem_t *data = M->data;
   for (size_t k = 0; k < n - 1; k++) {
     // Find pivot
@@ -4470,6 +4601,18 @@ MAT_INTERNAL_STATIC void mat_solve_tril_neon_(Vec *x, const Mat *L,
 }
 #endif
 
+// Dispatch: select implementation based on available SIMD
+MAT_INTERNAL_STATIC void mat_solve_tril_dispatch_(Vec *x, const Mat *L,
+                                                   const Vec *b) {
+#if defined(MAT_HAS_ARM_NEON)
+  mat_solve_tril_neon_(x, L, b);
+#elif defined(MAT_HAS_AVX2)
+  mat_solve_tril_avx2_(x, L, b);  // Future
+#else
+  mat_solve_tril_scalar_(x, L, b);
+#endif
+}
+
 MATDEF void mat_solve_tril(Vec *x, const Mat *L, const Vec *b) {
   MAT_ASSERT_MAT(L);
   MAT_ASSERT_MAT(x);
@@ -4477,11 +4620,7 @@ MATDEF void mat_solve_tril(Vec *x, const Mat *L, const Vec *b) {
   MAT_ASSERT_SQUARE(L);
   MAT_ASSERT(b->rows == L->rows);
   MAT_ASSERT(x->rows == L->rows);
-#ifdef MAT_HAS_ARM_NEON
-  mat_solve_tril_neon_(x, L, b);
-#else
-  mat_solve_tril_scalar_(x, L, b);
-#endif
+  mat_solve_tril_dispatch_(x, L, b);
 }
 
 // --- mat_solve_tril_unit: Solve Lx = b, L unit lower triangular (1s on diag) -
@@ -4527,6 +4666,18 @@ MAT_INTERNAL_STATIC void mat_solve_tril_unit_neon_(Vec *x, const Mat *L,
 }
 #endif
 
+// Dispatch: select implementation based on available SIMD
+MAT_INTERNAL_STATIC void mat_solve_tril_unit_dispatch_(Vec *x, const Mat *L,
+                                                        const Vec *b) {
+#if defined(MAT_HAS_ARM_NEON)
+  mat_solve_tril_unit_neon_(x, L, b);
+#elif defined(MAT_HAS_AVX2)
+  mat_solve_tril_unit_avx2_(x, L, b);  // Future
+#else
+  mat_solve_tril_unit_scalar_(x, L, b);
+#endif
+}
+
 MATDEF void mat_solve_tril_unit(Vec *x, const Mat *L, const Vec *b) {
   MAT_ASSERT_MAT(L);
   MAT_ASSERT_MAT(x);
@@ -4534,11 +4685,7 @@ MATDEF void mat_solve_tril_unit(Vec *x, const Mat *L, const Vec *b) {
   MAT_ASSERT_SQUARE(L);
   MAT_ASSERT(b->rows == L->rows);
   MAT_ASSERT(x->rows == L->rows);
-#ifdef MAT_HAS_ARM_NEON
-  mat_solve_tril_unit_neon_(x, L, b);
-#else
-  mat_solve_tril_unit_scalar_(x, L, b);
-#endif
+  mat_solve_tril_unit_dispatch_(x, L, b);
 }
 
 // --- mat_solve_triu: Solve Ux = b, U upper triangular ---
@@ -4590,6 +4737,18 @@ MAT_INTERNAL_STATIC void mat_solve_triu_scalar_(Vec *x, const Mat *U,
   }
 }
 
+// Dispatch: select implementation based on available SIMD
+MAT_INTERNAL_STATIC void mat_solve_triu_dispatch_(Vec *x, const Mat *U,
+                                                   const Vec *b) {
+#if defined(MAT_HAS_ARM_NEON)
+  mat_solve_triu_neon_(x, U, b);
+#elif defined(MAT_HAS_AVX2)
+  mat_solve_triu_avx2_(x, U, b);  // Future
+#else
+  mat_solve_triu_scalar_(x, U, b);
+#endif
+}
+
 MATDEF void mat_solve_triu(Vec *x, const Mat *U, const Vec *b) {
   MAT_ASSERT_MAT(U);
   MAT_ASSERT_MAT(x);
@@ -4597,11 +4756,7 @@ MATDEF void mat_solve_triu(Vec *x, const Mat *U, const Vec *b) {
   MAT_ASSERT_SQUARE(U);
   MAT_ASSERT(b->rows == U->rows);
   MAT_ASSERT(x->rows == U->rows);
-#ifdef MAT_HAS_ARM_NEON
-  mat_solve_triu_neon_(x, U, b);
-#else
-  mat_solve_triu_scalar_(x, U, b);
-#endif
+  mat_solve_triu_dispatch_(x, U, b);
 }
 
 // --- mat_solve_trilt: Solve L^T x = b, L lower triangular ---
@@ -4648,6 +4803,18 @@ MAT_INTERNAL_STATIC void mat_solve_trilt_scalar_(Vec *x, const Mat *L,
   }
 }
 
+// Dispatch: select implementation based on available SIMD
+MAT_INTERNAL_STATIC void mat_solve_trilt_dispatch_(Vec *x, const Mat *L,
+                                                    const Vec *b) {
+#if defined(MAT_HAS_ARM_NEON)
+  mat_solve_trilt_neon_(x, L, b);
+#elif defined(MAT_HAS_AVX2)
+  mat_solve_trilt_avx2_(x, L, b);  // Future
+#else
+  mat_solve_trilt_scalar_(x, L, b);
+#endif
+}
+
 MATDEF void mat_solve_trilt(Vec *x, const Mat *L, const Vec *b) {
   MAT_ASSERT_MAT(L);
   MAT_ASSERT_MAT(x);
@@ -4658,11 +4825,7 @@ MATDEF void mat_solve_trilt(Vec *x, const Mat *L, const Vec *b) {
 
   // L^T solve uses dot product approach: contiguous access to L columns
   // (AXPY approach would need strided access to L rows, which is slower)
-#ifdef MAT_HAS_ARM_NEON
-  mat_solve_trilt_neon_(x, L, b);
-#else
-  mat_solve_trilt_scalar_(x, L, b);
-#endif
+  mat_solve_trilt_dispatch_(x, L, b);
 }
 
 // ============================================================================
@@ -5425,12 +5588,15 @@ MAT_INTERNAL_STATIC void mat_transpose_block_neon_(mat_elem_t *At, size_t ldat,
 }
 #endif
 
+// Dispatch: select implementation based on available SIMD
 // Transpose: At[i,p] = A[p,i]
 MAT_INTERNAL_STATIC void mat_transpose_block_(mat_elem_t *At, size_t ldat,
                                               const mat_elem_t *A, size_t lda,
                                               size_t rows, size_t cols) {
-#ifdef MAT_HAS_ARM_NEON
+#if defined(MAT_HAS_ARM_NEON)
   mat_transpose_block_neon_(At, ldat, A, lda, rows, cols);
+#elif defined(MAT_HAS_AVX2)
+  mat_transpose_block_avx2_(At, ldat, A, lda, rows, cols);  // Future
 #else
   mat_transpose_block_scalar_(At, ldat, A, lda, rows, cols);
 #endif
@@ -5537,6 +5703,19 @@ MAT_INTERNAL_STATIC void mat_syrk_generic_(Mat *C, const Mat *A,
   }
 }
 
+// Dispatch: select implementation based on available SIMD
+MAT_INTERNAL_STATIC void mat_syrk_dispatch_(Mat *C, const Mat *A,
+                                             mat_elem_t alpha, mat_elem_t beta,
+                                             char uplo) {
+#if defined(MAT_HAS_ARM_NEON)
+  mat_syrk_neon_(C, A, alpha, beta, uplo);
+#elif defined(MAT_HAS_AVX2)
+  mat_syrk_avx2_(C, A, alpha, beta, uplo);  // Future
+#else
+  mat_syrk_generic_(C, A, alpha, beta, uplo);
+#endif
+}
+
 MATDEF void mat_syrk(Mat *C, const Mat *A, mat_elem_t alpha, mat_elem_t beta,
                      char uplo) {
   MAT_ASSERT_MAT(C);
@@ -5544,11 +5723,7 @@ MATDEF void mat_syrk(Mat *C, const Mat *A, mat_elem_t alpha, mat_elem_t beta,
   MAT_ASSERT(C->rows == C->cols);
   MAT_ASSERT(C->rows == A->rows);
 
-#ifdef MAT_HAS_ARM_NEON
-  mat_syrk_neon_(C, A, alpha, beta, uplo);
-#else
-  mat_syrk_generic_(C, A, alpha, beta, uplo);
-#endif
+  mat_syrk_dispatch_(C, A, alpha, beta, uplo);
 }
 
 // Column-major SYRK_T: C = alpha * A^T * A + beta * C
@@ -5598,6 +5773,19 @@ MAT_INTERNAL_STATIC void mat_syrk_t_generic_(Mat *C, const Mat *A,
   }
 }
 
+// Dispatch: select implementation based on available SIMD
+MAT_INTERNAL_STATIC void mat_syrk_t_dispatch_(Mat *C, const Mat *A,
+                                               mat_elem_t alpha, mat_elem_t beta,
+                                               char uplo) {
+#if defined(MAT_HAS_ARM_NEON)
+  mat_syrk_t_neon_(C, A, alpha, beta, uplo);
+#elif defined(MAT_HAS_AVX2)
+  mat_syrk_t_avx2_(C, A, alpha, beta, uplo);  // Future
+#else
+  mat_syrk_t_generic_(C, A, alpha, beta, uplo);
+#endif
+}
+
 MATDEF void mat_syrk_t(Mat *C, const Mat *A, mat_elem_t alpha, mat_elem_t beta,
                        char uplo) {
   MAT_ASSERT_MAT(C);
@@ -5605,11 +5793,7 @@ MATDEF void mat_syrk_t(Mat *C, const Mat *A, mat_elem_t alpha, mat_elem_t beta,
   MAT_ASSERT(C->rows == C->cols);
   MAT_ASSERT(C->rows == A->cols);
 
-#ifdef MAT_HAS_ARM_NEON
-  mat_syrk_t_neon_(C, A, alpha, beta, uplo);
-#else
-  mat_syrk_t_generic_(C, A, alpha, beta, uplo);
-#endif
+  mat_syrk_t_dispatch_(C, A, alpha, beta, uplo);
 }
 
 // Column-major unblocked Cholesky using dot products for better cache locality
