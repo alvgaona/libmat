@@ -102,10 +102,10 @@ int main() {
   srand(42);
   bench_init();
 
-  printf("=== INVERSE BENCHMARK: libmat vs LAPACK [%s] ===\n", PRECISION_NAME);
+  bench_print_summary("libmat vs LAPACK: INV");
+  printf("Precision: %s\n", PRECISION_NAME);
   printf("A^-1 via LU factorization\n");
-  printf("Rounds: %d\n", BENCH_ROUNDS);
-  printf("OpenBLAS threads: %d\n", openblas_get_num_threads());
+  printf("Rounds: %d, OpenBLAS threads: %d\n", BENCH_ROUNDS, openblas_get_num_threads());
 
   bench_inv(64, 500);
   bench_inv(128, 200);

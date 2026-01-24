@@ -67,7 +67,8 @@ int main() {
   srand(42);
   bench_init();
 
-  printf("=== AXPY BENCHMARK: libmat vs OpenBLAS [%s] ===\n", PRECISION_NAME);
+  bench_print_summary("libmat vs OpenBLAS: AXPY");
+  printf("Precision: %s\n", PRECISION_NAME);
   printf("y += alpha * x\n\n");
 
   bench_speed(100);

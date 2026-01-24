@@ -20,6 +20,16 @@
 #include <immintrin.h>
 #endif
 
+// Architecture indicator macro - shows which SIMD backend is active
+// Usage: printf("libmat using: %s\n", MAT_ARCH);
+#if defined(MAT_HAS_ARM_NEON)
+#define MAT_ARCH "NEON"
+#elif defined(MAT_HAS_AVX2)
+#define MAT_ARCH "AVX2"
+#else
+#define MAT_ARCH "SCALAR"
+#endif
+
 // ============================================================================
 // SIMD Dispatch Architecture
 // ============================================================================

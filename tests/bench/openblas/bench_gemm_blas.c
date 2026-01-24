@@ -85,10 +85,10 @@ int main() {
   srand(42);
   bench_init();
 
-  printf("=== GEMM BENCHMARK: libmat vs OpenBLAS [%s] ===\n", PRECISION_NAME);
+  bench_print_summary("libmat vs OpenBLAS: GEMM");
+  printf("Precision: %s\n", PRECISION_NAME);
   printf("C = alpha * A * B + beta * C\n");
-  printf("Rounds: %d\n", BENCH_ROUNDS);
-  printf("OpenBLAS threads: %d\n", openblas_get_num_threads());
+  printf("Rounds: %d, OpenBLAS threads: %d\n\n", BENCH_ROUNDS, openblas_get_num_threads());
 
   bench_speed(64, 64, 64, 1000);
   bench_speed(128, 128, 128, 500);

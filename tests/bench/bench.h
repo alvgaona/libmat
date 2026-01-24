@@ -29,6 +29,20 @@
 #include <stdint.h>
 #include <stddef.h>
 
+// Architecture detection (mirrors mat.h for standalone use)
+// If mat.h is included first, these will already be defined
+#ifndef MAT_ARCH
+  #if defined(__ARM_NEON) || defined(__ARM_NEON__) || defined(_M_ARM64)
+    #define MAT_HAS_ARM_NEON
+    #define MAT_ARCH "NEON"
+  #elif defined(__AVX2__)
+    #define MAT_HAS_AVX2
+    #define MAT_ARCH "AVX2"
+  #else
+    #define MAT_ARCH "SCALAR"
+  #endif
+#endif
+
 // ============ Configuration ============
 
 #ifndef BENCH_ITERATIONS
@@ -51,6 +65,18 @@ typedef struct {
   double std;
 } BenchStats;
 
+// ============ Architecture Registry ============
+
+enum {
+  BENCH_ARCH_SCALAR = 0,
+  BENCH_ARCH_NEON   = 1,
+  BENCH_ARCH_AVX2   = 2,
+  BENCH_ARCH_MAX    = 3
+};
+
+extern const char *bench_arch_names[BENCH_ARCH_MAX];
+extern const int bench_arch_available[BENCH_ARCH_MAX];
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -65,6 +91,22 @@ void        bench_fill_random_d(double *data, size_t n);
 // Run benchmark: returns best time in ns
 typedef void (*bench_void_fn)(void);
 double      bench_run(bench_void_fn fn, int iters);
+
+// Count of available architectures
+int bench_arch_count(void);
+
+// Print benchmark header with MAT_ARCH info
+void bench_print_summary(const char *title);
+
+// Print dynamic table header based on available archs
+void bench_print_header(const char *op_name);
+
+// Print row with times array and speedup
+void bench_print_row(const char *size, const double times[BENCH_ARCH_MAX]);
+
+// Print simple comparison row (libmat vs reference)
+void bench_print_cmp(const char *size, double libmat_ns, double ref_ns,
+                     const char *ref_name);
 
 #ifdef __cplusplus
 }
@@ -138,6 +180,73 @@ double bench_run(bench_void_fn fn, int iters) {
     if (t < best) best = t;
   }
   return best;
+}
+
+// ============ Architecture Registry Implementation ============
+
+const char *bench_arch_names[BENCH_ARCH_MAX] = {"Scalar", "NEON", "AVX2"};
+
+const int bench_arch_available[BENCH_ARCH_MAX] = {
+  1,
+#ifdef MAT_HAS_ARM_NEON
+  1,
+#else
+  0,
+#endif
+#ifdef MAT_HAS_AVX2
+  1,
+#else
+  0,
+#endif
+};
+
+int bench_arch_count(void) {
+  int count = 0;
+  for (int i = 0; i < BENCH_ARCH_MAX; i++)
+    if (bench_arch_available[i]) count++;
+  return count;
+}
+
+void bench_print_summary(const char *title) {
+  printf("# %s\n", title);
+  printf("Active backend: %s\n", MAT_ARCH);
+  printf("Available: ");
+  for (int i = 0; i < BENCH_ARCH_MAX; i++)
+    if (bench_arch_available[i]) printf("%s ", bench_arch_names[i]);
+  printf("\n\n");
+}
+
+void bench_print_header(const char *op_name) {
+  printf("## %s\n\n| Size |", op_name);
+  for (int i = 0; i < BENCH_ARCH_MAX; i++)
+    if (bench_arch_available[i]) printf(" %s |", bench_arch_names[i]);
+  printf(" Speedup |\n|------|");
+  for (int i = 0; i < BENCH_ARCH_MAX; i++)
+    if (bench_arch_available[i]) printf("--------|");
+  printf("---------|\n");
+}
+
+void bench_print_row(const char *size, const double times[BENCH_ARCH_MAX]) {
+  printf("| %s |", size);
+  double baseline = times[BENCH_ARCH_SCALAR];
+  double fastest = baseline;
+  for (int i = 0; i < BENCH_ARCH_MAX; i++) {
+    if (bench_arch_available[i]) {
+      printf(" %.0f ns |", times[i]);
+      if (i > 0 && times[i] > 0 && times[i] < fastest)
+        fastest = times[i];
+    }
+  }
+  printf(" %.2fx |\n", baseline / fastest);
+}
+
+void bench_print_cmp(const char *size, double libmat_ns, double ref_ns,
+                     const char *ref_name) {
+  double ratio = ref_ns / libmat_ns;
+  printf("| %s | %.0f ns | %.0f ns | %.2fx %s |\n",
+         size, libmat_ns, ref_ns, ratio,
+         ratio > 1.0 ? "faster" : "slower");
+  (void)ref_name;
 }
 
 #endif // BENCH_IMPLEMENTATION

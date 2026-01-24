@@ -69,7 +69,8 @@ int main() {
   srand(42);
   bench_init();
 
-  printf("=== GER BENCHMARK: libmat vs OpenBLAS [%s] ===\n", PRECISION_NAME);
+  bench_print_summary("libmat vs OpenBLAS: GER");
+  printf("Precision: %s\n", PRECISION_NAME);
   printf("A += alpha * x * y^T\n\n");
 
   bench_speed(64, 64);
