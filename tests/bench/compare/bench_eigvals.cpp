@@ -1,15 +1,3 @@
-/*
- * bench_eigvals.cpp - Compare eigenvalues: libmat vs Eigen vs OpenBLAS/LAPACK
- *
- * Three separate benchmarks:
- * 1. Symmetric eigenvalues only: mat_eigvals_sym vs Eigen SelfAdjoint vs SYEV
- * 2. Non-symmetric eigenvalues: mat_eigvals vs Eigen general vs GEEV
- * 3. Symmetric eigen (vals+vecs): mat_eigen_sym vs Eigen SelfAdjoint vs SYEV
- *
- * Build:
- *   make bench-compare-eigvals
- */
-
 #include <cstdlib>
 #include <cstring>
 
@@ -46,9 +34,7 @@ using Scalar = float;
 #define LAPACK_GEEV LAPACKE_sgeev
 #endif
 
-/* ========================================================================== */
-/* Symmetric eigenvalue benchmarks                                            */
-/* ========================================================================== */
+/* Symmetric Eigenvalues benchmarks */
 
 typedef struct {
     Mat* A;           // Original symmetric matrix (preserved)
@@ -115,9 +101,7 @@ void bench_openblas_sym(zap_bencher_t* b, void* param) {
     });
 }
 
-/* ========================================================================== */
-/* Non-symmetric eigenvalue benchmarks                                        */
-/* ========================================================================== */
+/* Non-symmetric eigenvalue benchmarks */
 
 typedef struct {
     Mat* A;           // Original matrix (preserved)

@@ -89,9 +89,9 @@ typedef enum zap_throughput_type {
 
 // Statistics results
 typedef struct zap_stats {
-    double mean;
+    double mean;             // Average
     double median;           // Same as p50
-    double std_dev;
+    double std_dev;          // Standard deviation
     double mad;              // Median Absolute Deviation
     double ci_lower;         // Confidence interval lower bound
     double ci_upper;         // Confidence interval upper bound
@@ -103,7 +103,7 @@ typedef struct zap_stats {
     double p99;              // 99th percentile
     size_t outliers_low;     // Number of low outliers
     size_t outliers_high;    // Number of high outliers
-    size_t sample_count;
+    size_t sample_count;     // Number of samples
     size_t iterations;       // Iterations per sample
     double* samples;         // Pointer to samples for histogram
     // Throughput info
@@ -294,9 +294,9 @@ typedef struct zap_compare_ctx {
 typedef struct zap_config {
     const char*          baseline_path;
     const char*          filter;         // Benchmark name filter pattern
-    double               fail_threshold; /* Exit non-zero if regression > this % */
-    bool                 save_baseline;
-    bool                 compare;
+    double               fail_threshold; // Exit non-zero if regression > this %
+    bool                 save_baseline;  // Save a file within .zap to compare with future benches
+    bool                 compare;        // Whether to compare with a baseline or not
     bool                 explicit_path;  // User specified a custom path
     bool                 json_output;    // Output results as JSON
     bool                 has_regression; /* Track if any benchmark regressed beyond threshold */
@@ -1641,7 +1641,7 @@ static void zap__print_dry_run(const char* group_name, const char* bench_name) {
     }
 }
 
-static void zap__run_and_report(zap_t* c, const char* name) {
+static void zap__run_and_report(zap_t* c, const char* group_name, const char* name) {
     // Warn if time limit was reached before collecting all samples
     if (!zap_g_config.json_output && c->sample_count < c->config.sample_count) {
         printf("%sWarning: time limit reached, collected %zu/%zu samples%s\n",
@@ -1653,12 +1653,20 @@ static void zap__run_and_report(zap_t* c, const char* name) {
     stats.throughput_type = c->throughput_type;
     stats.throughput_value = c->throughput_value;
 
+    // Build baseline key with group prefix to avoid collisions
+    char baseline_key[384];
+    if (group_name && group_name[0]) {
+        snprintf(baseline_key, sizeof(baseline_key), "%s/%s", group_name, name);
+    } else {
+        snprintf(baseline_key, sizeof(baseline_key), "%s", name);
+    }
+
     // Check if we should compare against baseline
     zap_comparison_t cmp = {0};
     const zap_baseline_entry_t* baseline = NULL;
 
     if (zap_g_config.compare) {
-        baseline = zap_baseline_find(&zap_g_config.baseline, name);
+        baseline = zap_baseline_find(&zap_g_config.baseline, baseline_key);
         if (baseline) {
             cmp = zap_compare(baseline, &stats);
 
@@ -1685,7 +1693,7 @@ static void zap__run_and_report(zap_t* c, const char* name) {
 
     // Save to baseline if requested
     if (zap_g_config.save_baseline) {
-        zap_baseline_add(&zap_g_config.baseline, name, &stats);
+        zap_baseline_add(&zap_g_config.baseline, baseline_key, &stats);
     }
 }
 
@@ -1732,7 +1740,7 @@ void zap_bench_function(zap_runtime_group_t* g, const char* name,
     fn(&b);
 
     // Report results
-    zap__run_and_report(&c, name);
+    zap__run_and_report(&c, g->name, name);
 
     zap_cleanup(&c);
 }
@@ -1788,7 +1796,7 @@ void zap_bench_with_input(zap_runtime_group_t* g,
     fn(&b, input);
 
     // Report results
-    zap__run_and_report(&c, full_name);
+    zap__run_and_report(&c, g->name, full_name);
 
     zap_cleanup(&c);
 }
@@ -1901,6 +1909,10 @@ const zap_baseline_entry_t* zap_baseline_find(
  * Baseline file format (text):
  * Line 1: "zap-baseline v1"
  * Following lines: name|mean|std_dev|ci_lower|ci_upper
+ *
+ * Name format includes group prefix to avoid collisions:
+ *   - Static/Runtime API: group_name/bench_name
+ *   - Comparison API: group_name/label/param [impl_name]
  */
 bool zap_baseline_save(const zap_baseline_t* b, const char* path) {
     // Create parent directory if it doesn't exist
@@ -2511,12 +2523,21 @@ static void zap_run_bench_internal(const zap_bench_t* bench) {
     stats.throughput_type = c.throughput_type;
     stats.throughput_value = c.throughput_value;
 
+    // Build baseline key with group prefix to avoid collisions
+    char baseline_key[384];
+    if (zap__current_group_name && zap__current_group_name[0]) {
+        snprintf(baseline_key, sizeof(baseline_key), "%s/%s",
+                 zap__current_group_name, bench->name);
+    } else {
+        snprintf(baseline_key, sizeof(baseline_key), "%s", bench->name);
+    }
+
     // Check if we should compare against baseline
     zap_comparison_t cmp = {0};
     const zap_baseline_entry_t* baseline = NULL;
 
     if (zap_g_config.compare) {
-        baseline = zap_baseline_find(&zap_g_config.baseline, bench->name);
+        baseline = zap_baseline_find(&zap_g_config.baseline, baseline_key);
         if (baseline) {
             cmp = zap_compare(baseline, &stats);
 
@@ -2543,7 +2564,7 @@ static void zap_run_bench_internal(const zap_bench_t* bench) {
 
     // Save to baseline if requested
     if (zap_g_config.save_baseline) {
-        zap_baseline_add(&zap_g_config.baseline, bench->name, &stats);
+        zap_baseline_add(&zap_g_config.baseline, baseline_key, &stats);
     }
 
     zap_cleanup(&c);
@@ -2791,10 +2812,10 @@ void zap_compare_end(zap_compare_ctx_t* ctx) {
                 printf(",\"vs_baseline\":{\"speedup\":%.4f}", speedup);
             }
 
-            // Compare with previous run baseline
+            // Compare with previous run baseline (include group name to avoid collisions)
             char full_bench_name[384];
-            snprintf(full_bench_name, sizeof(full_bench_name), "%s/%s [%s]",
-                     ctx->id.label, ctx->id.param_str, r->name);
+            snprintf(full_bench_name, sizeof(full_bench_name), "%s/%s/%s [%s]",
+                     g->name, ctx->id.label, ctx->id.param_str, r->name);
             const zap_baseline_entry_t* prev = zap_baseline_find(&zap_g_config.baseline, full_bench_name);
             if (prev && zap_g_config.compare) {
                 zap_comparison_t cmp = zap_compare(prev, &r->stats);
@@ -2829,8 +2850,6 @@ void zap_compare_end(zap_compare_ctx_t* ctx) {
             zap_impl_result_t* r = &ctx->results[i];
             if (!r->valid) continue;
 
-            bool is_baseline = (i == baseline_idx);
-
             char median_buf[32], mean_buf[32], std_buf[32];
             char min_buf[32], max_buf[32];
 
@@ -2841,13 +2860,7 @@ void zap_compare_end(zap_compare_ctx_t* ctx) {
             zap__format_time(r->stats.max, max_buf, sizeof(max_buf));
 
             // Implementation name header
-            if (is_baseline) {
-                printf("  %s%s%s %s[baseline]%s:\n",
-                       zap__c_cyan(), r->name, zap__c_reset(),
-                       zap__c_dim(), zap__c_reset());
-            } else {
-                printf("  %s%s%s:\n", zap__c_cyan(), r->name, zap__c_reset());
-            }
+            printf("  %s%s%s:\n", zap__c_cyan(), r->name, zap__c_reset());
 
             // Sample info
             printf("    %zu samples \303\227 %zu evals, median: %s%s%s\n",
@@ -2899,10 +2912,10 @@ void zap_compare_end(zap_compare_ctx_t* ctx) {
                 }
             }
 
-            // Compare with previous run
+            // Compare with previous run (include group name to avoid collisions)
             char full_bench_name[384];
-            snprintf(full_bench_name, sizeof(full_bench_name), "%s/%s [%s]",
-                     ctx->id.label, ctx->id.param_str, r->name);
+            snprintf(full_bench_name, sizeof(full_bench_name), "%s/%s/%s [%s]",
+                     g->name, ctx->id.label, ctx->id.param_str, r->name);
             const zap_baseline_entry_t* prev = zap_baseline_find(&zap_g_config.baseline, full_bench_name);
             if (prev && zap_g_config.compare) {
                 zap_comparison_t cmp = zap_compare(prev, &r->stats);

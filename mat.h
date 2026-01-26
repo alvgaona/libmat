@@ -7987,8 +7987,7 @@ MAT_INTERNAL_STATIC void mat_eig_2x2_(mat_elem_t a, mat_elem_t b,
 // Shifts are stored as (real, imag) pairs in sr[], si[]
 MAT_INTERNAL_STATIC size_t mat_compute_shifts_(const Mat *H, size_t lo, size_t hi,
                                                 size_t ns, mat_elem_t *sr, mat_elem_t *si) {
-  size_t n = hi - lo + 1;
-  size_t nw = (ns < n) ? ns : n;  // Window size
+  (void)lo;  // Unused but kept for API consistency
   size_t count = 0;
 
   // Extract eigenvalues from bottom-right 2x2 blocks
@@ -8401,9 +8400,9 @@ MAT_INTERNAL_STATIC void mat_multishift_qr_iter_(Mat *H, mat_elem_t *Z, size_t l
       hi--;
     } else if (block_size == 2) {
       // 2x2 block converged
+      if (hi < 2) break;  // Guard against underflow
       hi -= 2;
     } else {
-      // Use Francis double-shift
       mat_qr_step_(H, lo, hi, Z, ldz);
       iter++;
     }
