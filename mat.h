@@ -1467,8 +1467,8 @@ MATDEF bool mat_equals(const Mat *a, const Mat *b) {
 }
 
 #ifdef MAT_HAS_ARM_NEON
-MAT_INTERNAL_STATIC bool mat__equals_tol_neon_(const Mat *a, const Mat *b,
-                                              mat_elem_t epsilon) {
+MAT_INTERNAL_STATIC bool mat__equals_tol_neon(const Mat *a, const Mat *b,
+                                             mat_elem_t epsilon) {
   size_t n = a->rows * a->cols;
   const mat_elem_t *pa = a->data;
   const mat_elem_t *pb = b->data;
@@ -1520,8 +1520,8 @@ MAT_INTERNAL_STATIC bool mat__equals_tol_neon_(const Mat *a, const Mat *b,
 }
 #endif
 
-MAT_INTERNAL_STATIC bool mat__equals_tol_scalar_(const Mat *a, const Mat *b,
-                                                mat_elem_t epsilon) {
+MAT_INTERNAL_STATIC bool mat__equals_tol_scalar(const Mat *a, const Mat *b,
+                                               mat_elem_t epsilon) {
   size_t n = a->rows * a->cols;
   for (size_t i = 0; i < n; i++) {
     mat_elem_t diff = a->data[i] - b->data[i];
@@ -1533,17 +1533,6 @@ MAT_INTERNAL_STATIC bool mat__equals_tol_scalar_(const Mat *a, const Mat *b,
   return true;
 }
 
-MAT_INTERNAL_STATIC bool mat__equals_tol_dispatch_(const Mat *a, const Mat *b,
-                                                   mat_elem_t epsilon) {
-#if defined(MAT_HAS_ARM_NEON)
-  return mat__equals_tol_neon_(a, b, epsilon);
-#elif defined(MAT_HAS_AVX2)
-  return mat_equals_tol_avx2_(a, b, epsilon);  // Future
-#else
-  return mat__equals_tol_scalar_(a, b, epsilon);
-#endif
-}
-
 MATDEF bool mat_equals_tol(const Mat *a, const Mat *b, mat_elem_t epsilon) {
   MAT_ASSERT_MAT(a);
   MAT_ASSERT_MAT(b);
@@ -1551,7 +1540,7 @@ MATDEF bool mat_equals_tol(const Mat *a, const Mat *b, mat_elem_t epsilon) {
   if (a->rows != b->rows || a->cols != b->cols)
     return false;
 
-  return mat__equals_tol_dispatch_(a, b, epsilon);
+  return MAT_DISPATCH(equals_tol)(a, b, epsilon);
 }
 
 /* Element-wise Unary */
@@ -1921,7 +1910,7 @@ MATDEF void mat_cross(Vec *out, const Vec *v1, const Vec *v2) {
 }
 
 #ifdef MAT_HAS_ARM_NEON
-MAT_INTERNAL_STATIC void mat__outer_neon_(Mat *out, const Vec *v1,
+MAT_INTERNAL_STATIC void mat__outer_neon(Mat *out, const Vec *v1,
                                          const Vec *v2) {
   size_t m = v1->rows * v1->cols;
   size_t n = v2->rows * v2->cols;
@@ -1959,7 +1948,7 @@ MAT_INTERNAL_STATIC void mat__outer_neon_(Mat *out, const Vec *v1,
 }
 #endif
 
-MAT_INTERNAL_STATIC void mat__outer_scalar_(Mat *out, const Vec *v1,
+MAT_INTERNAL_STATIC void mat__outer_scalar(Mat *out, const Vec *v1,
                                            const Vec *v2) {
   size_t m = v1->rows * v1->cols;
   size_t n = v2->rows * v2->cols;
@@ -1974,17 +1963,6 @@ MAT_INTERNAL_STATIC void mat__outer_scalar_(Mat *out, const Vec *v1,
   }
 }
 
-MAT_INTERNAL_STATIC void mat__outer_dispatch_(Mat *out, const Vec *v1,
-                                              const Vec *v2) {
-#if defined(MAT_HAS_ARM_NEON)
-  mat__outer_neon_(out, v1, v2);
-#elif defined(MAT_HAS_AVX2)
-  mat_outer_avx2_(out, v1, v2);  // Future
-#else
-  mat__outer_scalar_(out, v1, v2);
-#endif
-}
-
 MATDEF void mat_outer(Mat *out, const Vec *v1, const Vec *v2) {
   MAT_ASSERT_MAT(out);
   MAT_ASSERT_MAT(v1);
@@ -1994,7 +1972,7 @@ MATDEF void mat_outer(Mat *out, const Vec *v1, const Vec *v2) {
   size_t n = v2->rows * v2->cols;
   MAT_ASSERT(out->rows == m && out->cols == n);
 
-  mat__outer_dispatch_(out, v1, v2);
+  MAT_DISPATCH(outer)(out, v1, v2);
 }
 
 MATDEF mat_elem_t mat_bilinear(const Vec *x, const Mat *A, const Vec *y) {
@@ -2039,11 +2017,11 @@ MATDEF void mat_axpy(Vec *y, mat_elem_t alpha, const Vec *x) {
 // y = alpha * A * x + beta * y (BLAS Level-2: gemv)
 #ifdef MAT_HAS_ARM_NEON
 // Forward declaration for fallback
-MAT_INTERNAL_STATIC void mat__gemv_scalar_(Vec *y, mat_elem_t alpha,
+MAT_INTERNAL_STATIC void mat__gemv_scalar(Vec *y, mat_elem_t alpha,
                                           const Mat *A, const Vec *x,
                                           mat_elem_t beta);
 
-MAT_INTERNAL_STATIC void mat__gemv_neon_(Vec *y, mat_elem_t alpha, const Mat *A,
+MAT_INTERNAL_STATIC void mat__gemv_neon(Vec *y, mat_elem_t alpha, const Mat *A,
                                         const Vec *x, mat_elem_t beta) {
   // Column-major: columns are contiguous, use AXPY-style algorithm
   // Process 8 columns at a time for better instruction-level parallelism
@@ -2140,7 +2118,7 @@ MAT_INTERNAL_STATIC void mat__gemv_neon_(Vec *y, mat_elem_t alpha, const Mat *A,
 }
 #endif
 
-MAT_INTERNAL_STATIC void mat__gemv_scalar_(Vec *y, mat_elem_t alpha,
+MAT_INTERNAL_STATIC void mat__gemv_scalar(Vec *y, mat_elem_t alpha,
                                           const Mat *A, const Vec *x,
                                           mat_elem_t beta) {
   size_t m = A->rows;
@@ -2156,18 +2134,6 @@ MAT_INTERNAL_STATIC void mat__gemv_scalar_(Vec *y, mat_elem_t alpha,
   }
 }
 
-MAT_INTERNAL_STATIC void mat__gemv_dispatch_(Vec *y, mat_elem_t alpha,
-                                             const Mat *A, const Vec *x,
-                                             mat_elem_t beta) {
-#if defined(MAT_HAS_ARM_NEON)
-  mat__gemv_neon_(y, alpha, A, x, beta);
-#elif defined(MAT_HAS_AVX2)
-  mat_gemv_avx2_(y, alpha, A, x, beta);  // Future
-#else
-  mat__gemv_scalar_(y, alpha, A, x, beta);
-#endif
-}
-
 MATDEF void mat_gemv(Vec *y, mat_elem_t alpha, const Mat *A, const Vec *x,
                      mat_elem_t beta) {
   MAT_ASSERT_MAT(y);
@@ -2176,13 +2142,13 @@ MATDEF void mat_gemv(Vec *y, mat_elem_t alpha, const Mat *A, const Vec *x,
   MAT_ASSERT(A->rows == y->rows);
   MAT_ASSERT(A->cols == x->rows);
 
-  mat__gemv_dispatch_(y, alpha, A, x, beta);
+  MAT_DISPATCH(gemv)(y, alpha, A, x, beta);
 }
 
 // y = alpha * A^T * x + beta * y (GEMV transposed)
 // A is m×n, x is m×1, y is n×1
 #ifdef MAT_HAS_ARM_NEON
-MAT_INTERNAL_STATIC void mat__gemv_t_neon_(Vec *y, mat_elem_t alpha,
+MAT_INTERNAL_STATIC void mat__gemv_t_neon(Vec *y, mat_elem_t alpha,
                                           const Mat *A, const Vec *x,
                                           mat_elem_t beta) {
   size_t m = A->rows;
@@ -2255,7 +2221,7 @@ MAT_INTERNAL_STATIC void mat__gemv_t_neon_(Vec *y, mat_elem_t alpha,
 }
 #endif
 
-MAT_INTERNAL_STATIC void mat__gemv_t_scalar_(Vec *y, mat_elem_t alpha,
+MAT_INTERNAL_STATIC void mat__gemv_t_scalar(Vec *y, mat_elem_t alpha,
                                             const Mat *A, const Vec *x,
                                             mat_elem_t beta) {
   size_t m = A->rows;
@@ -2270,18 +2236,6 @@ MAT_INTERNAL_STATIC void mat__gemv_t_scalar_(Vec *y, mat_elem_t alpha,
   }
 }
 
-MAT_INTERNAL_STATIC void mat__gemv_t_dispatch_(Vec *y, mat_elem_t alpha,
-                                               const Mat *A, const Vec *x,
-                                               mat_elem_t beta) {
-#if defined(MAT_HAS_ARM_NEON)
-  mat__gemv_t_neon_(y, alpha, A, x, beta);
-#elif defined(MAT_HAS_AVX2)
-  mat_gemv_t_avx2_(y, alpha, A, x, beta);  // Future
-#else
-  mat__gemv_t_scalar_(y, alpha, A, x, beta);
-#endif
-}
-
 MATDEF void mat_gemv_t(Vec *y, mat_elem_t alpha, const Mat *A, const Vec *x,
                        mat_elem_t beta) {
   MAT_ASSERT_MAT(y);
@@ -2290,7 +2244,7 @@ MATDEF void mat_gemv_t(Vec *y, mat_elem_t alpha, const Mat *A, const Vec *x,
   MAT_ASSERT(A->cols == y->rows); // A^T has n rows
   MAT_ASSERT(A->rows == x->rows); // A^T has m cols
 
-  mat__gemv_t_dispatch_(y, alpha, A, x, beta);
+  MAT_DISPATCH(gemv_t)(y, alpha, A, x, beta);
 }
 
 // A += alpha * x * y^T (BLAS Level-2: ger - rank-1 update)
@@ -2791,11 +2745,11 @@ mat__gemm_strided_(mat_elem_t *C, size_t ldc, mat_elem_t alpha,
 // C = alpha * A * B + beta * C (BLAS Level-3: gemm)
 #ifdef MAT_HAS_ARM_NEON
 // Forward declaration for fallback
-MAT_INTERNAL_STATIC void mat__gemm_scalar_(Mat *C, mat_elem_t alpha,
+MAT_INTERNAL_STATIC void mat__gemm_scalar(Mat *C, mat_elem_t alpha,
                                           const Mat *A, const Mat *B,
                                           mat_elem_t beta);
 
-MAT_INTERNAL_STATIC void mat__gemm_neon_(Mat *C, mat_elem_t alpha, const Mat *A,
+MAT_INTERNAL_STATIC void mat__gemm_neon(Mat *C, mat_elem_t alpha, const Mat *A,
                                         const Mat *B, mat_elem_t beta) {
   // Column-major: delegate to strided implementation
   // For column-major Mat, leading dimension = rows
@@ -2805,7 +2759,7 @@ MAT_INTERNAL_STATIC void mat__gemm_neon_(Mat *C, mat_elem_t alpha, const Mat *A,
 }
 #endif // MAT_HAS_ARM_NEON
 
-MAT_INTERNAL_STATIC void mat__gemm_scalar_(Mat *C, mat_elem_t alpha,
+MAT_INTERNAL_STATIC void mat__gemm_scalar(Mat *C, mat_elem_t alpha,
                                           const Mat *A, const Mat *B,
                                           mat_elem_t beta) {
   size_t M = A->rows;
@@ -2830,18 +2784,6 @@ MAT_INTERNAL_STATIC void mat__gemm_scalar_(Mat *C, mat_elem_t alpha,
   }
 }
 
-MAT_INTERNAL_STATIC void mat__gemm_dispatch_(Mat *C, mat_elem_t alpha,
-                                             const Mat *A, const Mat *B,
-                                             mat_elem_t beta) {
-#if defined(MAT_HAS_ARM_NEON)
-  mat__gemm_neon_(C, alpha, A, B, beta);
-#elif defined(MAT_HAS_AVX2)
-  mat_gemm_avx2_(C, alpha, A, B, beta);  // Future
-#else
-  mat__gemm_scalar_(C, alpha, A, B, beta);
-#endif
-}
-
 MATDEF void mat_gemm(Mat *C, mat_elem_t alpha, const Mat *A, const Mat *B,
                      mat_elem_t beta) {
   MAT_ASSERT_MAT(C);
@@ -2850,7 +2792,7 @@ MATDEF void mat_gemm(Mat *C, mat_elem_t alpha, const Mat *A, const Mat *B,
   MAT_ASSERT(A->cols == B->rows);
   MAT_ASSERT(C->rows == A->rows && C->cols == B->cols);
 
-  mat__gemm_dispatch_(C, alpha, A, B, beta);
+  MAT_DISPATCH(gemm)(C, alpha, A, B, beta);
 }
 
 /* Structure Operations */
@@ -2859,9 +2801,9 @@ MATDEF void mat_gemm(Mat *C, mat_elem_t alpha, const Mat *A, const Mat *B,
 
 #ifdef MAT_HAS_ARM_NEON
 // Forward declaration for fallback
-MAT_INTERNAL_STATIC void mat__t_scalar_(Mat *out, const Mat *m);
+MAT_INTERNAL_STATIC void mat__t_scalar(Mat *out, const Mat *m);
 
-MAT_INTERNAL_STATIC void mat__t_neon_(Mat *out, const Mat *m) {
+MAT_INTERNAL_STATIC void mat__t_neon(Mat *out, const Mat *m) {
   // Column-major NEON transpose
   // Input: m is rows×cols, m[i,j] = src[j*rows + i] (column j is contiguous)
   // Output: out is cols×rows, out[j,i] = dst[i*cols + j] (column i is contiguous)
@@ -2948,7 +2890,7 @@ MAT_INTERNAL_STATIC void mat__t_neon_(Mat *out, const Mat *m) {
 }
 #endif
 
-MAT_INTERNAL_STATIC void mat__t_scalar_(Mat *out, const Mat *m) {
+MAT_INTERNAL_STATIC void mat__t_scalar(Mat *out, const Mat *m) {
   size_t rows = m->rows;
   size_t cols = m->cols;
 
@@ -2970,22 +2912,12 @@ MAT_INTERNAL_STATIC void mat__t_scalar_(Mat *out, const Mat *m) {
   }
 }
 
-MAT_INTERNAL_STATIC void mat__t_dispatch_(Mat *out, const Mat *m) {
-#if defined(MAT_HAS_ARM_NEON)
-  mat__t_neon_(out, m);
-#elif defined(MAT_HAS_AVX2)
-  mat_t_avx2_(out, m);  // Future
-#else
-  mat__t_scalar_(out, m);
-#endif
-}
-
 MATDEF void mat_t(Mat *out, const Mat *m) {
   MAT_ASSERT_MAT(out);
   MAT_ASSERT_MAT(m);
   MAT_ASSERT(out->rows == m->cols && out->cols == m->rows);
 
-  mat__t_dispatch_(out, m);
+  MAT_DISPATCH(t)(out, m);
 }
 
 MATDEF Mat *mat_rt(const Mat *m) {
@@ -3144,7 +3076,7 @@ MATDEF Mat *mat_diag_from(size_t dim, const mat_elem_t *values) {
 /* Reduction Operations */
 
 #ifdef MAT_HAS_ARM_NEON
-MAT_INTERNAL_STATIC mat_elem_t mat__sum_neon_(const Mat *a) {
+MAT_INTERNAL_STATIC mat_elem_t mat__sum_neon(const Mat *a) {
   size_t len = a->rows * a->cols;
   mat_elem_t *pa = a->data;
 
@@ -3174,7 +3106,7 @@ MAT_INTERNAL_STATIC mat_elem_t mat__sum_neon_(const Mat *a) {
 }
 #endif
 
-MAT_INTERNAL_STATIC mat_elem_t mat__sum_scalar_(const Mat *a) {
+MAT_INTERNAL_STATIC mat_elem_t mat__sum_scalar(const Mat *a) {
   size_t len = a->rows * a->cols;
   mat_elem_t *pa = a->data;
 
@@ -3197,20 +3129,10 @@ MAT_INTERNAL_STATIC mat_elem_t mat__sum_scalar_(const Mat *a) {
   return sum;
 }
 
-MAT_INTERNAL_STATIC mat_elem_t mat__sum_dispatch_(const Mat *a) {
-#if defined(MAT_HAS_ARM_NEON)
-  return mat__sum_neon_(a);
-#elif defined(MAT_HAS_AVX2)
-  return mat_sum_avx2_(a);  // Future
-#else
-  return mat__sum_scalar_(a);
-#endif
-}
-
 MATDEF mat_elem_t mat_sum(const Mat *a) {
   MAT_ASSERT_MAT(a);
 
-  return mat__sum_dispatch_(a);
+  return MAT_DISPATCH(sum)(a);
 }
 
 MATDEF mat_elem_t mat_mean(const Mat *a) {
@@ -3219,7 +3141,7 @@ MATDEF mat_elem_t mat_mean(const Mat *a) {
 }
 
 #ifdef MAT_HAS_ARM_NEON
-MAT_INTERNAL_STATIC mat_elem_t mat__min_neon_(const Mat *a) {
+MAT_INTERNAL_STATIC mat_elem_t mat__min_neon(const Mat *a) {
   size_t len = a->rows * a->cols;
   mat_elem_t *pa = a->data;
 
@@ -3269,7 +3191,7 @@ MAT_INTERNAL_STATIC mat_elem_t mat__min_neon_(const Mat *a) {
 }
 #endif
 
-MAT_INTERNAL_STATIC mat_elem_t mat__min_scalar_(const Mat *a) {
+MAT_INTERNAL_STATIC mat_elem_t mat__min_scalar(const Mat *a) {
   size_t len = a->rows * a->cols;
   mat_elem_t *pa = a->data;
 
@@ -3283,24 +3205,14 @@ MAT_INTERNAL_STATIC mat_elem_t mat__min_scalar_(const Mat *a) {
   return min_val;
 }
 
-MAT_INTERNAL_STATIC mat_elem_t mat__min_dispatch_(const Mat *a) {
-#if defined(MAT_HAS_ARM_NEON)
-  return mat__min_neon_(a);
-#elif defined(MAT_HAS_AVX2)
-  return mat_min_avx2_(a);  // Future
-#else
-  return mat__min_scalar_(a);
-#endif
-}
-
 MATDEF mat_elem_t mat_min(const Mat *a) {
   MAT_ASSERT_MAT(a);
 
-  return mat__min_dispatch_(a);
+  return MAT_DISPATCH(min)(a);
 }
 
 #ifdef MAT_HAS_ARM_NEON
-MAT_INTERNAL_STATIC mat_elem_t mat__max_neon_(const Mat *a) {
+MAT_INTERNAL_STATIC mat_elem_t mat__max_neon(const Mat *a) {
   size_t len = a->rows * a->cols;
   mat_elem_t *pa = a->data;
 
@@ -3336,7 +3248,7 @@ MAT_INTERNAL_STATIC mat_elem_t mat__max_neon_(const Mat *a) {
 }
 #endif
 
-MAT_INTERNAL_STATIC mat_elem_t mat__max_scalar_(const Mat *a) {
+MAT_INTERNAL_STATIC mat_elem_t mat__max_scalar(const Mat *a) {
   size_t len = a->rows * a->cols;
   mat_elem_t *pa = a->data;
 
@@ -3350,20 +3262,10 @@ MAT_INTERNAL_STATIC mat_elem_t mat__max_scalar_(const Mat *a) {
   return max_val;
 }
 
-MAT_INTERNAL_STATIC mat_elem_t mat__max_dispatch_(const Mat *a) {
-#if defined(MAT_HAS_ARM_NEON)
-  return mat__max_neon_(a);
-#elif defined(MAT_HAS_AVX2)
-  return mat_max_avx2_(a);  // Future
-#else
-  return mat__max_scalar_(a);
-#endif
-}
-
 MATDEF mat_elem_t mat_max(const Mat *a) {
   MAT_ASSERT_MAT(a);
 
-  return mat__max_dispatch_(a);
+  return MAT_DISPATCH(max)(a);
 }
 
 MATDEF void mat_sum_axis(Vec *out, const Mat *a, int axis) {
@@ -3439,7 +3341,7 @@ MATDEF size_t mat_argmax(const Mat *a) {
 }
 
 #ifdef MAT_HAS_ARM_NEON
-MAT_INTERNAL_STATIC mat_elem_t mat__std_neon_(const Mat *a, mat_elem_t mean) {
+MAT_INTERNAL_STATIC mat_elem_t mat__std_neon(const Mat *a, mat_elem_t mean) {
   size_t len = a->rows * a->cols;
   mat_elem_t *pa = a->data;
 
@@ -3476,7 +3378,7 @@ MAT_INTERNAL_STATIC mat_elem_t mat__std_neon_(const Mat *a, mat_elem_t mean) {
 }
 #endif
 
-MAT_INTERNAL_STATIC mat_elem_t mat__std_scalar_(const Mat *a, mat_elem_t mean) {
+MAT_INTERNAL_STATIC mat_elem_t mat__std_scalar(const Mat *a, mat_elem_t mean) {
   size_t len = a->rows * a->cols;
   mat_elem_t *pa = a->data;
 
@@ -3504,22 +3406,12 @@ MAT_INTERNAL_STATIC mat_elem_t mat__std_scalar_(const Mat *a, mat_elem_t mean) {
   return sum_sq;
 }
 
-MAT_INTERNAL_STATIC mat_elem_t mat__std_dispatch_(const Mat *a, mat_elem_t mean) {
-#if defined(MAT_HAS_ARM_NEON)
-  return mat__std_neon_(a, mean);
-#elif defined(MAT_HAS_AVX2)
-  return mat__std_scalar_(a, mean);  // TODO: AVX2 implementation
-#else
-  return mat__std_scalar_(a, mean);
-#endif
-}
-
 MATDEF mat_elem_t mat_std(const Mat *a) {
   MAT_ASSERT_MAT(a);
 
   size_t n = a->rows * a->cols;
   mat_elem_t mean = mat_mean(a);
-  mat_elem_t sum_sq = mat__std_dispatch_(a, mean);
+  mat_elem_t sum_sq = MAT_DISPATCH(std)(a, mean);
 
 #ifdef MAT_DOUBLE_PRECISION
   return sqrt(sum_sq / (mat_elem_t)n);
@@ -3552,7 +3444,7 @@ MATDEF mat_elem_t mat_norm_max(const Mat *a) {
 }
 
 #ifdef MAT_HAS_ARM_NEON
-MAT_INTERNAL_STATIC mat_elem_t mat__norm_fro_neon_(const Mat *a) {
+MAT_INTERNAL_STATIC mat_elem_t mat__norm_fro_neon(const Mat *a) {
   size_t len = a->rows * a->cols;
   mat_elem_t *pa = a->data;
 
@@ -3587,29 +3479,19 @@ MAT_INTERNAL_STATIC mat_elem_t mat__norm_fro_neon_(const Mat *a) {
 }
 #endif
 
-MAT_INTERNAL_STATIC mat_elem_t mat__norm_fro_scalar_(const Mat *a) {
+MAT_INTERNAL_STATIC mat_elem_t mat__norm_fro_scalar(const Mat *a) {
   size_t len = a->rows * a->cols;
   return MAT_SQRT(mat__dot_kernel(a->data, a->data, len));
-}
-
-MAT_INTERNAL_STATIC mat_elem_t mat__norm_fro_dispatch_(const Mat *a) {
-#if defined(MAT_HAS_ARM_NEON)
-  return mat__norm_fro_neon_(a);
-#elif defined(MAT_HAS_AVX2)
-  return mat_norm_fro_avx2_(a);  // Future
-#else
-  return mat__norm_fro_scalar_(a);
-#endif
 }
 
 MATDEF mat_elem_t mat_norm_fro(const Mat *a) {
   MAT_ASSERT_MAT(a);
 
-  return mat__norm_fro_dispatch_(a);
+  return MAT_DISPATCH(norm_fro)(a);
 }
 
 #ifdef MAT_HAS_ARM_NEON
-MAT_INTERNAL_STATIC mat_elem_t mat__norm_fro_fast_neon_(const Mat *a) {
+MAT_INTERNAL_STATIC mat_elem_t mat__norm_fro_fast_neon(const Mat *a) {
   size_t len = a->rows * a->cols;
   mat_elem_t *pa = a->data;
 
@@ -3649,20 +3531,10 @@ MAT_INTERNAL_STATIC mat_elem_t mat__norm_fro_fast_neon_(const Mat *a) {
 }
 #endif
 
-MAT_INTERNAL_STATIC mat_elem_t mat__norm_fro_fast_dispatch_(const Mat *a) {
-#if defined(MAT_HAS_ARM_NEON)
-  return mat__norm_fro_fast_neon_(a);
-#elif defined(MAT_HAS_AVX2)
-  return mat_norm_fro_fast_avx2_(a);  // Future
-#else
-  return mat__norm_fro_scalar_(a);
-#endif
-}
-
 MATDEF mat_elem_t mat_norm_fro_fast(const Mat *a) {
   MAT_ASSERT_MAT(a);
 
-  return mat__norm_fro_fast_dispatch_(a);
+  return MAT_DISPATCH(norm_fro_fast)(a);
 }
 
 /* Matrix Properties */
@@ -3696,7 +3568,7 @@ MATDEF mat_elem_t mat_trace(const Mat *a) {
 }
 
 #ifdef MAT_HAS_ARM_NEON
-MAT_INTERNAL_STATIC mat_elem_t mat__nnz_neon_(const Mat *a) {
+MAT_INTERNAL_STATIC mat_elem_t mat__nnz_neon(const Mat *a) {
   size_t len = a->rows * a->cols;
   mat_elem_t *pa = a->data;
 
@@ -3743,7 +3615,7 @@ MAT_INTERNAL_STATIC mat_elem_t mat__nnz_neon_(const Mat *a) {
 }
 #endif
 
-MAT_INTERNAL_STATIC mat_elem_t mat__nnz_scalar_(const Mat *a) {
+MAT_INTERNAL_STATIC mat_elem_t mat__nnz_scalar(const Mat *a) {
   size_t len = a->rows * a->cols;
   mat_elem_t count = 0;
   for (size_t i = 0; i < len; i++) {
@@ -3753,20 +3625,10 @@ MAT_INTERNAL_STATIC mat_elem_t mat__nnz_scalar_(const Mat *a) {
   return count;
 }
 
-MAT_INTERNAL_STATIC mat_elem_t mat__nnz_dispatch_(const Mat *a) {
-#if defined(MAT_HAS_ARM_NEON)
-  return mat__nnz_neon_(a);
-#elif defined(MAT_HAS_AVX2)
-  return mat_nnz_avx2_(a);  // Future
-#else
-  return mat__nnz_scalar_(a);
-#endif
-}
-
 MATDEF mat_elem_t mat_nnz(const Mat *a) {
   MAT_ASSERT_MAT(a);
 
-  return mat__nnz_dispatch_(a);
+  return MAT_DISPATCH(nnz)(a);
 }
 
 /* Householder Reflections */
@@ -4426,7 +4288,7 @@ MAT_INTERNAL_STATIC int mat__plu_blocked_(Mat *M, Perm *p) {
 }
 
 // Scalar implementation of full pivoting LU (P * A * Q = L * U)
-MAT_INTERNAL_STATIC int mat__lu_scalar_(Mat *M, Perm *p, Perm *q) {
+MAT_INTERNAL_STATIC int mat__lu_scalar(Mat *M, Perm *p, Perm *q) {
   size_t n = M->rows;
   mat_elem_t *data = M->data;
   size_t *row_perm = p->data;
@@ -4501,7 +4363,7 @@ MAT_INTERNAL_STATIC int mat__lu_scalar_(Mat *M, Perm *p, Perm *q) {
 #ifdef MAT_HAS_ARM_NEON
 // NEON-optimized full pivoting LU decomposition
 // In column-major: column j is contiguous at &data[j * n]
-MAT_INTERNAL_STATIC int mat__lu_neon_(Mat *M, Perm *p, Perm *q) {
+MAT_INTERNAL_STATIC int mat__lu_neon(Mat *M, Perm *p, Perm *q) {
   size_t n = M->rows;
   mat_elem_t *data = M->data;
   size_t *row_perm = p->data;
@@ -4633,7 +4495,7 @@ MATDEF int mat_lu(const Mat *A, Mat *L, Mat *U, Perm *p, Perm *q) {
   mat_elem_t *data = M->data;
 #if defined(MAT_HAS_ARM_NEON)
   // Column-major LU decomposition (NEON optimized)
-  swap_count = mat__lu_neon_(M, p, q);
+  swap_count = mat__lu_neon(M, p, q);
 #elif defined(MAT_HAS_AVX2)
   // Column-major LU decomposition (AVX2 - future)
   swap_count = mat_lu_avx2_(M, p, q);
@@ -4719,7 +4581,7 @@ MATDEF int mat_lu(const Mat *A, Mat *L, Mat *U, Perm *p, Perm *q) {
 
 // --- mat_solve_tril: Solve Lx = b, L lower triangular (non-unit diagonal) ---
 
-MAT_INTERNAL_STATIC void mat__solve_tril_scalar_(Vec *x, const Mat *L,
+MAT_INTERNAL_STATIC void mat__solve_tril_scalar(Vec *x, const Mat *L,
                                                  const Vec *b) {
   size_t n = L->rows;
   mat_elem_t *x_data = x->data;
@@ -4736,7 +4598,7 @@ MAT_INTERNAL_STATIC void mat__solve_tril_scalar_(Vec *x, const Mat *L,
 }
 
 #ifdef MAT_HAS_ARM_NEON
-MAT_INTERNAL_STATIC void mat__solve_tril_neon_(Vec *x, const Mat *L,
+MAT_INTERNAL_STATIC void mat__solve_tril_neon(Vec *x, const Mat *L,
                                                const Vec *b) {
   // Column-major: columns are contiguous, use column-oriented forward substitution
   // x[j] = x[j] / L[j,j], then update x[j+1:n] -= x[j] * L[j+1:n, j]
@@ -4761,17 +4623,6 @@ MAT_INTERNAL_STATIC void mat__solve_tril_neon_(Vec *x, const Mat *L,
 }
 #endif
 
-MAT_INTERNAL_STATIC void mat__solve_tril_dispatch_(Vec *x, const Mat *L,
-                                                   const Vec *b) {
-#if defined(MAT_HAS_ARM_NEON)
-  mat__solve_tril_neon_(x, L, b);
-#elif defined(MAT_HAS_AVX2)
-  mat_solve_tril_avx2_(x, L, b);  // Future
-#else
-  mat__solve_tril_scalar_(x, L, b);
-#endif
-}
-
 MATDEF void mat_solve_tril(Vec *x, const Mat *L, const Vec *b) {
   MAT_ASSERT_MAT(L);
   MAT_ASSERT_MAT(x);
@@ -4779,12 +4630,12 @@ MATDEF void mat_solve_tril(Vec *x, const Mat *L, const Vec *b) {
   MAT_ASSERT_SQUARE(L);
   MAT_ASSERT(b->rows == L->rows);
   MAT_ASSERT(x->rows == L->rows);
-  mat__solve_tril_dispatch_(x, L, b);
+  MAT_DISPATCH(solve_tril)(x, L, b);
 }
 
 // --- mat_solve_tril_unit: Solve Lx = b, L unit lower triangular (1s on diag) -
 
-MAT_INTERNAL_STATIC void mat__solve_tril_unit_scalar_(Vec *x, const Mat *L,
+MAT_INTERNAL_STATIC void mat__solve_tril_unit_scalar(Vec *x, const Mat *L,
                                                       const Vec *b) {
   size_t n = L->rows;
   mat_elem_t *x_data = x->data;
@@ -4801,7 +4652,7 @@ MAT_INTERNAL_STATIC void mat__solve_tril_unit_scalar_(Vec *x, const Mat *L,
 }
 
 #ifdef MAT_HAS_ARM_NEON
-MAT_INTERNAL_STATIC void mat__solve_tril_unit_neon_(Vec *x, const Mat *L,
+MAT_INTERNAL_STATIC void mat__solve_tril_unit_neon(Vec *x, const Mat *L,
                                                     const Vec *b) {
   // Column-major: columns are contiguous, use column-oriented forward substitution
   // Unit diagonal: no division needed, just x[j+1:n] -= x[j] * L[j+1:n, j]
@@ -4825,17 +4676,6 @@ MAT_INTERNAL_STATIC void mat__solve_tril_unit_neon_(Vec *x, const Mat *L,
 }
 #endif
 
-MAT_INTERNAL_STATIC void mat__solve_tril_unit_dispatch_(Vec *x, const Mat *L,
-                                                        const Vec *b) {
-#if defined(MAT_HAS_ARM_NEON)
-  mat__solve_tril_unit_neon_(x, L, b);
-#elif defined(MAT_HAS_AVX2)
-  mat_solve_tril_unit_avx2_(x, L, b);  // Future
-#else
-  mat__solve_tril_unit_scalar_(x, L, b);
-#endif
-}
-
 MATDEF void mat_solve_tril_unit(Vec *x, const Mat *L, const Vec *b) {
   MAT_ASSERT_MAT(L);
   MAT_ASSERT_MAT(x);
@@ -4843,7 +4683,7 @@ MATDEF void mat_solve_tril_unit(Vec *x, const Mat *L, const Vec *b) {
   MAT_ASSERT_SQUARE(L);
   MAT_ASSERT(b->rows == L->rows);
   MAT_ASSERT(x->rows == L->rows);
-  mat__solve_tril_unit_dispatch_(x, L, b);
+  MAT_DISPATCH(solve_tril_unit)(x, L, b);
 }
 
 // --- mat_solve_triu: Solve Ux = b, U upper triangular ---
@@ -4852,10 +4692,10 @@ MATDEF void mat_solve_tril_unit(Vec *x, const Mat *L, const Vec *b) {
 
 #ifdef MAT_HAS_ARM_NEON
 // Forward declaration for fallback
-MAT_INTERNAL_STATIC void mat__solve_triu_scalar_(Vec *x, const Mat *U,
+MAT_INTERNAL_STATIC void mat__solve_triu_scalar(Vec *x, const Mat *U,
                                                  const Vec *b);
 
-MAT_INTERNAL_STATIC void mat__solve_triu_neon_(Vec *x, const Mat *U,
+MAT_INTERNAL_STATIC void mat__solve_triu_neon(Vec *x, const Mat *U,
                                                const Vec *b) {
   // Column-major: columns are contiguous, use column-oriented backward substitution
   // x[j] = b[j] / U[j,j], then update x[0:j] -= x[j] * U[0:j, j]
@@ -4879,7 +4719,7 @@ MAT_INTERNAL_STATIC void mat__solve_triu_neon_(Vec *x, const Mat *U,
 }
 #endif // MAT_HAS_ARM_NEON
 
-MAT_INTERNAL_STATIC void mat__solve_triu_scalar_(Vec *x, const Mat *U,
+MAT_INTERNAL_STATIC void mat__solve_triu_scalar(Vec *x, const Mat *U,
                                                  const Vec *b) {
   size_t n = U->rows;
   mat_elem_t *x_data = x->data;
@@ -4895,17 +4735,6 @@ MAT_INTERNAL_STATIC void mat__solve_triu_scalar_(Vec *x, const Mat *U,
   }
 }
 
-MAT_INTERNAL_STATIC void mat__solve_triu_dispatch_(Vec *x, const Mat *U,
-                                                   const Vec *b) {
-#if defined(MAT_HAS_ARM_NEON)
-  mat__solve_triu_neon_(x, U, b);
-#elif defined(MAT_HAS_AVX2)
-  mat_solve_triu_avx2_(x, U, b);  // Future
-#else
-  mat__solve_triu_scalar_(x, U, b);
-#endif
-}
-
 MATDEF void mat_solve_triu(Vec *x, const Mat *U, const Vec *b) {
   MAT_ASSERT_MAT(U);
   MAT_ASSERT_MAT(x);
@@ -4913,7 +4742,7 @@ MATDEF void mat_solve_triu(Vec *x, const Mat *U, const Vec *b) {
   MAT_ASSERT_SQUARE(U);
   MAT_ASSERT(b->rows == U->rows);
   MAT_ASSERT(x->rows == U->rows);
-  mat__solve_triu_dispatch_(x, U, b);
+  MAT_DISPATCH(solve_triu)(x, U, b);
 }
 
 // --- mat_solve_trilt: Solve L^T x = b, L lower triangular ---
@@ -4921,10 +4750,10 @@ MATDEF void mat_solve_triu(Vec *x, const Mat *U, const Vec *b) {
 
 #ifdef MAT_HAS_ARM_NEON
 // Forward declaration for fallback
-MAT_INTERNAL_STATIC void mat__solve_trilt_scalar_(Vec *x, const Mat *L,
+MAT_INTERNAL_STATIC void mat__solve_trilt_scalar(Vec *x, const Mat *L,
                                                   const Vec *b);
 
-MAT_INTERNAL_STATIC void mat__solve_trilt_neon_(Vec *x, const Mat *L,
+MAT_INTERNAL_STATIC void mat__solve_trilt_neon(Vec *x, const Mat *L,
                                                 const Vec *b) {
   // Solve L^T * x = b using dot product approach
   // L^T[j,k] = L[k,j], so we need dot(L[j+1:n, j], x[j+1:n]) which is contiguous
@@ -4941,7 +4770,7 @@ MAT_INTERNAL_STATIC void mat__solve_trilt_neon_(Vec *x, const Mat *L,
 }
 #endif // MAT_HAS_ARM_NEON
 
-MAT_INTERNAL_STATIC void mat__solve_trilt_scalar_(Vec *x, const Mat *L,
+MAT_INTERNAL_STATIC void mat__solve_trilt_scalar(Vec *x, const Mat *L,
                                                   const Vec *b) {
   // Solve L^T * x = b using dot product approach
   // L^T[j,k] = L[k,j], so we need dot(L[j+1:n, j], x[j+1:n]) which is contiguous
@@ -4960,17 +4789,6 @@ MAT_INTERNAL_STATIC void mat__solve_trilt_scalar_(Vec *x, const Mat *L,
   }
 }
 
-MAT_INTERNAL_STATIC void mat__solve_trilt_dispatch_(Vec *x, const Mat *L,
-                                                    const Vec *b) {
-#if defined(MAT_HAS_ARM_NEON)
-  mat__solve_trilt_neon_(x, L, b);
-#elif defined(MAT_HAS_AVX2)
-  mat_solve_trilt_avx2_(x, L, b);  // Future
-#else
-  mat__solve_trilt_scalar_(x, L, b);
-#endif
-}
-
 MATDEF void mat_solve_trilt(Vec *x, const Mat *L, const Vec *b) {
   MAT_ASSERT_MAT(L);
   MAT_ASSERT_MAT(x);
@@ -4981,7 +4799,7 @@ MATDEF void mat_solve_trilt(Vec *x, const Mat *L, const Vec *b) {
 
   // L^T solve uses dot product approach: contiguous access to L columns
   // (AXPY approach would need strided access to L rows, which is slower)
-  mat__solve_trilt_dispatch_(x, L, b);
+  MAT_DISPATCH(solve_trilt)(x, L, b);
 }
 
 /* Linear Solvers */
@@ -5670,7 +5488,7 @@ MAT_INTERNAL_STATIC void mat__syrk_lower_(
 
 // Transpose: At[i,p] = A[p,i] - Scalar implementation
 MAT_INTERNAL_STATIC void
-mat__transpose_block_scalar_(mat_elem_t *At, size_t ldat, const mat_elem_t *A,
+mat__transpose_block_scalar(mat_elem_t *At, size_t ldat, const mat_elem_t *A,
                             size_t lda, size_t rows, size_t cols) {
   for (size_t i = 0; i < rows; i++) {
     for (size_t p = 0; p < cols; p++) {
@@ -5682,7 +5500,7 @@ mat__transpose_block_scalar_(mat_elem_t *At, size_t ldat, const mat_elem_t *A,
 #ifdef MAT_HAS_ARM_NEON
 // Transpose: At[i,p] = A[p,i] - NEON implementation
 // Uses MAT_NEON_WIDTH x MAT_NEON_WIDTH block transpose with ZIP operations
-MAT_INTERNAL_STATIC void mat__transpose_block_neon_(mat_elem_t *At, size_t ldat,
+MAT_INTERNAL_STATIC void mat__transpose_block_neon(mat_elem_t *At, size_t ldat,
                                                    const mat_elem_t *A,
                                                    size_t lda, size_t rows,
                                                    size_t cols) {
@@ -5740,11 +5558,11 @@ MAT_INTERNAL_STATIC void mat__transpose_block_(mat_elem_t *At, size_t ldat,
                                               const mat_elem_t *A, size_t lda,
                                               size_t rows, size_t cols) {
 #if defined(MAT_HAS_ARM_NEON)
-  mat__transpose_block_neon_(At, ldat, A, lda, rows, cols);
+  mat__transpose_block_neon(At, ldat, A, lda, rows, cols);
 #elif defined(MAT_HAS_AVX2)
   mat__transpose_block_avx2_(At, ldat, A, lda, rows, cols);  // Future
 #else
-  mat__transpose_block_scalar_(At, ldat, A, lda, rows, cols);
+  mat__transpose_block_scalar(At, ldat, A, lda, rows, cols);
 #endif
 }
 
@@ -5796,7 +5614,7 @@ MAT_INTERNAL_STATIC void mat__syrk_t_upper_(mat_elem_t *C, size_t ldc,
 
 // Column-major SYRK: C = alpha * A * A^T + beta * C
 #ifdef MAT_HAS_ARM_NEON
-MAT_INTERNAL_STATIC void mat__syrk_neon_(Mat *C, const Mat *A,
+MAT_INTERNAL_STATIC void mat__syrk_neon(Mat *C, const Mat *A,
                                         mat_elem_t alpha,
                                         mat_elem_t beta, char uplo) {
   size_t n = C->rows;
@@ -5820,7 +5638,7 @@ MAT_INTERNAL_STATIC void mat__syrk_neon_(Mat *C, const Mat *A,
 #endif
 
 // Generic scalar SYRK using MAT_AT/MAT_SET (works with any storage order)
-MAT_INTERNAL_STATIC void mat__syrk_generic_(Mat *C, const Mat *A,
+MAT_INTERNAL_STATIC void mat__syrk_scalar(Mat *C, const Mat *A,
                                            mat_elem_t alpha, mat_elem_t beta,
                                            char uplo) {
   size_t n = C->rows;
@@ -5849,18 +5667,6 @@ MAT_INTERNAL_STATIC void mat__syrk_generic_(Mat *C, const Mat *A,
   }
 }
 
-MAT_INTERNAL_STATIC void mat__syrk_dispatch_(Mat *C, const Mat *A,
-                                             mat_elem_t alpha, mat_elem_t beta,
-                                             char uplo) {
-#if defined(MAT_HAS_ARM_NEON)
-  mat__syrk_neon_(C, A, alpha, beta, uplo);
-#elif defined(MAT_HAS_AVX2)
-  mat_syrk_avx2_(C, A, alpha, beta, uplo);  // Future
-#else
-  mat__syrk_generic_(C, A, alpha, beta, uplo);
-#endif
-}
-
 MATDEF void mat_syrk(Mat *C, const Mat *A, mat_elem_t alpha, mat_elem_t beta,
                      char uplo) {
   MAT_ASSERT_MAT(C);
@@ -5868,12 +5674,12 @@ MATDEF void mat_syrk(Mat *C, const Mat *A, mat_elem_t alpha, mat_elem_t beta,
   MAT_ASSERT(C->rows == C->cols);
   MAT_ASSERT(C->rows == A->rows);
 
-  mat__syrk_dispatch_(C, A, alpha, beta, uplo);
+  MAT_DISPATCH(syrk)(C, A, alpha, beta, uplo);
 }
 
 // Column-major SYRK_T: C = alpha * A^T * A + beta * C
 #ifdef MAT_HAS_ARM_NEON
-MAT_INTERNAL_STATIC void mat__syrk_t_neon_(Mat *C, const Mat *A,
+MAT_INTERNAL_STATIC void mat__syrk_t_neon(Mat *C, const Mat *A,
                                           mat_elem_t alpha,
                                           mat_elem_t beta, char uplo) {
   size_t n = C->rows;  // = A->cols
@@ -5889,7 +5695,7 @@ MAT_INTERNAL_STATIC void mat__syrk_t_neon_(Mat *C, const Mat *A,
 
 // Generic scalar SYRK_T using MAT_AT/MAT_SET (works with any storage order)
 // Computes C = alpha * A^T * A + beta * C
-MAT_INTERNAL_STATIC void mat__syrk_t_generic_(Mat *C, const Mat *A,
+MAT_INTERNAL_STATIC void mat__syrk_t_scalar(Mat *C, const Mat *A,
                                              mat_elem_t alpha, mat_elem_t beta,
                                              char uplo) {
   size_t n = C->rows;
@@ -5918,18 +5724,6 @@ MAT_INTERNAL_STATIC void mat__syrk_t_generic_(Mat *C, const Mat *A,
   }
 }
 
-MAT_INTERNAL_STATIC void mat__syrk_t_dispatch_(Mat *C, const Mat *A,
-                                               mat_elem_t alpha, mat_elem_t beta,
-                                               char uplo) {
-#if defined(MAT_HAS_ARM_NEON)
-  mat__syrk_t_neon_(C, A, alpha, beta, uplo);
-#elif defined(MAT_HAS_AVX2)
-  mat_syrk_t_avx2_(C, A, alpha, beta, uplo);  // Future
-#else
-  mat__syrk_t_generic_(C, A, alpha, beta, uplo);
-#endif
-}
-
 MATDEF void mat_syrk_t(Mat *C, const Mat *A, mat_elem_t alpha, mat_elem_t beta,
                        char uplo) {
   MAT_ASSERT_MAT(C);
@@ -5937,14 +5731,14 @@ MATDEF void mat_syrk_t(Mat *C, const Mat *A, mat_elem_t alpha, mat_elem_t beta,
   MAT_ASSERT(C->rows == C->cols);
   MAT_ASSERT(C->rows == A->cols);
 
-  mat__syrk_t_dispatch_(C, A, alpha, beta, uplo);
+  MAT_DISPATCH(syrk_t)(C, A, alpha, beta, uplo);
 }
 
 /* SYR2K */
 
 // Generic scalar SYR2K: C = alpha*A*B' + alpha*B*A' + beta*C
 // A is n x k, B is n x k, C is n x n symmetric
-MAT_INTERNAL_STATIC void mat__syr2k_generic_(Mat *C, const Mat *A, const Mat *B,
+MAT_INTERNAL_STATIC void mat__syr2k_scalar(Mat *C, const Mat *A, const Mat *B,
                                              mat_elem_t alpha, mat_elem_t beta,
                                              char uplo) {
   size_t n = C->rows;
@@ -6056,7 +5850,7 @@ MAT_INTERNAL_STATIC void mat__syr2k_lower_neon_(mat_elem_t *C, size_t ldc,
   }
 }
 
-MAT_INTERNAL_STATIC void mat__syr2k_neon_(Mat *C, const Mat *A, const Mat *B,
+MAT_INTERNAL_STATIC void mat__syr2k_neon(Mat *C, const Mat *A, const Mat *B,
                                            mat_elem_t alpha, mat_elem_t beta,
                                            char uplo) {
   size_t n = C->rows;
@@ -6067,20 +5861,10 @@ MAT_INTERNAL_STATIC void mat__syr2k_neon_(Mat *C, const Mat *A, const Mat *B,
   } else {
     // Upper triangle: transpose the problem or use generic
     // For now, use generic for upper triangle
-    mat__syr2k_generic_(C, A, B, alpha, beta, uplo);
+    mat__syr2k_scalar(C, A, B, alpha, beta, uplo);
   }
 }
 #endif
-
-MAT_INTERNAL_STATIC void mat__syr2k_dispatch_(Mat *C, const Mat *A, const Mat *B,
-                                               mat_elem_t alpha, mat_elem_t beta,
-                                               char uplo) {
-#ifdef MAT_HAS_ARM_NEON
-  mat__syr2k_neon_(C, A, B, alpha, beta, uplo);
-#else
-  mat__syr2k_generic_(C, A, B, alpha, beta, uplo);
-#endif
-}
 
 MATDEF void mat_syr2k(Mat *C, const Mat *A, const Mat *B, mat_elem_t alpha,
                       mat_elem_t beta, char uplo) {
@@ -6092,7 +5876,7 @@ MATDEF void mat_syr2k(Mat *C, const Mat *A, const Mat *B, mat_elem_t alpha,
   MAT_ASSERT(C->rows == B->rows);
   MAT_ASSERT(A->cols == B->cols);
 
-  mat__syr2k_dispatch_(C, A, B, alpha, beta, uplo);
+  MAT_DISPATCH(syr2k)(C, A, B, alpha, beta, uplo);
 }
 
 // Column-major unblocked Cholesky using dot products for better cache locality
@@ -6664,7 +6448,7 @@ MAT_INTERNAL_STATIC void mat__givens_(mat_elem_t a, mat_elem_t b,
 // [col_i col_j] = [col_i col_j] * [c -s; s c]
 
 #ifdef MAT_HAS_ARM_NEON
-MAT_INTERNAL_STATIC void mat__givens_cols_neon_(mat_elem_t *A, size_t ld,
+MAT_INTERNAL_STATIC void mat__givens_cols_neon(mat_elem_t *A, size_t ld,
                                                 size_t nrows, size_t i, size_t j,
                                                 mat_elem_t c, mat_elem_t s) {
   mat_elem_t *col_i = &A[i * ld];
@@ -6729,7 +6513,7 @@ MAT_INTERNAL_STATIC void mat__givens_cols_neon_(mat_elem_t *A, size_t ld,
 }
 #endif
 
-MAT_INTERNAL_STATIC void mat__givens_cols_scalar_(mat_elem_t *A, size_t ld,
+MAT_INTERNAL_STATIC void mat__givens_cols_scalar(mat_elem_t *A, size_t ld,
                                                   size_t nrows, size_t i,
                                                   size_t j, mat_elem_t c,
                                                   mat_elem_t s) {
@@ -6749,12 +6533,12 @@ MAT_INTERNAL_STATIC void mat__givens_cols_(mat_elem_t *A, size_t ld, size_t nrow
 #if defined(MAT_HAS_ARM_NEON)
   // Need enough rows for NEON to be beneficial
   if (nrows >= MAT_NEON_WIDTH * 4) {
-    mat__givens_cols_neon_(A, ld, nrows, i, j, c, s);
+    mat__givens_cols_neon(A, ld, nrows, i, j, c, s);
   } else {
-    mat__givens_cols_scalar_(A, ld, nrows, i, j, c, s);
+    mat__givens_cols_scalar(A, ld, nrows, i, j, c, s);
   }
 #else
-  mat__givens_cols_scalar_(A, ld, nrows, i, j, c, s);
+  mat__givens_cols_scalar(A, ld, nrows, i, j, c, s);
 #endif
 }
 
