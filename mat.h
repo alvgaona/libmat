@@ -8148,10 +8148,12 @@ MAT_INTERNAL_STATIC void mat_qr_step_with_shifts_(Mat *H, size_t lo, size_t hi,
 
 // Deflation tolerance: use max of relative and absolute threshold
 // Absolute floor prevents issues when diagonals are near-zero
+// Must be large enough to detect "stuck" subdiagonals from numerical noise
+// For single precision, values < 1e-5 are effectively zero after many operations
 #ifdef MAT_DOUBLE_PRECISION
-#define MAT_DEFLATION_ABS_TOL 1e-14
+#define MAT_DEFLATION_ABS_TOL 1e-12
 #else
-#define MAT_DEFLATION_ABS_TOL 1e-7f
+#define MAT_DEFLATION_ABS_TOL 2e-6f
 #endif
 
 MAT_INTERNAL_STATIC int mat_is_negligible_(mat_elem_t sub, mat_elem_t diag_sum) {
@@ -8371,17 +8373,6 @@ MAT_INTERNAL_STATIC void mat_multishift_qr_iter_(Mat *H, mat_elem_t *Z, size_t l
   size_t n = H->rows;
   if (n <= 2) return;
 
-  size_t ns = MAT_QR_MULTISHIFT_NS;
-  size_t nw = MAT_QR_DEFLATION_WINDOW;
-  if (nw > n / 3) nw = n / 3;
-  if (nw < ns) nw = ns;
-  if (ns > nw) ns = nw;
-  if (ns < 2) ns = 2;
-  if (ns % 2 != 0) ns--;  // Must be even
-
-  mat_elem_t *sr = (mat_elem_t *)MAT_MALLOC(nw * sizeof(mat_elem_t));
-  mat_elem_t *si = (mat_elem_t *)MAT_MALLOC(nw * sizeof(mat_elem_t));
-
   size_t max_iter = 30 * n;
   size_t hi = n - 1;
   size_t iter = 0;
@@ -8412,14 +8403,11 @@ MAT_INTERNAL_STATIC void mat_multishift_qr_iter_(Mat *H, mat_elem_t *Z, size_t l
       // 2x2 block converged
       hi -= 2;
     } else {
-      // Use Francis double-shift with Wilkinson shift (optimal convergence)
+      // Use Francis double-shift
       mat_qr_step_(H, lo, hi, Z, ldz);
       iter++;
     }
   }
-
-  MAT_FREE(sr);
-  MAT_FREE(si);
 }
 
 // Extract eigenvalues from upper quasi-triangular matrix
@@ -9226,7 +9214,7 @@ MAT_INTERNAL_STATIC void mat_eigvals_scalar_(Vec *out, const Mat *A) {
         mat_elem_t sub = MAT_AT(H, lo, lo - 1);
         mat_elem_t diag_sum = MAT_FABS(MAT_AT(H, lo - 1, lo - 1)) +
                               MAT_FABS(MAT_AT(H, lo, lo));
-        if (MAT_FABS(sub) < MAT_DEFAULT_EPSILON * diag_sum) {
+        if (mat_is_negligible_(sub, diag_sum)) {
           MAT_SET(H, lo, lo - 1, 0);
           break;
         }
@@ -9371,7 +9359,7 @@ MAT_INTERNAL_STATIC void mat_eigen_scalar_(Mat *V, Vec *eigenvalues, const Mat *
         mat_elem_t sub = MAT_AT(H, lo, lo - 1);
         mat_elem_t diag_sum = MAT_FABS(MAT_AT(H, lo - 1, lo - 1)) +
                               MAT_FABS(MAT_AT(H, lo, lo));
-        if (MAT_FABS(sub) < MAT_DEFAULT_EPSILON * diag_sum) {
+        if (mat_is_negligible_(sub, diag_sum)) {
           MAT_SET(H, lo, lo - 1, 0);
           break;
         }
