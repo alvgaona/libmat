@@ -8244,7 +8244,6 @@ MAT_INTERNAL_STATIC void mat_eigvals_sym_scalar_(Vec *out, const Mat *A) {
   MAT_FREE(diag);
 }
 
-// Public API for symmetric eigenvalue computation
 MATDEF void mat_eigvals_sym(Vec *out, const Mat *A) {
   MAT_ASSERT_MAT(out);
   MAT_ASSERT_MAT(A);

@@ -1,7 +1,7 @@
 /*
  * bench_eigvals.cpp - Compare eigenvalues: libmat vs Eigen vs OpenBLAS/LAPACK
  *
- * Compute eigenvalues of symmetric matrices
+ * Compute eigenvalues of symmetric and non-symmetric matrices
  *
  * Build:
  *   make bench-compare-eigvals
@@ -30,13 +30,17 @@ static void force_single_thread(void) {
 #ifdef MAT_DOUBLE_PRECISION
 using EigenMatrix = Eigen::MatrixXd;
 using EigenVector = Eigen::VectorXd;
+using EigenComplex = Eigen::VectorXcd;
 using Scalar = double;
 #define LAPACK_SYEV LAPACKE_dsyev
+#define LAPACK_GEEV LAPACKE_dgeev
 #else
 using EigenMatrix = Eigen::MatrixXf;
 using EigenVector = Eigen::VectorXf;
+using EigenComplex = Eigen::VectorXcf;
 using Scalar = float;
 #define LAPACK_SYEV LAPACKE_ssyev
+#define LAPACK_GEEV LAPACKE_sgeev
 #endif
 
 typedef struct {
@@ -121,6 +125,78 @@ void bench_openblas(zap_bencher_t* b, void* param) {
     });
 }
 
+/* ========================================================================== */
+/* Non-symmetric eigenvalue benchmarks                                        */
+/* ========================================================================== */
+
+typedef struct {
+    Mat* A;           // Original matrix (preserved)
+    Mat* A_work;      // Working copy for libmat
+    Vec* eig;         // Output eigenvalues for libmat (real parts)
+    Mat* A_lap;       // Working copy for LAPACK (in-place)
+    Scalar* eig_real; // Real parts of eigenvalues for LAPACK
+    Scalar* eig_imag; // Imaginary parts of eigenvalues for LAPACK
+    EigenMatrix* eA;  // Eigen copy
+    size_t n;
+} eigvals_nonsym_ctx_t;
+
+static void fill_random(Mat* A, size_t n) {
+    for (size_t i = 0; i < n; i++) {
+        for (size_t j = 0; j < n; j++) {
+            Scalar v = (Scalar)rand() / RAND_MAX;
+            mat_set_at(A, i, j, v);
+        }
+    }
+}
+
+// libmat eigenvalues (general Hessenberg QR)
+void bench_libmat_nonsym(zap_bencher_t* b, void* param) {
+    eigvals_nonsym_ctx_t* ctx = (eigvals_nonsym_ctx_t*)param;
+    size_t n = ctx->n;
+    size_t flops = 10 * n * n * n;  // Hessenberg + QR iterations
+    zap_bencher_set_throughput_elements(b, flops);
+
+    ZAP_ITER(b, {
+        memcpy(ctx->A_work->data, ctx->A->data, n * n * sizeof(Scalar));
+        mat_eigvals(ctx->eig, ctx->A_work);
+        zap_black_box(ctx->eig->data);
+    });
+}
+
+// Eigen: EigenSolver (general non-symmetric)
+void bench_eigen_nonsym(zap_bencher_t* b, void* param) {
+    eigvals_nonsym_ctx_t* ctx = (eigvals_nonsym_ctx_t*)param;
+    size_t n = ctx->n;
+    size_t flops = 10 * n * n * n;
+    zap_bencher_set_throughput_elements(b, flops);
+
+    ZAP_ITER(b, {
+        Eigen::EigenSolver<EigenMatrix> solver(*ctx->eA, false);  // eigenvalues only
+        EigenComplex eig = solver.eigenvalues();
+        auto ptr = eig.data();
+        zap_black_box(ptr);
+    });
+}
+
+// OpenBLAS/LAPACK: GEEV (general eigenvalue solver)
+void bench_openblas_nonsym(zap_bencher_t* b, void* param) {
+    eigvals_nonsym_ctx_t* ctx = (eigvals_nonsym_ctx_t*)param;
+    size_t n = ctx->n;
+    size_t flops = 10 * n * n * n;
+    zap_bencher_set_throughput_elements(b, flops);
+
+    lapack_int nn = (lapack_int)n;
+
+    ZAP_ITER(b, {
+        // Copy A to working buffer (GEEV is in-place)
+        memcpy(ctx->A_lap->data, ctx->A->data, n * n * sizeof(Scalar));
+        // Column-major, no left eigenvectors ('N'), no right eigenvectors ('N')
+        LAPACK_GEEV(LAPACK_COL_MAJOR, 'N', 'N', nn, ctx->A_lap->data, nn,
+                    ctx->eig_real, ctx->eig_imag, nullptr, nn, nullptr, nn);
+        zap_black_box(ctx->eig_real);
+    });
+}
+
 int main(int argc, char** argv) {
     zap_parse_args(argc, argv);
     srand(42);
@@ -173,5 +249,52 @@ int main(int argc, char** argv) {
     }
 
     zap_compare_group_finish(g);
+
+    // Non-symmetric eigenvalue comparison
+    zap_compare_group_t* g2 = zap_compare_group("eigvals_nonsym");
+    zap_compare_set_baseline(g2, 2);  // OpenBLAS as baseline
+
+    for (size_t s = 0; s < num_sizes; s++) {
+        size_t n = sizes[s];
+
+        Mat* A = mat_mat(n, n);
+        Mat* A_work = mat_mat(n, n);
+        Vec* eig = mat_vec(n);
+        Mat* A_lap = mat_mat(n, n);
+        Scalar* eig_real = (Scalar*)malloc(n * sizeof(Scalar));
+        Scalar* eig_imag = (Scalar*)malloc(n * sizeof(Scalar));
+
+        fill_random(A, n);
+
+        // Create Eigen copy
+        EigenMatrix eA = Eigen::Map<EigenMatrix>(A->data, n, n);
+
+        eigvals_nonsym_ctx_t ctx2 = {
+            A, A_work, eig, A_lap, eig_real, eig_imag,
+            &eA,
+            n
+        };
+
+        zap_compare_ctx_t* cmp2 = zap_compare_begin(
+            g2, zap_benchmark_id("n", (int64_t)n),
+            &ctx2, sizeof(ctx2)
+        );
+
+        zap_compare_impl(cmp2, "libmat", bench_libmat_nonsym);
+        zap_compare_impl(cmp2, "Eigen", bench_eigen_nonsym);
+        zap_compare_impl(cmp2, "OpenBLAS", bench_openblas_nonsym);
+
+        zap_compare_end(cmp2);
+
+        mat_free_mat(A);
+        mat_free_mat(A_work);
+        mat_free_mat(eig);
+        mat_free_mat(A_lap);
+        free(eig_real);
+        free(eig_imag);
+    }
+
+    zap_compare_group_finish(g2);
+
     return zap_finalize();
 }
