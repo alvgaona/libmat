@@ -107,6 +107,20 @@ bench-zap-norms: $(ZAP_BENCH_DIR)/bench_zap_norms
 bench-zap-misc: $(ZAP_BENCH_DIR)/bench_zap_misc
 	./$(ZAP_BENCH_DIR)/bench_zap_misc
 
+# Compare benchmarks (vs Eigen and OpenBLAS)
+COMPARE_BENCH_DIR = tests/bench/compare
+COMPARE_CXXFLAGS = $(CXXFLAGS) -O3 -I$(COMPARE_BENCH_DIR) -I$(ZAP_BENCH_DIR)
+COMPARE_LDLIBS = $(LDLIBS) -lopenblas -llapacke
+
+$(COMPARE_BENCH_DIR)/%: $(COMPARE_BENCH_DIR)/%.cpp $(ZAP_BENCH_DIR)/zap.h mat.h
+	$(CXX) $(COMPARE_CXXFLAGS) -o $@ $< $(COMPARE_LDLIBS)
+
+bench-compare-eigvals: $(COMPARE_BENCH_DIR)/bench_eigvals
+	./$(COMPARE_BENCH_DIR)/bench_eigvals
+
+bench-compare-svd: $(COMPARE_BENCH_DIR)/bench_svd
+	./$(COMPARE_BENCH_DIR)/bench_svd
+
 clean:
 	find examples tests -type f ! -name "*.c" ! -name "*.cpp" ! -name "*.h" -delete
 	rm -rf examples/*.dSYM tests/*.dSYM
