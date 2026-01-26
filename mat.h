@@ -30,23 +30,7 @@
 #define MAT_ARCH "SCALAR"
 #endif
 
-// ============================================================================
-// SIMD Dispatch Architecture
-// ============================================================================
-// This library uses a section-based SIMD dispatch pattern:
-//
-// 1. SCALAR KERNELS: _scalar_ suffix functions (always compiled)
-// 2. NEON KERNELS:   _neon_ suffix functions (ARM NEON, guarded by #ifdef)
-// 3. AVX2 KERNELS:   _avx2_ suffix functions (x86 AVX2, guarded by #ifdef)
-// 4. DISPATCH LAYER: _dispatch_ suffix functions select best implementation
-// 5. PUBLIC API:     Clean functions call dispatchers (no #ifdefs)
-//
-// To add a new SIMD architecture:
-// 1. Add detection macro (e.g., MAT_HAS_SVE)
-// 2. Add abstraction macros (e.g., MAT_SVE_*)
-// 3. Implement _sve_ suffix functions
-// 4. Update _dispatch_ functions with new #elif branch
-// ============================================================================
+/* SIMD Dispatch Architecture */
 
 // OpenMP detection (auto-enabled when compiled with -fopenmp)
 #if defined(_OPENMP)
@@ -286,9 +270,7 @@ typedef float mat_elem_t;
 #endif
 #endif // __ARM_NEON
 
-// ============================================================================
-// AVX2 SIMD macros (placeholder for future implementation)
-// ============================================================================
+/* AVX2 SIMD macros (placeholder for future implementation) */
 #ifdef MAT_HAS_AVX2
 // AVX2 double precision (4 doubles per 256-bit register)
 // AVX2 single precision (8 floats per 256-bit register)
@@ -920,10 +902,7 @@ static inline void *mat_scratch_alloc_(size_t bytes) {
 static inline void mat_scratch_free_(void *ptr) { MAT_FREE(ptr); }
 #endif
 
-// ============================================================================
-// Raw kernels (used by BLAS-like operations and algorithms)
-// These must be defined early so all functions can use them.
-// ============================================================================
+/* Raw kernels (used by BLAS-like operations and algorithms) */
 
 /* Kernel dispatch macro - selects architecture-specific implementation */
 #ifdef MAT_HAS_ARM_NEON
@@ -3812,9 +3791,7 @@ MATDEF mat_elem_t mat_nnz(const Mat *a) {
   return mat__nnz_dispatch_(a);
 }
 
-// ============================================================================
-// Householder Reflections
-// ============================================================================
+/* Householder Reflections */
 
 MATDEF mat_elem_t mat_householder(Vec *v, mat_elem_t *tau, const Vec *x) {
   MAT_ASSERT_MAT(v);
@@ -4761,9 +4738,7 @@ MATDEF int mat_lu(const Mat *A, Mat *L, Mat *U, Perm *p, Perm *q) {
   return swap_count;
 }
 
-// ============================================================================
-// Triangular system solvers (TRSV)
-// ============================================================================
+/* Triangular system solvers (TRSV) */
 
 // --- mat_solve_tril: Solve Lx = b, L lower triangular (non-unit diagonal) ---
 
@@ -5036,9 +5011,7 @@ MATDEF void mat_solve_trilt(Vec *x, const Mat *L, const Vec *b) {
   mat__solve_trilt_dispatch_(x, L, b);
 }
 
-// ============================================================================
-// Linear system solvers (using triangular solvers)
-// ============================================================================
+/* Linear system solvers */
 
 MATDEF void mat_solve(Vec *x, const Mat *A, const Vec *b) {
   MAT_ASSERT_MAT(A);
@@ -5106,9 +5079,7 @@ MATDEF int mat_solve_spd(Vec *x, const Mat *A, const Vec *b) {
   return 0;
 }
 
-// ============================================================================
-// Cholesky decomposition (A = L * L^T, A must be symmetric positive definite)
-// ============================================================================
+/* Cholesky decomposition */
 
 #define MAT_CHOL_BLOCK_SIZE 32
 
@@ -5262,12 +5233,7 @@ mat__gemm_lower_strided_neon_(mat_elem_t *C, size_t ldc, mat_elem_t alpha,
 
 
 
-// ============================================================================
-// Column-major SYRK: C = alpha * A * A^T + beta * C
-// A is m×k column-major: A[i,p] = A[p*lda + i] (column p contiguous)
-// C is m×m column-major: C[i,j] = C[j*ldc + i] (column j contiguous)
-// Uses rank-1 update algorithm for cache-friendly column access
-// ============================================================================
+/* SYRK: C = alpha * A * A^T + beta * C */
 
 // Column-major SYRK lower triangle - scalar implementation
 MAT_INTERNAL_STATIC void mat__syrk_lower_scalar_(
@@ -6004,9 +5970,7 @@ MATDEF void mat_syrk_t(Mat *C, const Mat *A, mat_elem_t alpha, mat_elem_t beta,
   mat__syrk_t_dispatch_(C, A, alpha, beta, uplo);
 }
 
-/* ========================================================================== */
-/* SYR2K: C = alpha * A * B^T + alpha * B * A^T + beta * C                    */
-/* ========================================================================== */
+/* SYR2K: C = alpha * A * B^T + alpha * B * A^T + beta * C */
 
 // Generic scalar SYR2K: C = alpha*A*B' + alpha*B*A' + beta*C
 // A is n x k, B is n x k, C is n x n symmetric
@@ -6530,18 +6494,12 @@ MATDEF mat_elem_t mat_det(const Mat *A) {
   return det;
 }
 
-// ============================================================================
-// SVD: One-sided Jacobi algorithm
-// ============================================================================
+/* SVD */
 
 // Column-major SVD helpers - columns are contiguous for efficient SIMD
 // W->data is column-major: W->data[row + col*m] = W[row, col]
 
-// ============================================================================
-// Bidiagonalization for SVD (Golub-Kahan)
-// Reduces A (m x n, m >= n) to bidiagonal form: A = U_b * B * V_b^T
-// B has main diagonal d[0..n-1] and superdiagonal e[0..n-2]
-// ============================================================================
+/* Bidiagonalization for SVD (Golub-Kahan) */
 
 // Apply Householder from left to zero out column below diagonal
 // H = I - tau * v * v^T, applied as A = H * A = A - tau * v * (v^T * A)
@@ -6705,11 +6663,7 @@ MAT_INTERNAL_STATIC void mat__bidiag_(mat_elem_t *A, size_t m, size_t n,
   MAT_FREE(v_right);
 }
 
-// ============================================================================
-// QR iteration for bidiagonal SVD (Golub-Kahan)
-// Computes singular values of bidiagonal matrix B (diagonal d, superdiagonal e)
-// Optionally accumulates Givens rotations into U (m x m) and V (n x n)
-// ============================================================================
+/* QR iteration for bidiagonal SVD */
 
 // Compute Givens rotation to zero out b given [a; b]
 // Returns c, s such that [c s; -s c]^T * [a; b] = [r; 0]
@@ -7948,9 +7902,7 @@ MAT_INTERNAL_STATIC void mat__qr_step_(Mat *H, size_t lo, size_t hi,
   }
 }
 
-/* ========================================================================== */
-/* Multishift QR with Aggressive Early Deflation                              */
-/* ========================================================================== */
+/* Multishift QR with Aggressive Early Deflation */
 
 // Apply a 3x3 Householder reflector P = I - tau * v * v^T to H from both sides
 // v = [1, v1, v2], affects rows/cols r0, r0+1, r0+2
@@ -8644,9 +8596,7 @@ MAT_INTERNAL_STATIC void mat__trevc_(Mat *V, const Mat *T) {
   }
 }
 
-/* ========================================================================== */
-/* Symmetric Eigenvalue Solver via Tridiagonalization                         */
-/* ========================================================================== */
+/* Symmetric Eigenvalue Solver */
 
 // Block size for blocked tridiagonalization
 #ifndef MAT_TRIDIAG_BLOCK_SIZE
@@ -8964,9 +8914,7 @@ MAT_INTERNAL_STATIC void mat__tridiag_qr_step_(mat_elem_t *d, mat_elem_t *e,
   }
 }
 
-/* ========================================================================== */
-/* Tridiagonal QR Iteration                                                   */
-/* ========================================================================== */
+/* Tridiagonal QR Iteration */
 
 // Full QR iteration on tridiagonal matrix with deflation
 // If Z != NULL, accumulates Givens rotations into Z for eigenvector computation
@@ -9051,9 +8999,7 @@ MATDEF void mat_eigvals_sym(Vec *out, const Mat *A) {
   mat__eigvals_sym_scalar_(out, A);
 }
 
-/* ========================================================================== */
-/* Symmetric Eigendecomposition (eigenvalues + eigenvectors)                  */
-/* ========================================================================== */
+/* Symmetric Eigendecomposition */
 
 // Scalar implementation of symmetric eigendecomposition
 MAT_INTERNAL_STATIC void mat__eigen_sym_scalar_(Mat *V, Vec *eigenvalues, const Mat *A) {
