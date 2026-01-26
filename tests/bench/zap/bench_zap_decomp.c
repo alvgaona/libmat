@@ -1,6 +1,6 @@
 /*
  * ZAP Benchmarks for libmat decomposition operations
- * Operations: qr, plu, chol
+ * Operations: qr, plu, chol, eigvals
  */
 
 #define ZAP_IMPLEMENTATION
@@ -55,6 +55,7 @@ typedef struct {
     Mat* R;
     Mat* L;
     Mat* U;
+    Vec* eig;
     Perm* p;
     size_t n;
 } decomp_ctx_t;
@@ -112,9 +113,33 @@ static void iter_chol(zap_bencher_t* b, void* param) {
     });
 }
 
-/* ========================================================================== */
-/* Benchmark groups                                                           */
-/* ========================================================================== */
+// EIGVALS: eigenvalues only (general Hessenberg QR)
+static void iter_eigvals(zap_bencher_t* b, void* param) {
+    decomp_ctx_t* ctx = (decomp_ctx_t*)param;
+
+    // Throughput: read A (n^2), write eigenvalues (n)
+    zap_bencher_set_throughput_bytes(b, (ctx->n * ctx->n + ctx->n) * sizeof(mat_elem_t));
+
+    ZAP_ITER(b, {
+        mat_eigvals(ctx->eig, ctx->A);
+        zap_black_box(ctx->eig->data);
+    });
+}
+
+// EIGVALS_SYM: eigenvalues of symmetric matrix (tridiagonal QR)
+static void iter_eigvals_sym(zap_bencher_t* b, void* param) {
+    decomp_ctx_t* ctx = (decomp_ctx_t*)param;
+
+    // Throughput: read A (n^2), write eigenvalues (n)
+    zap_bencher_set_throughput_bytes(b, (ctx->n * ctx->n + ctx->n) * sizeof(mat_elem_t));
+
+    ZAP_ITER(b, {
+        mat_eigvals_sym(ctx->eig, ctx->A);
+        zap_black_box(ctx->eig->data);
+    });
+}
+
+// Benchmark groups
 
 static void bench_qr_group(void) {
     zap_runtime_group_t* group = zap_benchmark_group("qr");
@@ -214,9 +239,85 @@ static void bench_chol_group(void) {
     zap_group_finish(group);
 }
 
-/* ========================================================================== */
-/* Main                                                                       */
-/* ========================================================================== */
+static void bench_eigvals_group(void) {
+    zap_runtime_group_t* group = zap_benchmark_group("eigvals");
+    zap_group_tag(group, "decomp");
+
+    // O(n^3) operations - smaller sizes due to iterative algorithm
+    size_t sizes[] = {32, 64, 128, 256};
+    size_t num_sizes = sizeof(sizes) / sizeof(sizes[0]);
+
+    for (size_t i = 0; i < num_sizes; i++) {
+        size_t n = sizes[i];
+
+        decomp_ctx_t ctx;
+        ctx.n = n;
+        ctx.A = mat_zeros(n, n);
+        ctx.Q = NULL;
+        ctx.R = NULL;
+        ctx.L = NULL;
+        ctx.U = NULL;
+        ctx.eig = mat_vec(n);
+        ctx.p = NULL;
+
+        // Create symmetric matrix for better convergence
+        for (size_t ii = 0; ii < n; ii++) {
+            for (size_t jj = ii; jj < n; jj++) {
+                mat_elem_t v = (mat_elem_t)(rand() % 1000) / 100.0f;
+                mat_set_at(ctx.A, ii, jj, v);
+                mat_set_at(ctx.A, jj, ii, v);
+            }
+        }
+
+        zap_benchmark_id_t id = zap_benchmark_id("eigvals", (int64_t)n);
+        zap_bench_with_input(group, id, &ctx, sizeof(ctx), iter_eigvals);
+
+        mat_free_mat(ctx.A);
+        mat_free_mat(ctx.eig);
+    }
+
+    zap_group_finish(group);
+}
+
+static void bench_eigvals_sym_group(void) {
+    zap_runtime_group_t* group = zap_benchmark_group("eigvals_sym");
+    zap_group_tag(group, "decomp");
+
+    // O(n^3) tridiagonalization + O(n^2) per QR iteration
+    size_t sizes[] = {32, 64, 128, 256};
+    size_t num_sizes = sizeof(sizes) / sizeof(sizes[0]);
+
+    for (size_t i = 0; i < num_sizes; i++) {
+        size_t n = sizes[i];
+
+        decomp_ctx_t ctx;
+        ctx.n = n;
+        ctx.A = mat_zeros(n, n);
+        ctx.Q = NULL;
+        ctx.R = NULL;
+        ctx.L = NULL;
+        ctx.U = NULL;
+        ctx.eig = mat_vec(n);
+        ctx.p = NULL;
+
+        // Create symmetric matrix
+        for (size_t ii = 0; ii < n; ii++) {
+            for (size_t jj = ii; jj < n; jj++) {
+                mat_elem_t v = (mat_elem_t)(rand() % 1000) / 100.0f;
+                mat_set_at(ctx.A, ii, jj, v);
+                mat_set_at(ctx.A, jj, ii, v);
+            }
+        }
+
+        zap_benchmark_id_t id = zap_benchmark_id("eigvals_sym", (int64_t)n);
+        zap_bench_with_input(group, id, &ctx, sizeof(ctx), iter_eigvals_sym);
+
+        mat_free_mat(ctx.A);
+        mat_free_mat(ctx.eig);
+    }
+
+    zap_group_finish(group);
+}
 
 int main(int argc, char** argv) {
     srand(42);
@@ -225,6 +326,8 @@ int main(int argc, char** argv) {
     bench_qr_group();
     bench_plu_group();
     bench_chol_group();
+    bench_eigvals_group();
+    bench_eigvals_sym_group();
 
     return zap_finalize();
 }
