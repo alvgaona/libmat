@@ -926,7 +926,7 @@ static inline void mat_scratch_free_(void *ptr) { MAT_FREE(ptr); }
 // ============================================================================
 
 // AXPY: y[0:n] += alpha * x[0:n] (NEON-optimized when available)
-MAT_INTERNAL_STATIC void mat_axpy_raw_(mat_elem_t *y, mat_elem_t alpha,
+MAT_INTERNAL_STATIC void mat__axpy_raw_(mat_elem_t *y, mat_elem_t alpha,
                                        const mat_elem_t *x, size_t n) {
 #ifdef MAT_HAS_ARM_NEON
   MAT_NEON_TYPE valpha = MAT_NEON_DUP(alpha);
@@ -969,7 +969,7 @@ MAT_INTERNAL_STATIC void mat_axpy_raw_(mat_elem_t *y, mat_elem_t alpha,
 }
 
 // SCAL: y[0:n] *= alpha (NEON-optimized when available)
-MAT_INTERNAL_STATIC void mat_scal_raw_(mat_elem_t *y, mat_elem_t alpha,
+MAT_INTERNAL_STATIC void mat__scal_raw_(mat_elem_t *y, mat_elem_t alpha,
                                        size_t n) {
   if (alpha == 1) return;
   if (alpha == 0) {
@@ -1007,7 +1007,7 @@ MAT_INTERNAL_STATIC void mat_scal_raw_(mat_elem_t *y, mat_elem_t alpha,
 }
 
 // DOT: result = sum(a[i] * b[i]) (NEON-optimized when available)
-MAT_INTERNAL_STATIC mat_elem_t mat_dot_raw_(const mat_elem_t *a,
+MAT_INTERNAL_STATIC mat_elem_t mat__dot_raw_(const mat_elem_t *a,
                                             const mat_elem_t *b, size_t n) {
 #ifdef MAT_HAS_ARM_NEON
   MAT_NEON_TYPE vsum0 = MAT_NEON_DUP(0);
@@ -1059,7 +1059,7 @@ MAT_INTERNAL_STATIC mat_elem_t mat_dot_raw_(const mat_elem_t *a,
 
 // SYR2_COL: y[i] -= alpha*a[i] + beta*b[i] (fused rank-2 column update)
 // Used in symmetric tridiagonalization - single pass instead of two axpy calls
-MAT_INTERNAL_STATIC void mat_syr2_col_raw_(mat_elem_t *y, mat_elem_t alpha,
+MAT_INTERNAL_STATIC void mat__syr2_col_raw_(mat_elem_t *y, mat_elem_t alpha,
                                             const mat_elem_t *a, mat_elem_t beta,
                                             const mat_elem_t *b, size_t n) {
 #ifdef MAT_HAS_ARM_NEON
@@ -1114,7 +1114,7 @@ MAT_INTERNAL_STATIC void mat_syr2_col_raw_(mat_elem_t *y, mat_elem_t alpha,
 }
 
 // COPY: dest[0:n] = src[0:n] (NEON-optimized when available)
-MAT_INTERNAL_STATIC void mat_copy_raw_(mat_elem_t *dest, const mat_elem_t *src,
+MAT_INTERNAL_STATIC void mat__copy_raw_(mat_elem_t *dest, const mat_elem_t *src,
                                        size_t n) {
 #ifdef MAT_HAS_ARM_NEON
   size_t i = 0;
@@ -1133,7 +1133,7 @@ MAT_INTERNAL_STATIC void mat_copy_raw_(mat_elem_t *dest, const mat_elem_t *src,
 }
 
 // SWAP: swap(a[0:n], b[0:n]) (NEON-optimized when available)
-MAT_INTERNAL_STATIC void mat_swap_raw_(mat_elem_t *a, mat_elem_t *b, size_t n) {
+MAT_INTERNAL_STATIC void mat__swap_raw_(mat_elem_t *a, mat_elem_t *b, size_t n) {
 #ifdef MAT_HAS_ARM_NEON
   size_t i = 0;
   for (; i + MAT_NEON_WIDTH * 4 <= n; i += MAT_NEON_WIDTH * 4) {
@@ -1169,7 +1169,7 @@ MAT_INTERNAL_STATIC void mat_swap_raw_(mat_elem_t *a, mat_elem_t *b, size_t n) {
 }
 
 // AMAX: returns max(|arr[0:n]|) (BLAS AMAX - absolute max value)
-MAT_INTERNAL_STATIC mat_elem_t mat_amax_raw_(const mat_elem_t *arr, size_t n) {
+MAT_INTERNAL_STATIC mat_elem_t mat__amax_raw_(const mat_elem_t *arr, size_t n) {
   if (n == 0) return 0;
 
 #ifdef MAT_HAS_ARM_NEON
@@ -1214,14 +1214,14 @@ MAT_INTERNAL_STATIC mat_elem_t mat_amax_raw_(const mat_elem_t *arr, size_t n) {
 
 // IAMAX: returns index of max(|arr[0:n]|) (BLAS IAMAX)
 // Also returns the max value via max_out if non-NULL
-MAT_INTERNAL_STATIC size_t mat_iamax_raw_(const mat_elem_t *arr, size_t n,
+MAT_INTERNAL_STATIC size_t mat__iamax_raw_(const mat_elem_t *arr, size_t n,
                                           mat_elem_t *max_out) {
   if (n == 0) {
     if (max_out) *max_out = 0;
     return 0;
   }
 
-  mat_elem_t max_val = mat_amax_raw_(arr, n);
+  mat_elem_t max_val = mat__amax_raw_(arr, n);
   if (max_out) *max_out = max_val;
 
   // Find index of max value
@@ -1437,7 +1437,7 @@ MATDEF bool mat_equals(const Mat *a, const Mat *b) {
 }
 
 #ifdef MAT_HAS_ARM_NEON
-MAT_INTERNAL_STATIC bool mat_equals_tol_neon_(const Mat *a, const Mat *b,
+MAT_INTERNAL_STATIC bool mat__equals_tol_neon_(const Mat *a, const Mat *b,
                                               mat_elem_t epsilon) {
   size_t n = a->rows * a->cols;
   const mat_elem_t *pa = a->data;
@@ -1490,7 +1490,7 @@ MAT_INTERNAL_STATIC bool mat_equals_tol_neon_(const Mat *a, const Mat *b,
 }
 #endif
 
-MAT_INTERNAL_STATIC bool mat_equals_tol_scalar_(const Mat *a, const Mat *b,
+MAT_INTERNAL_STATIC bool mat__equals_tol_scalar_(const Mat *a, const Mat *b,
                                                 mat_elem_t epsilon) {
   size_t n = a->rows * a->cols;
   for (size_t i = 0; i < n; i++) {
@@ -1504,14 +1504,14 @@ MAT_INTERNAL_STATIC bool mat_equals_tol_scalar_(const Mat *a, const Mat *b,
 }
 
 // Dispatch: select implementation based on available SIMD
-MAT_INTERNAL_STATIC bool mat_equals_tol_dispatch_(const Mat *a, const Mat *b,
+MAT_INTERNAL_STATIC bool mat__equals_tol_dispatch_(const Mat *a, const Mat *b,
                                                    mat_elem_t epsilon) {
 #if defined(MAT_HAS_ARM_NEON)
-  return mat_equals_tol_neon_(a, b, epsilon);
+  return mat__equals_tol_neon_(a, b, epsilon);
 #elif defined(MAT_HAS_AVX2)
   return mat_equals_tol_avx2_(a, b, epsilon);  // Future
 #else
-  return mat_equals_tol_scalar_(a, b, epsilon);
+  return mat__equals_tol_scalar_(a, b, epsilon);
 #endif
 }
 
@@ -1522,7 +1522,7 @@ MATDEF bool mat_equals_tol(const Mat *a, const Mat *b, mat_elem_t epsilon) {
   if (a->rows != b->rows || a->cols != b->cols)
     return false;
 
-  return mat_equals_tol_dispatch_(a, b, epsilon);
+  return mat__equals_tol_dispatch_(a, b, epsilon);
 }
 
 /* Element-wise Unary */
@@ -1684,7 +1684,7 @@ MATDEF void mat_atan2(Mat *out, const Mat *y, const Mat *x) {
 
 MATDEF void mat_scale(Mat *out, mat_elem_t k) {
   MAT_ASSERT_MAT(out);
-  mat_scal_raw_(out->data, k, out->rows * out->cols);
+  mat__scal_raw_(out->data, k, out->rows * out->cols);
 }
 
 MATDEF Mat *mat_rscale(const Mat *m, mat_elem_t k) {
@@ -1871,7 +1871,7 @@ MATDEF mat_elem_t mat_dot(const Vec *v1, const Vec *v2) {
   MAT_ASSERT_MAT(v1);
   MAT_ASSERT_MAT(v2);
   MAT_ASSERT(v1->rows * v1->cols == v2->rows * v2->cols);
-  return mat_dot_raw_(v1->data, v2->data, v1->rows * v1->cols);
+  return mat__dot_raw_(v1->data, v2->data, v1->rows * v1->cols);
 }
 
 MATDEF void mat_cross(Vec *out, const Vec *v1, const Vec *v2) {
@@ -1892,7 +1892,7 @@ MATDEF void mat_cross(Vec *out, const Vec *v1, const Vec *v2) {
 }
 
 #ifdef MAT_HAS_ARM_NEON
-MAT_INTERNAL_STATIC void mat_outer_neon_(Mat *out, const Vec *v1,
+MAT_INTERNAL_STATIC void mat__outer_neon_(Mat *out, const Vec *v1,
                                          const Vec *v2) {
   size_t m = v1->rows * v1->cols;
   size_t n = v2->rows * v2->cols;
@@ -1930,7 +1930,7 @@ MAT_INTERNAL_STATIC void mat_outer_neon_(Mat *out, const Vec *v1,
 }
 #endif
 
-MAT_INTERNAL_STATIC void mat_outer_scalar_(Mat *out, const Vec *v1,
+MAT_INTERNAL_STATIC void mat__outer_scalar_(Mat *out, const Vec *v1,
                                            const Vec *v2) {
   size_t m = v1->rows * v1->cols;
   size_t n = v2->rows * v2->cols;
@@ -1946,14 +1946,14 @@ MAT_INTERNAL_STATIC void mat_outer_scalar_(Mat *out, const Vec *v1,
 }
 
 // Dispatch: select implementation based on available SIMD
-MAT_INTERNAL_STATIC void mat_outer_dispatch_(Mat *out, const Vec *v1,
+MAT_INTERNAL_STATIC void mat__outer_dispatch_(Mat *out, const Vec *v1,
                                               const Vec *v2) {
 #if defined(MAT_HAS_ARM_NEON)
-  mat_outer_neon_(out, v1, v2);
+  mat__outer_neon_(out, v1, v2);
 #elif defined(MAT_HAS_AVX2)
   mat_outer_avx2_(out, v1, v2);  // Future
 #else
-  mat_outer_scalar_(out, v1, v2);
+  mat__outer_scalar_(out, v1, v2);
 #endif
 }
 
@@ -1966,7 +1966,7 @@ MATDEF void mat_outer(Mat *out, const Vec *v1, const Vec *v2) {
   size_t n = v2->rows * v2->cols;
   MAT_ASSERT(out->rows == m && out->cols == n);
 
-  mat_outer_dispatch_(out, v1, v2);
+  mat__outer_dispatch_(out, v1, v2);
 }
 
 MATDEF mat_elem_t mat_bilinear(const Vec *x, const Mat *A, const Vec *y) {
@@ -2005,17 +2005,17 @@ MATDEF void mat_axpy(Vec *y, mat_elem_t alpha, const Vec *x) {
   MAT_ASSERT_MAT(x);
   MAT_ASSERT(y->rows == x->rows);
 
-  mat_axpy_raw_(y->data, alpha, x->data, x->rows);
+  mat__axpy_raw_(y->data, alpha, x->data, x->rows);
 }
 
 // y = alpha * A * x + beta * y (BLAS Level-2: gemv)
 #ifdef MAT_HAS_ARM_NEON
 // Forward declaration for fallback
-MAT_INTERNAL_STATIC void mat_gemv_scalar_(Vec *y, mat_elem_t alpha,
+MAT_INTERNAL_STATIC void mat__gemv_scalar_(Vec *y, mat_elem_t alpha,
                                           const Mat *A, const Vec *x,
                                           mat_elem_t beta);
 
-MAT_INTERNAL_STATIC void mat_gemv_neon_(Vec *y, mat_elem_t alpha, const Mat *A,
+MAT_INTERNAL_STATIC void mat__gemv_neon_(Vec *y, mat_elem_t alpha, const Mat *A,
                                         const Vec *x, mat_elem_t beta) {
   // Column-major: columns are contiguous, use AXPY-style algorithm
   // Process 8 columns at a time for better instruction-level parallelism
@@ -2026,7 +2026,7 @@ MAT_INTERNAL_STATIC void mat_gemv_neon_(Vec *y, mat_elem_t alpha, const Mat *A,
   const mat_elem_t *px = x->data;
 
   // Scale y by beta first
-  mat_scal_raw_(py, beta, m);
+  mat__scal_raw_(py, beta, m);
 
   // Process 8 columns at a time for better ILP
   size_t j = 0;
@@ -2112,7 +2112,7 @@ MAT_INTERNAL_STATIC void mat_gemv_neon_(Vec *y, mat_elem_t alpha, const Mat *A,
 }
 #endif
 
-MAT_INTERNAL_STATIC void mat_gemv_scalar_(Vec *y, mat_elem_t alpha,
+MAT_INTERNAL_STATIC void mat__gemv_scalar_(Vec *y, mat_elem_t alpha,
                                           const Mat *A, const Vec *x,
                                           mat_elem_t beta) {
   size_t m = A->rows;
@@ -2122,22 +2122,22 @@ MAT_INTERNAL_STATIC void mat_gemv_scalar_(Vec *y, mat_elem_t alpha,
   const mat_elem_t *px = x->data;
 
   // Scale y by beta, then accumulate column-by-column: y += alpha * x[j] * A[:,j]
-  mat_scal_raw_(py, beta, m);
+  mat__scal_raw_(py, beta, m);
   for (size_t j = 0; j < n; j++) {
-    mat_axpy_raw_(py, alpha * px[j], &pa[j * m], m);
+    mat__axpy_raw_(py, alpha * px[j], &pa[j * m], m);
   }
 }
 
 // Dispatch: select implementation based on available SIMD
-MAT_INTERNAL_STATIC void mat_gemv_dispatch_(Vec *y, mat_elem_t alpha,
+MAT_INTERNAL_STATIC void mat__gemv_dispatch_(Vec *y, mat_elem_t alpha,
                                              const Mat *A, const Vec *x,
                                              mat_elem_t beta) {
 #if defined(MAT_HAS_ARM_NEON)
-  mat_gemv_neon_(y, alpha, A, x, beta);
+  mat__gemv_neon_(y, alpha, A, x, beta);
 #elif defined(MAT_HAS_AVX2)
   mat_gemv_avx2_(y, alpha, A, x, beta);  // Future
 #else
-  mat_gemv_scalar_(y, alpha, A, x, beta);
+  mat__gemv_scalar_(y, alpha, A, x, beta);
 #endif
 }
 
@@ -2149,13 +2149,13 @@ MATDEF void mat_gemv(Vec *y, mat_elem_t alpha, const Mat *A, const Vec *x,
   MAT_ASSERT(A->rows == y->rows);
   MAT_ASSERT(A->cols == x->rows);
 
-  mat_gemv_dispatch_(y, alpha, A, x, beta);
+  mat__gemv_dispatch_(y, alpha, A, x, beta);
 }
 
 // y = alpha * A^T * x + beta * y (GEMV transposed)
 // A is m×n, x is m×1, y is n×1
 #ifdef MAT_HAS_ARM_NEON
-MAT_INTERNAL_STATIC void mat_gemv_t_neon_(Vec *y, mat_elem_t alpha,
+MAT_INTERNAL_STATIC void mat__gemv_t_neon_(Vec *y, mat_elem_t alpha,
                                           const Mat *A, const Vec *x,
                                           mat_elem_t beta) {
   size_t m = A->rows;
@@ -2228,7 +2228,7 @@ MAT_INTERNAL_STATIC void mat_gemv_t_neon_(Vec *y, mat_elem_t alpha,
 }
 #endif
 
-MAT_INTERNAL_STATIC void mat_gemv_t_scalar_(Vec *y, mat_elem_t alpha,
+MAT_INTERNAL_STATIC void mat__gemv_t_scalar_(Vec *y, mat_elem_t alpha,
                                             const Mat *A, const Vec *x,
                                             mat_elem_t beta) {
   size_t m = A->rows;
@@ -2239,20 +2239,20 @@ MAT_INTERNAL_STATIC void mat_gemv_t_scalar_(Vec *y, mat_elem_t alpha,
 
   // y[j] = beta * y[j] + alpha * dot(A[:,j], x)
   for (size_t j = 0; j < n; j++) {
-    py[j] = beta * py[j] + alpha * mat_dot_raw_(&pa[j * m], px, m);
+    py[j] = beta * py[j] + alpha * mat__dot_raw_(&pa[j * m], px, m);
   }
 }
 
 // Dispatch: select implementation based on available SIMD
-MAT_INTERNAL_STATIC void mat_gemv_t_dispatch_(Vec *y, mat_elem_t alpha,
+MAT_INTERNAL_STATIC void mat__gemv_t_dispatch_(Vec *y, mat_elem_t alpha,
                                                const Mat *A, const Vec *x,
                                                mat_elem_t beta) {
 #if defined(MAT_HAS_ARM_NEON)
-  mat_gemv_t_neon_(y, alpha, A, x, beta);
+  mat__gemv_t_neon_(y, alpha, A, x, beta);
 #elif defined(MAT_HAS_AVX2)
   mat_gemv_t_avx2_(y, alpha, A, x, beta);  // Future
 #else
-  mat_gemv_t_scalar_(y, alpha, A, x, beta);
+  mat__gemv_t_scalar_(y, alpha, A, x, beta);
 #endif
 }
 
@@ -2264,12 +2264,12 @@ MATDEF void mat_gemv_t(Vec *y, mat_elem_t alpha, const Mat *A, const Vec *x,
   MAT_ASSERT(A->cols == y->rows); // A^T has n rows
   MAT_ASSERT(A->rows == x->rows); // A^T has m cols
 
-  mat_gemv_t_dispatch_(y, alpha, A, x, beta);
+  mat__gemv_t_dispatch_(y, alpha, A, x, beta);
 }
 
 // A += alpha * x * y^T (BLAS Level-2: ger - rank-1 update)
 // Column-major: A[:,j] += alpha * y[j] * x (columns are contiguous)
-MAT_INTERNAL_STATIC void mat_ger_(Mat *A, mat_elem_t alpha, const Vec *x,
+MAT_INTERNAL_STATIC void mat__ger_(Mat *A, mat_elem_t alpha, const Vec *x,
                                   const Vec *y) {
   size_t m = A->rows;
   size_t n = A->cols;
@@ -2278,7 +2278,7 @@ MAT_INTERNAL_STATIC void mat_ger_(Mat *A, mat_elem_t alpha, const Vec *x,
   const mat_elem_t *py = y->data;
 
   for (size_t j = 0; j < n; j++) {
-    mat_axpy_raw_(&pa[j * m], alpha * py[j], px, m);
+    mat__axpy_raw_(&pa[j * m], alpha * py[j], px, m);
   }
 }
 
@@ -2289,31 +2289,31 @@ MATDEF void mat_ger(Mat *A, mat_elem_t alpha, const Vec *x, const Vec *y) {
   MAT_ASSERT(A->rows == x->rows);
   MAT_ASSERT(A->cols == y->rows);
 
-  mat_ger_(A, alpha, x, y);
+  mat__ger_(A, alpha, x, y);
 }
 
 // A += alpha * x * x^T (BLAS Level-2: syr - symmetric rank-1 update)
 // Column-major: A[j:n, j] += alpha * x[j] * x[j:n] (lower)
 //               A[0:j+1, j] += alpha * x[j] * x[0:j+1] (upper)
-MAT_INTERNAL_STATIC void mat_syr_lower_(Mat *A, mat_elem_t alpha,
+MAT_INTERNAL_STATIC void mat__syr_lower_(Mat *A, mat_elem_t alpha,
                                         const Vec *x) {
   size_t n = A->rows;
   mat_elem_t *pa = A->data;
   const mat_elem_t *px = x->data;
 
   for (size_t j = 0; j < n; j++) {
-    mat_axpy_raw_(&pa[j * n + j], alpha * px[j], &px[j], n - j);
+    mat__axpy_raw_(&pa[j * n + j], alpha * px[j], &px[j], n - j);
   }
 }
 
-MAT_INTERNAL_STATIC void mat_syr_upper_(Mat *A, mat_elem_t alpha,
+MAT_INTERNAL_STATIC void mat__syr_upper_(Mat *A, mat_elem_t alpha,
                                         const Vec *x) {
   size_t n = A->rows;
   mat_elem_t *pa = A->data;
   const mat_elem_t *px = x->data;
 
   for (size_t j = 0; j < n; j++) {
-    mat_axpy_raw_(&pa[j * n], alpha * px[j], px, j + 1);
+    mat__axpy_raw_(&pa[j * n], alpha * px[j], px, j + 1);
   }
 }
 
@@ -2324,9 +2324,9 @@ MATDEF void mat_syr(Mat *A, mat_elem_t alpha, const Vec *x, char uplo) {
   MAT_ASSERT(A->rows == x->rows);
 
   if (uplo == 'L' || uplo == 'l') {
-    mat_syr_lower_(A, alpha, x);
+    mat__syr_lower_(A, alpha, x);
   } else {
-    mat_syr_upper_(A, alpha, x);
+    mat__syr_upper_(A, alpha, x);
   }
 }
 
@@ -2339,7 +2339,7 @@ MATDEF void mat_syr(Mat *A, mat_elem_t alpha, const Vec *x, char uplo) {
 // (panel_rows x N) Result W is (kb x N), stored row-major with stride ldw V
 // stored column-major: V[col * ldv + row] for row > col
 MAT_INTERNAL_STATIC void
-mat_gemm_unit_lower_t_neon_(mat_elem_t *W, size_t ldw, const mat_elem_t *V,
+mat__gemm_unit_lower_t_neon_(mat_elem_t *W, size_t ldw, const mat_elem_t *V,
                             size_t ldv, const mat_elem_t *R, size_t ldr,
                             size_t kb, size_t panel_rows, size_t N) {
 
@@ -2348,11 +2348,11 @@ mat_gemm_unit_lower_t_neon_(mat_elem_t *W, size_t ldw, const mat_elem_t *V,
     const mat_elem_t *Rii = &R[ii * ldr];
 
     // Initialize W[ii,:] = R[ii,:] (the diagonal 1 in V^T)
-    mat_copy_raw_(Wi, Rii, N);
+    mat__copy_raw_(Wi, Rii, N);
 
     // Accumulate: W[ii,:] += V[ii,r] * R[r,:] for r = ii+1 to panel_rows-1
     for (size_t r = ii + 1; r < panel_rows; r++) {
-      mat_axpy_raw_(Wi, V[ii * ldv + r], &R[r * ldr], N);
+      mat__axpy_raw_(Wi, V[ii * ldv + r], &R[r * ldr], N);
     }
   }
 }
@@ -2361,7 +2361,7 @@ mat_gemm_unit_lower_t_neon_(mat_elem_t *W, size_t ldw, const mat_elem_t *V,
 // C is (panel_rows x N) with stride ldc
 // V stored column-major: V[col * ldv + row] for row > col
 MAT_INTERNAL_STATIC void
-mat_gemm_unit_lower_neon_(mat_elem_t *C, size_t ldc, const mat_elem_t *V,
+mat__gemm_unit_lower_neon_(mat_elem_t *C, size_t ldc, const mat_elem_t *V,
                           size_t ldv, const mat_elem_t *W, size_t ldw,
                           size_t panel_rows, size_t kb, size_t N) {
 
@@ -2371,7 +2371,7 @@ mat_gemm_unit_lower_neon_(mat_elem_t *C, size_t ldc, const mat_elem_t *V,
 
     for (size_t ii = 0; ii < ii_max; ii++) {
       mat_elem_t v_val = (r == ii) ? 1.0f : V[ii * ldv + r];
-      mat_axpy_raw_(Cr, -v_val, &W[ii * ldw], N);
+      mat__axpy_raw_(Cr, -v_val, &W[ii * ldw], N);
     }
   }
 }
@@ -2379,7 +2379,7 @@ mat_gemm_unit_lower_neon_(mat_elem_t *C, size_t ldc, const mat_elem_t *V,
 // W = Q * V where Q is (M x panel_rows) with stride ldq, V is unit lower
 // (panel_rows x kb) Result W is (M x kb) with stride ldw
 MAT_INTERNAL_STATIC void
-mat_gemm_q_unit_lower_neon_(mat_elem_t *W, size_t ldw, const mat_elem_t *Q,
+mat__gemm_q_unit_lower_neon_(mat_elem_t *W, size_t ldw, const mat_elem_t *Q,
                             size_t ldq, const mat_elem_t *V, size_t ldv,
                             size_t M, size_t panel_rows, size_t kb) {
 
@@ -2401,7 +2401,7 @@ mat_gemm_q_unit_lower_neon_(mat_elem_t *W, size_t ldw, const mat_elem_t *Q,
 // Q -= W * V^T where W is (M x kb), V^T is unit upper (kb x panel_rows)
 // Q is (M x panel_rows) with stride ldq
 MAT_INTERNAL_STATIC void
-mat_gemm_sub_w_unit_upper_neon_(mat_elem_t *Q, size_t ldq, const mat_elem_t *W,
+mat__gemm_sub_w_unit_upper_neon_(mat_elem_t *Q, size_t ldq, const mat_elem_t *W,
                                 size_t ldw, const mat_elem_t *V, size_t ldv,
                                 size_t M, size_t kb, size_t panel_rows) {
 
@@ -2423,7 +2423,7 @@ mat_gemm_sub_w_unit_upper_neon_(mat_elem_t *Q, size_t ldq, const mat_elem_t *W,
 
 // Scalar fallbacks
 MAT_INTERNAL_STATIC void
-mat_gemm_unit_lower_t_scalar_(mat_elem_t *W, size_t ldw, const mat_elem_t *V,
+mat__gemm_unit_lower_t_scalar_(mat_elem_t *W, size_t ldw, const mat_elem_t *V,
                               size_t ldv, const mat_elem_t *R, size_t ldr,
                               size_t kb, size_t panel_rows, size_t N) {
   for (size_t ii = 0; ii < kb; ii++) {
@@ -2437,7 +2437,7 @@ mat_gemm_unit_lower_t_scalar_(mat_elem_t *W, size_t ldw, const mat_elem_t *V,
 }
 
 MAT_INTERNAL_STATIC void
-mat_gemm_unit_lower_scalar_(mat_elem_t *C, size_t ldc, const mat_elem_t *V,
+mat__gemm_unit_lower_scalar_(mat_elem_t *C, size_t ldc, const mat_elem_t *V,
                             size_t ldv, const mat_elem_t *W, size_t ldw,
                             size_t panel_rows, size_t kb, size_t N) {
   for (size_t r = 0; r < panel_rows; r++) {
@@ -2454,7 +2454,7 @@ mat_gemm_unit_lower_scalar_(mat_elem_t *C, size_t ldc, const mat_elem_t *V,
 }
 
 MAT_INTERNAL_STATIC void
-mat_gemm_q_unit_lower_scalar_(mat_elem_t *W, size_t ldw, const mat_elem_t *Q,
+mat__gemm_q_unit_lower_scalar_(mat_elem_t *W, size_t ldw, const mat_elem_t *Q,
                               size_t ldq, const mat_elem_t *V, size_t ldv,
                               size_t M, size_t panel_rows, size_t kb) {
   for (size_t ii = 0; ii < M; ii++) {
@@ -2467,7 +2467,7 @@ mat_gemm_q_unit_lower_scalar_(mat_elem_t *W, size_t ldw, const mat_elem_t *Q,
   }
 }
 
-MAT_INTERNAL_STATIC void mat_gemm_sub_w_unit_upper_scalar_(
+MAT_INTERNAL_STATIC void mat__gemm_sub_w_unit_upper_scalar_(
     mat_elem_t *Q, size_t ldq, const mat_elem_t *W, size_t ldw,
     const mat_elem_t *V, size_t ldv, size_t M, size_t kb, size_t panel_rows) {
   for (size_t r = 0; r < panel_rows; r++) {
@@ -2489,14 +2489,14 @@ MAT_INTERNAL_STATIC void mat_gemm_sub_w_unit_upper_scalar_(
 // transA/transB: if MAT_TRANS, treat input as transposed without copying
 #ifdef MAT_HAS_ARM_NEON
 MAT_INTERNAL_STATIC void
-mat_gemm_strided_neon_(mat_elem_t *C, size_t ldc, mat_elem_t alpha,
+mat__gemm_strided_neon_(mat_elem_t *C, size_t ldc, mat_elem_t alpha,
                                 const mat_elem_t *A, size_t lda,
                                 mat_trans_t transA, const mat_elem_t *B,
                                 size_t ldb, mat_trans_t transB, size_t M,
                                 size_t K, size_t N, mat_elem_t beta) {
   // Scale C by beta first
   for (size_t j = 0; j < N; j++)
-    mat_scal_raw_(&C[j * ldc], beta, M);
+    mat__scal_raw_(&C[j * ldc], beta, M);
 
   // Micro-kernel with K-blocking for cache locality
   // Both precisions use 8xN tiles with 16 accumulators for equal compute density
@@ -2737,17 +2737,17 @@ mat_gemm_strided_neon_(mat_elem_t *C, size_t ldc, mat_elem_t alpha,
 #endif // MAT_HAS_ARM_NEON
 
 MAT_INTERNAL_STATIC void
-mat_gemm_strided_(mat_elem_t *C, size_t ldc, mat_elem_t alpha,
-                           const mat_elem_t *A, size_t lda, mat_trans_t transA,
-                           const mat_elem_t *B, size_t ldb, mat_trans_t transB,
-                           size_t M, size_t K, size_t N, mat_elem_t beta) {
+mat__gemm_strided_(mat_elem_t *C, size_t ldc, mat_elem_t alpha,
+                   const mat_elem_t *A, size_t lda, mat_trans_t transA,
+                   const mat_elem_t *B, size_t ldb, mat_trans_t transB,
+                   size_t M, size_t K, size_t N, mat_elem_t beta) {
 #ifdef MAT_HAS_ARM_NEON
-  mat_gemm_strided_neon_(C, ldc, alpha, A, lda, transA, B, ldb, transB,
-                                  M, K, N, beta);
+  mat__gemm_strided_neon_(C, ldc, alpha, A, lda, transA, B, ldb, transB,
+                          M, K, N, beta);
 #else
   // Scalar fallback: scale C by beta first
   for (size_t j = 0; j < N; j++)
-    mat_scal_raw_(&C[j * ldc], beta, M);
+    mat__scal_raw_(&C[j * ldc], beta, M);
   // C[:,j] += alpha * sum_k op(A)[:,k] * op(B)[k,j]
   for (size_t j = 0; j < N; j++) {
     for (size_t k = 0; k < K; k++) {
@@ -2765,21 +2765,21 @@ mat_gemm_strided_(mat_elem_t *C, size_t ldc, mat_elem_t alpha,
 // C = alpha * A * B + beta * C (BLAS Level-3: gemm)
 #ifdef MAT_HAS_ARM_NEON
 // Forward declaration for fallback
-MAT_INTERNAL_STATIC void mat_gemm_scalar_(Mat *C, mat_elem_t alpha,
+MAT_INTERNAL_STATIC void mat__gemm_scalar_(Mat *C, mat_elem_t alpha,
                                           const Mat *A, const Mat *B,
                                           mat_elem_t beta);
 
-MAT_INTERNAL_STATIC void mat_gemm_neon_(Mat *C, mat_elem_t alpha, const Mat *A,
+MAT_INTERNAL_STATIC void mat__gemm_neon_(Mat *C, mat_elem_t alpha, const Mat *A,
                                         const Mat *B, mat_elem_t beta) {
   // Column-major: delegate to strided implementation
   // For column-major Mat, leading dimension = rows
-  mat_gemm_strided_neon_(C->data, C->rows, alpha, A->data, A->rows,
+  mat__gemm_strided_neon_(C->data, C->rows, alpha, A->data, A->rows,
                                   MAT_NO_TRANS, B->data, B->rows, MAT_NO_TRANS,
                                   A->rows, A->cols, B->cols, beta);
 }
 #endif // MAT_HAS_ARM_NEON
 
-MAT_INTERNAL_STATIC void mat_gemm_scalar_(Mat *C, mat_elem_t alpha,
+MAT_INTERNAL_STATIC void mat__gemm_scalar_(Mat *C, mat_elem_t alpha,
                                           const Mat *A, const Mat *B,
                                           mat_elem_t beta) {
   size_t M = A->rows;
@@ -2787,7 +2787,7 @@ MAT_INTERNAL_STATIC void mat_gemm_scalar_(Mat *C, mat_elem_t alpha,
   size_t N = B->cols;
 
   // Scale C by beta first
-  mat_scal_raw_(C->data, beta, M * N);
+  mat__scal_raw_(C->data, beta, M * N);
 
   // ikj loop order for cache-friendly access (row-major)
   // For column-major, jki would be better, but this still works correctly
@@ -2805,15 +2805,15 @@ MAT_INTERNAL_STATIC void mat_gemm_scalar_(Mat *C, mat_elem_t alpha,
 }
 
 // Dispatch: select implementation based on available SIMD
-MAT_INTERNAL_STATIC void mat_gemm_dispatch_(Mat *C, mat_elem_t alpha,
+MAT_INTERNAL_STATIC void mat__gemm_dispatch_(Mat *C, mat_elem_t alpha,
                                              const Mat *A, const Mat *B,
                                              mat_elem_t beta) {
 #if defined(MAT_HAS_ARM_NEON)
-  mat_gemm_neon_(C, alpha, A, B, beta);
+  mat__gemm_neon_(C, alpha, A, B, beta);
 #elif defined(MAT_HAS_AVX2)
   mat_gemm_avx2_(C, alpha, A, B, beta);  // Future
 #else
-  mat_gemm_scalar_(C, alpha, A, B, beta);
+  mat__gemm_scalar_(C, alpha, A, B, beta);
 #endif
 }
 
@@ -2825,7 +2825,7 @@ MATDEF void mat_gemm(Mat *C, mat_elem_t alpha, const Mat *A, const Mat *B,
   MAT_ASSERT(A->cols == B->rows);
   MAT_ASSERT(C->rows == A->rows && C->cols == B->cols);
 
-  mat_gemm_dispatch_(C, alpha, A, B, beta);
+  mat__gemm_dispatch_(C, alpha, A, B, beta);
 }
 
 /* Structure Operations */
@@ -2834,9 +2834,9 @@ MATDEF void mat_gemm(Mat *C, mat_elem_t alpha, const Mat *A, const Mat *B,
 
 #ifdef MAT_HAS_ARM_NEON
 // Forward declaration for fallback
-MAT_INTERNAL_STATIC void mat_t_scalar_(Mat *out, const Mat *m);
+MAT_INTERNAL_STATIC void mat__t_scalar_(Mat *out, const Mat *m);
 
-MAT_INTERNAL_STATIC void mat_t_neon_(Mat *out, const Mat *m) {
+MAT_INTERNAL_STATIC void mat__t_neon_(Mat *out, const Mat *m) {
   // Column-major NEON transpose
   // Input: m is rows×cols, m[i,j] = src[j*rows + i] (column j is contiguous)
   // Output: out is cols×rows, out[j,i] = dst[i*cols + j] (column i is contiguous)
@@ -2923,7 +2923,7 @@ MAT_INTERNAL_STATIC void mat_t_neon_(Mat *out, const Mat *m) {
 }
 #endif
 
-MAT_INTERNAL_STATIC void mat_t_scalar_(Mat *out, const Mat *m) {
+MAT_INTERNAL_STATIC void mat__t_scalar_(Mat *out, const Mat *m) {
   size_t rows = m->rows;
   size_t cols = m->cols;
 
@@ -2946,13 +2946,13 @@ MAT_INTERNAL_STATIC void mat_t_scalar_(Mat *out, const Mat *m) {
 }
 
 // Dispatch: select implementation based on available SIMD
-MAT_INTERNAL_STATIC void mat_t_dispatch_(Mat *out, const Mat *m) {
+MAT_INTERNAL_STATIC void mat__t_dispatch_(Mat *out, const Mat *m) {
 #if defined(MAT_HAS_ARM_NEON)
-  mat_t_neon_(out, m);
+  mat__t_neon_(out, m);
 #elif defined(MAT_HAS_AVX2)
   mat_t_avx2_(out, m);  // Future
 #else
-  mat_t_scalar_(out, m);
+  mat__t_scalar_(out, m);
 #endif
 }
 
@@ -2961,7 +2961,7 @@ MATDEF void mat_t(Mat *out, const Mat *m) {
   MAT_ASSERT_MAT(m);
   MAT_ASSERT(out->rows == m->cols && out->cols == m->rows);
 
-  mat_t_dispatch_(out, m);
+  mat__t_dispatch_(out, m);
 }
 
 MATDEF Mat *mat_rt(const Mat *m) {
@@ -3120,7 +3120,7 @@ MATDEF Mat *mat_diag_from(size_t dim, const mat_elem_t *values) {
 /* Reduction Operations */
 
 #ifdef MAT_HAS_ARM_NEON
-MAT_INTERNAL_STATIC mat_elem_t mat_sum_neon_(const Mat *a) {
+MAT_INTERNAL_STATIC mat_elem_t mat__sum_neon_(const Mat *a) {
   size_t len = a->rows * a->cols;
   mat_elem_t *pa = a->data;
 
@@ -3150,7 +3150,7 @@ MAT_INTERNAL_STATIC mat_elem_t mat_sum_neon_(const Mat *a) {
 }
 #endif
 
-MAT_INTERNAL_STATIC mat_elem_t mat_sum_scalar_(const Mat *a) {
+MAT_INTERNAL_STATIC mat_elem_t mat__sum_scalar_(const Mat *a) {
   size_t len = a->rows * a->cols;
   mat_elem_t *pa = a->data;
 
@@ -3174,20 +3174,20 @@ MAT_INTERNAL_STATIC mat_elem_t mat_sum_scalar_(const Mat *a) {
 }
 
 // Dispatch: select implementation based on available SIMD
-MAT_INTERNAL_STATIC mat_elem_t mat_sum_dispatch_(const Mat *a) {
+MAT_INTERNAL_STATIC mat_elem_t mat__sum_dispatch_(const Mat *a) {
 #if defined(MAT_HAS_ARM_NEON)
-  return mat_sum_neon_(a);
+  return mat__sum_neon_(a);
 #elif defined(MAT_HAS_AVX2)
   return mat_sum_avx2_(a);  // Future
 #else
-  return mat_sum_scalar_(a);
+  return mat__sum_scalar_(a);
 #endif
 }
 
 MATDEF mat_elem_t mat_sum(const Mat *a) {
   MAT_ASSERT_MAT(a);
 
-  return mat_sum_dispatch_(a);
+  return mat__sum_dispatch_(a);
 }
 
 MATDEF mat_elem_t mat_mean(const Mat *a) {
@@ -3196,7 +3196,7 @@ MATDEF mat_elem_t mat_mean(const Mat *a) {
 }
 
 #ifdef MAT_HAS_ARM_NEON
-MAT_INTERNAL_STATIC mat_elem_t mat_min_neon_(const Mat *a) {
+MAT_INTERNAL_STATIC mat_elem_t mat__min_neon_(const Mat *a) {
   size_t len = a->rows * a->cols;
   mat_elem_t *pa = a->data;
 
@@ -3246,7 +3246,7 @@ MAT_INTERNAL_STATIC mat_elem_t mat_min_neon_(const Mat *a) {
 }
 #endif
 
-MAT_INTERNAL_STATIC mat_elem_t mat_min_scalar_(const Mat *a) {
+MAT_INTERNAL_STATIC mat_elem_t mat__min_scalar_(const Mat *a) {
   size_t len = a->rows * a->cols;
   mat_elem_t *pa = a->data;
 
@@ -3261,24 +3261,24 @@ MAT_INTERNAL_STATIC mat_elem_t mat_min_scalar_(const Mat *a) {
 }
 
 // Dispatch: select implementation based on available SIMD
-MAT_INTERNAL_STATIC mat_elem_t mat_min_dispatch_(const Mat *a) {
+MAT_INTERNAL_STATIC mat_elem_t mat__min_dispatch_(const Mat *a) {
 #if defined(MAT_HAS_ARM_NEON)
-  return mat_min_neon_(a);
+  return mat__min_neon_(a);
 #elif defined(MAT_HAS_AVX2)
   return mat_min_avx2_(a);  // Future
 #else
-  return mat_min_scalar_(a);
+  return mat__min_scalar_(a);
 #endif
 }
 
 MATDEF mat_elem_t mat_min(const Mat *a) {
   MAT_ASSERT_MAT(a);
 
-  return mat_min_dispatch_(a);
+  return mat__min_dispatch_(a);
 }
 
 #ifdef MAT_HAS_ARM_NEON
-MAT_INTERNAL_STATIC mat_elem_t mat_max_neon_(const Mat *a) {
+MAT_INTERNAL_STATIC mat_elem_t mat__max_neon_(const Mat *a) {
   size_t len = a->rows * a->cols;
   mat_elem_t *pa = a->data;
 
@@ -3314,7 +3314,7 @@ MAT_INTERNAL_STATIC mat_elem_t mat_max_neon_(const Mat *a) {
 }
 #endif
 
-MAT_INTERNAL_STATIC mat_elem_t mat_max_scalar_(const Mat *a) {
+MAT_INTERNAL_STATIC mat_elem_t mat__max_scalar_(const Mat *a) {
   size_t len = a->rows * a->cols;
   mat_elem_t *pa = a->data;
 
@@ -3329,20 +3329,20 @@ MAT_INTERNAL_STATIC mat_elem_t mat_max_scalar_(const Mat *a) {
 }
 
 // Dispatch: select implementation based on available SIMD
-MAT_INTERNAL_STATIC mat_elem_t mat_max_dispatch_(const Mat *a) {
+MAT_INTERNAL_STATIC mat_elem_t mat__max_dispatch_(const Mat *a) {
 #if defined(MAT_HAS_ARM_NEON)
-  return mat_max_neon_(a);
+  return mat__max_neon_(a);
 #elif defined(MAT_HAS_AVX2)
   return mat_max_avx2_(a);  // Future
 #else
-  return mat_max_scalar_(a);
+  return mat__max_scalar_(a);
 #endif
 }
 
 MATDEF mat_elem_t mat_max(const Mat *a) {
   MAT_ASSERT_MAT(a);
 
-  return mat_max_dispatch_(a);
+  return mat__max_dispatch_(a);
 }
 
 MATDEF void mat_sum_axis(Vec *out, const Mat *a, int axis) {
@@ -3418,7 +3418,7 @@ MATDEF size_t mat_argmax(const Mat *a) {
 }
 
 #ifdef MAT_HAS_ARM_NEON
-MAT_INTERNAL_STATIC mat_elem_t mat_std_neon_(const Mat *a, mat_elem_t mean) {
+MAT_INTERNAL_STATIC mat_elem_t mat__std_neon_(const Mat *a, mat_elem_t mean) {
   size_t len = a->rows * a->cols;
   mat_elem_t *pa = a->data;
 
@@ -3455,7 +3455,7 @@ MAT_INTERNAL_STATIC mat_elem_t mat_std_neon_(const Mat *a, mat_elem_t mean) {
 }
 #endif
 
-MAT_INTERNAL_STATIC mat_elem_t mat_std_scalar_(const Mat *a, mat_elem_t mean) {
+MAT_INTERNAL_STATIC mat_elem_t mat__std_scalar_(const Mat *a, mat_elem_t mean) {
   size_t len = a->rows * a->cols;
   mat_elem_t *pa = a->data;
 
@@ -3483,13 +3483,13 @@ MAT_INTERNAL_STATIC mat_elem_t mat_std_scalar_(const Mat *a, mat_elem_t mean) {
   return sum_sq;
 }
 
-MAT_INTERNAL_STATIC mat_elem_t mat_std_dispatch_(const Mat *a, mat_elem_t mean) {
+MAT_INTERNAL_STATIC mat_elem_t mat__std_dispatch_(const Mat *a, mat_elem_t mean) {
 #if defined(MAT_HAS_ARM_NEON)
-  return mat_std_neon_(a, mean);
+  return mat__std_neon_(a, mean);
 #elif defined(MAT_HAS_AVX2)
-  return mat_std_scalar_(a, mean);  // TODO: AVX2 implementation
+  return mat__std_scalar_(a, mean);  // TODO: AVX2 implementation
 #else
-  return mat_std_scalar_(a, mean);
+  return mat__std_scalar_(a, mean);
 #endif
 }
 
@@ -3498,7 +3498,7 @@ MATDEF mat_elem_t mat_std(const Mat *a) {
 
   size_t n = a->rows * a->cols;
   mat_elem_t mean = mat_mean(a);
-  mat_elem_t sum_sq = mat_std_dispatch_(a, mean);
+  mat_elem_t sum_sq = mat__std_dispatch_(a, mean);
 
 #ifdef MAT_DOUBLE_PRECISION
   return sqrt(sum_sq / (mat_elem_t)n);
@@ -3527,11 +3527,11 @@ MATDEF mat_elem_t mat_norm2(const Mat *a) { return mat_norm_fro(a); }
 
 MATDEF mat_elem_t mat_norm_max(const Mat *a) {
   MAT_ASSERT_MAT(a);
-  return mat_amax_raw_(a->data, a->rows * a->cols);
+  return mat__amax_raw_(a->data, a->rows * a->cols);
 }
 
 #ifdef MAT_HAS_ARM_NEON
-MAT_INTERNAL_STATIC mat_elem_t mat_norm_fro_neon_(const Mat *a) {
+MAT_INTERNAL_STATIC mat_elem_t mat__norm_fro_neon_(const Mat *a) {
   size_t len = a->rows * a->cols;
   mat_elem_t *pa = a->data;
 
@@ -3566,30 +3566,30 @@ MAT_INTERNAL_STATIC mat_elem_t mat_norm_fro_neon_(const Mat *a) {
 }
 #endif
 
-MAT_INTERNAL_STATIC mat_elem_t mat_norm_fro_scalar_(const Mat *a) {
+MAT_INTERNAL_STATIC mat_elem_t mat__norm_fro_scalar_(const Mat *a) {
   size_t len = a->rows * a->cols;
-  return MAT_SQRT(mat_dot_raw_(a->data, a->data, len));
+  return MAT_SQRT(mat__dot_raw_(a->data, a->data, len));
 }
 
 // Dispatch: select implementation based on available SIMD
-MAT_INTERNAL_STATIC mat_elem_t mat_norm_fro_dispatch_(const Mat *a) {
+MAT_INTERNAL_STATIC mat_elem_t mat__norm_fro_dispatch_(const Mat *a) {
 #if defined(MAT_HAS_ARM_NEON)
-  return mat_norm_fro_neon_(a);
+  return mat__norm_fro_neon_(a);
 #elif defined(MAT_HAS_AVX2)
   return mat_norm_fro_avx2_(a);  // Future
 #else
-  return mat_norm_fro_scalar_(a);
+  return mat__norm_fro_scalar_(a);
 #endif
 }
 
 MATDEF mat_elem_t mat_norm_fro(const Mat *a) {
   MAT_ASSERT_MAT(a);
 
-  return mat_norm_fro_dispatch_(a);
+  return mat__norm_fro_dispatch_(a);
 }
 
 #ifdef MAT_HAS_ARM_NEON
-MAT_INTERNAL_STATIC mat_elem_t mat_norm_fro_fast_neon_(const Mat *a) {
+MAT_INTERNAL_STATIC mat_elem_t mat__norm_fro_fast_neon_(const Mat *a) {
   size_t len = a->rows * a->cols;
   mat_elem_t *pa = a->data;
 
@@ -3630,20 +3630,20 @@ MAT_INTERNAL_STATIC mat_elem_t mat_norm_fro_fast_neon_(const Mat *a) {
 #endif
 
 // Dispatch: select implementation based on available SIMD
-MAT_INTERNAL_STATIC mat_elem_t mat_norm_fro_fast_dispatch_(const Mat *a) {
+MAT_INTERNAL_STATIC mat_elem_t mat__norm_fro_fast_dispatch_(const Mat *a) {
 #if defined(MAT_HAS_ARM_NEON)
-  return mat_norm_fro_fast_neon_(a);
+  return mat__norm_fro_fast_neon_(a);
 #elif defined(MAT_HAS_AVX2)
   return mat_norm_fro_fast_avx2_(a);  // Future
 #else
-  return mat_norm_fro_scalar_(a);
+  return mat__norm_fro_scalar_(a);
 #endif
 }
 
 MATDEF mat_elem_t mat_norm_fro_fast(const Mat *a) {
   MAT_ASSERT_MAT(a);
 
-  return mat_norm_fro_fast_dispatch_(a);
+  return mat__norm_fro_fast_dispatch_(a);
 }
 
 /* Matrix Properties */
@@ -3677,7 +3677,7 @@ MATDEF mat_elem_t mat_trace(const Mat *a) {
 }
 
 #ifdef MAT_HAS_ARM_NEON
-MAT_INTERNAL_STATIC mat_elem_t mat_nnz_neon_(const Mat *a) {
+MAT_INTERNAL_STATIC mat_elem_t mat__nnz_neon_(const Mat *a) {
   size_t len = a->rows * a->cols;
   mat_elem_t *pa = a->data;
 
@@ -3724,7 +3724,7 @@ MAT_INTERNAL_STATIC mat_elem_t mat_nnz_neon_(const Mat *a) {
 }
 #endif
 
-MAT_INTERNAL_STATIC mat_elem_t mat_nnz_scalar_(const Mat *a) {
+MAT_INTERNAL_STATIC mat_elem_t mat__nnz_scalar_(const Mat *a) {
   size_t len = a->rows * a->cols;
   mat_elem_t count = 0;
   for (size_t i = 0; i < len; i++) {
@@ -3735,20 +3735,20 @@ MAT_INTERNAL_STATIC mat_elem_t mat_nnz_scalar_(const Mat *a) {
 }
 
 // Dispatch: select implementation based on available SIMD
-MAT_INTERNAL_STATIC mat_elem_t mat_nnz_dispatch_(const Mat *a) {
+MAT_INTERNAL_STATIC mat_elem_t mat__nnz_dispatch_(const Mat *a) {
 #if defined(MAT_HAS_ARM_NEON)
-  return mat_nnz_neon_(a);
+  return mat__nnz_neon_(a);
 #elif defined(MAT_HAS_AVX2)
   return mat_nnz_avx2_(a);  // Future
 #else
-  return mat_nnz_scalar_(a);
+  return mat__nnz_scalar_(a);
 #endif
 }
 
 MATDEF mat_elem_t mat_nnz(const Mat *a) {
   MAT_ASSERT_MAT(a);
 
-  return mat_nnz_dispatch_(a);
+  return mat__nnz_dispatch_(a);
 }
 
 // ============================================================================
@@ -3891,7 +3891,7 @@ MATDEF void mat_householder_right(Mat *A, const Vec *v, mat_elem_t tau) {
 // Column-major: Build T matrix for compact WY representation
 // Y is stored column-major: Y[i,j] = Y[j * ldy + i]
 // Optimized: precompute Y^T * Y to avoid redundant dot products
-MAT_INTERNAL_STATIC void mat_qr_build_T_(mat_elem_t *T, size_t ldt,
+MAT_INTERNAL_STATIC void mat__qr_build_T_(mat_elem_t *T, size_t ldt,
                                                    const mat_elem_t *Y, size_t ldy,
                                                    const mat_elem_t *tau, size_t m,
                                                    size_t k) {
@@ -3947,8 +3947,8 @@ MAT_INTERNAL_STATIC void mat_qr_build_T_(mat_elem_t *T, size_t ldt,
 // Bt is cols x rows (col-major: Bt[r,c] = Bt[c*cols + r])
 // We want: Bt[r,c] = B[c,r] => Bt[c*cols + r] = B[r*rows + c]
 MAT_INTERNAL_STATIC void
-mat_transpose_blocked_(mat_elem_t *Bt, const mat_elem_t *B, size_t rows,
-                         size_t cols) {
+mat__transpose_blocked_(mat_elem_t *Bt, const mat_elem_t *B, size_t rows,
+                        size_t cols) {
   for (size_t r = 0; r < cols; r++) {    // r = row in Bt, col in B
     for (size_t c = 0; c < rows; c++) {  // c = col in Bt, row in B
       Bt[c * cols + r] = B[r * rows + c];
@@ -3967,11 +3967,11 @@ typedef struct {
 // Column-major: Apply block Householder from left: A = (I - Y*T^T*Y^T) * A
 // Uses pre-allocated workspace
 MAT_INTERNAL_STATIC void
-mat_qr_apply_block_left_(mat_elem_t *A_data, size_t lda,
-                                   const mat_elem_t *Y, size_t ldy,
-                                   const mat_elem_t *T, size_t ldt,
-                                   size_t m, size_t k, size_t n,
-                                   mat_qr_workspace_t *ws) {
+mat__qr_apply_block_left_(mat_elem_t *A_data, size_t lda,
+                          const mat_elem_t *Y, size_t ldy,
+                          const mat_elem_t *T, size_t ldt,
+                          size_t m, size_t k, size_t n,
+                          mat_qr_workspace_t *ws) {
   (void)lda;
   (void)ldy;
   (void)ldt;
@@ -3981,26 +3981,26 @@ mat_qr_apply_block_left_(mat_elem_t *A_data, size_t lda,
   mat_elem_t *TC = ws->W_kn2;  // k × n
 
   // C = Y^T * A (k x n) - use transA flag instead of explicit transpose
-  mat_gemm_strided_(C, k, 1.0f, Y, ldy, MAT_TRANS, A_data, lda,
+  mat__gemm_strided_(C, k, 1.0f, Y, ldy, MAT_TRANS, A_data, lda,
                              MAT_NO_TRANS, k, m, n, 0.0f);
 
   // TC = T^T * C (k x n) - use transA flag instead of explicit transpose
-  mat_gemm_strided_(TC, k, 1.0f, T, ldt, MAT_TRANS, C, k, MAT_NO_TRANS,
+  mat__gemm_strided_(TC, k, 1.0f, T, ldt, MAT_TRANS, C, k, MAT_NO_TRANS,
                              k, k, n, 0.0f);
 
   // A = A - Y * TC (m x n)
-  mat_gemm_strided_(A_data, lda, -1.0f, Y, ldy, MAT_NO_TRANS, TC, k,
+  mat__gemm_strided_(A_data, lda, -1.0f, Y, ldy, MAT_NO_TRANS, TC, k,
                              MAT_NO_TRANS, m, k, n, 1.0f);
 }
 
 // Column-major: Apply block Householder from right: A = A * (I - Y*T*Y^T)
 // Uses pre-allocated workspace
 MAT_INTERNAL_STATIC void
-mat_qr_apply_block_right_(mat_elem_t *A_data, size_t lda,
-                                    const mat_elem_t *Y, size_t ldy,
-                                    const mat_elem_t *T, size_t ldt,
-                                    size_t m, size_t n, size_t k,
-                                    mat_qr_workspace_t *ws) {
+mat__qr_apply_block_right_(mat_elem_t *A_data, size_t lda,
+                           const mat_elem_t *Y, size_t ldy,
+                           const mat_elem_t *T, size_t ldt,
+                           size_t m, size_t n, size_t k,
+                           mat_qr_workspace_t *ws) {
   (void)lda;
   (void)ldy;
   (void)ldt;
@@ -4011,15 +4011,15 @@ mat_qr_apply_block_right_(mat_elem_t *A_data, size_t lda,
   mat_elem_t *CT = ws->W_mk2;  // m × k
 
   // C = A * Y (m x k)
-  mat_gemm_strided_(C, m, 1.0f, A_data, lda, MAT_NO_TRANS, Y, ldy,
+  mat__gemm_strided_(C, m, 1.0f, A_data, lda, MAT_NO_TRANS, Y, ldy,
                              MAT_NO_TRANS, m, n, k, 0.0f);
 
   // CT = C * T (m x k)
-  mat_gemm_strided_(CT, m, 1.0f, C, m, MAT_NO_TRANS, T, ldt,
+  mat__gemm_strided_(CT, m, 1.0f, C, m, MAT_NO_TRANS, T, ldt,
                              MAT_NO_TRANS, m, k, k, 0.0f);
 
   // A = A - CT * Y^T (m x n) - use transB flag instead of explicit transpose
-  mat_gemm_strided_(A_data, lda, -1.0f, CT, m, MAT_NO_TRANS, Y, ldy,
+  mat__gemm_strided_(A_data, lda, -1.0f, CT, m, MAT_NO_TRANS, Y, ldy,
                              MAT_TRANS, m, k, n, 1.0f);
 }
 
@@ -4074,7 +4074,7 @@ MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R) {
         size_t vlen = m - col;
 
         // Extract column (x_data reused each iteration)
-        mat_copy_raw_(x_data, &R->data[col * m + col], vlen);
+        mat__copy_raw_(x_data, &R->data[col * m + col], vlen);
 
         Vec x_sub = {.rows = vlen, .cols = 1, .data = x_data};
         Vec v_sub = {.rows = vlen, .cols = 1, .data = x_data};
@@ -4100,14 +4100,14 @@ MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R) {
       }
 
       // Build T matrix for WY representation (column-major)
-      mat_qr_build_T_(T, kb, Y, len, tau_block, len, kb);
+      mat__qr_build_T_(T, kb, Y, len, tau_block, len, kb);
 
       // Apply block reflector to trailing R (work directly with stride m)
       if (jb + kb < n) {
         size_t trail_cols = n - (jb + kb);
         mat_elem_t *R_src = &R->data[(jb + kb) * m + jb];
 
-        mat_qr_apply_block_left_(R_src, m, Y, len, T, kb, len, kb,
+        mat__qr_apply_block_left_(R_src, m, Y, len, T, kb, len, kb,
                                           trail_cols, &ws);
       }
 
@@ -4115,7 +4115,7 @@ MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R) {
       // Q[:, jb:m] starts at Q->data[jb*m], all m rows accessed
       {
         mat_elem_t *Q_trail = &Q->data[jb * m];
-        mat_qr_apply_block_right_(Q_trail, m, Y, len, T, kb, m, len,
+        mat__qr_apply_block_right_(Q_trail, m, Y, len, T, kb, m, len,
                                            kb, &ws);
       }
     }
@@ -4158,8 +4158,8 @@ MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R) {
     // For each column k, compute w = v^T * R[j:m, k], then R[:,k] -= w*v
     for (size_t k = j; k < n; k++) {
       mat_elem_t *Rk = &R->data[k * m + j];  // column k, starting at row j
-      mat_elem_t w = tau * mat_dot_raw_(v_data, Rk, len);
-      mat_axpy_raw_(Rk, -w, v_data, len);
+      mat_elem_t w = tau * mat__dot_raw_(v_data, Rk, len);
+      mat__axpy_raw_(Rk, -w, v_data, len);
     }
 
     // Apply H to Q[:, j:m] from right (column-major)
@@ -4169,12 +4169,12 @@ MATDEF void mat_qr(const Mat *A, Mat *Q, Mat *R) {
 
     // u = Q[:, j:m] * v, computed column-by-column
     for (size_t jj = 0; jj < len; jj++) {
-      mat_axpy_raw_(u, v_data[jj], &Q->data[(j + jj) * m], m);
+      mat__axpy_raw_(u, v_data[jj], &Q->data[(j + jj) * m], m);
     }
 
     // Step 2: Q[:, j:m] -= tau * u * v^T, applied column by column
     for (size_t jj = 0; jj < len; jj++) {
-      mat_axpy_raw_(&Q->data[(j + jj) * m], -tau * v_data[jj], u, m);
+      mat__axpy_raw_(&Q->data[(j + jj) * m], -tau * v_data[jj], u, m);
     }
   }
 
@@ -4248,7 +4248,7 @@ MATDEF void mat_qr_r(const Mat *A, Mat *R) {
       }
 
       // Build T matrix for WY representation
-      mat_qr_build_T_(T, kb, Y, len, tau_block, len, kb);
+      mat__qr_build_T_(T, kb, Y, len, tau_block, len, kb);
 
       // Apply block reflector to trailing R only (skip Q!)
       // Work directly on R with stride m (no copy needed)
@@ -4260,13 +4260,13 @@ MATDEF void mat_qr_r(const Mat *A, Mat *R) {
         mat_elem_t *TC = W_kn2;
 
         // C = Y^T * R_src (kb x trail_cols), R_src has stride m
-        mat_gemm_strided_(C, kb, 1.0f, Y, len, MAT_TRANS, R_src, m,
+        mat__gemm_strided_(C, kb, 1.0f, Y, len, MAT_TRANS, R_src, m,
                                    MAT_NO_TRANS, kb, len, trail_cols, 0.0f);
         // TC = T^T * C (kb x trail_cols)
-        mat_gemm_strided_(TC, kb, 1.0f, T, kb, MAT_TRANS, C, kb,
+        mat__gemm_strided_(TC, kb, 1.0f, T, kb, MAT_TRANS, C, kb,
                                    MAT_NO_TRANS, kb, kb, trail_cols, 0.0f);
         // R_src -= Y * TC (len x trail_cols), R_src has stride m
-        mat_gemm_strided_(R_src, m, -1.0f, Y, len, MAT_NO_TRANS, TC,
+        mat__gemm_strided_(R_src, m, -1.0f, Y, len, MAT_NO_TRANS, TC,
                                    kb, MAT_NO_TRANS, len, kb, trail_cols, 1.0f);
       }
       // Skip Q update entirely!
@@ -4303,8 +4303,8 @@ MATDEF void mat_qr_r(const Mat *A, Mat *R) {
     // Apply H to R[j:m, j:n] from left only
     for (size_t k = j; k < n; k++) {
       mat_elem_t *Rk = &R->data[k * m + j];
-      mat_elem_t w = tau * mat_dot_raw_(v_data, Rk, len);
-      mat_axpy_raw_(Rk, -w, v_data, len);
+      mat_elem_t w = tau * mat__dot_raw_(v_data, Rk, len);
+      mat__axpy_raw_(Rk, -w, v_data, len);
     }
     // Skip Q update!
   }
@@ -4320,7 +4320,7 @@ MATDEF void mat_qr_r(const Mat *A, Mat *R) {
 // Column-major blocked partial pivoting LU (P * A = L * U)
 // Uses delayed pivoting: swap panel columns during factorization,
 // then bulk-apply swaps to trailing columns before GEMM
-MAT_INTERNAL_STATIC int mat_plu_blocked_(Mat *M, Perm *p) {
+MAT_INTERNAL_STATIC int mat__plu_blocked_(Mat *M, Perm *p) {
   size_t n = M->rows;
   mat_elem_t *data = M->data;
   size_t *row_perm = p->data;
@@ -4336,7 +4336,7 @@ MAT_INTERNAL_STATIC int mat_plu_blocked_(Mat *M, Perm *p) {
     for (size_t k = kb; k < k_end && k < n - 1; k++) {
       // Find pivot in column k (column is contiguous in col-major)
       mat_elem_t *col_k = &data[k * n];
-      size_t pivot_row = k + mat_iamax_raw_(&col_k[k], n - k, NULL);
+      size_t pivot_row = k + mat__iamax_raw_(&col_k[k], n - k, NULL);
       pivot_rows[k - kb] = pivot_row;
 
       // Swap rows only in columns 0:k_end (panel + already factored)
@@ -4359,12 +4359,12 @@ MAT_INTERNAL_STATIC int mat_plu_blocked_(Mat *M, Perm *p) {
       mat_elem_t pivot_inv = 1.0f / col_k[k];
 
       // Scale L column (contiguous)
-      mat_scal_raw_(&col_k[k + 1], pivot_inv, n - (k + 1));
+      mat__scal_raw_(&col_k[k + 1], pivot_inv, n - (k + 1));
 
       // Update panel columns k+1:k_end for all rows below k
       for (size_t j = k + 1; j < k_end; j++) {
         mat_elem_t *col_j = &data[j * n];
-        mat_axpy_raw_(&col_j[k + 1], -col_j[k], &col_k[k + 1], n - (k + 1));
+        mat__axpy_raw_(&col_j[k + 1], -col_j[k], &col_k[k + 1], n - (k + 1));
       }
     }
 
@@ -4388,7 +4388,7 @@ MAT_INTERNAL_STATIC int mat_plu_blocked_(Mat *M, Perm *p) {
         mat_elem_t *col_k = &data[k * n];
         for (size_t j = k_end; j < n; j++) {
           mat_elem_t *col_j = &data[j * n];
-          mat_axpy_raw_(&col_j[k + 1], -col_j[k], &col_k[k + 1], k_end - (k + 1));
+          mat__axpy_raw_(&col_j[k + 1], -col_j[k], &col_k[k + 1], k_end - (k + 1));
         }
       }
 
@@ -4396,7 +4396,7 @@ MAT_INTERNAL_STATIC int mat_plu_blocked_(Mat *M, Perm *p) {
       size_t trail_m = n - k_end;
       size_t trail_n = n - k_end;
 
-      mat_gemm_strided_(
+      mat__gemm_strided_(
           &data[k_end * n + k_end], n,
           -1.0f,
           &data[kb * n + k_end], n, MAT_NO_TRANS,
@@ -4410,7 +4410,7 @@ MAT_INTERNAL_STATIC int mat_plu_blocked_(Mat *M, Perm *p) {
 }
 
 // Scalar implementation of full pivoting LU (P * A * Q = L * U)
-MAT_INTERNAL_STATIC int mat_lu_scalar_(Mat *M, Perm *p, Perm *q) {
+MAT_INTERNAL_STATIC int mat__lu_scalar_(Mat *M, Perm *p, Perm *q) {
   size_t n = M->rows;
   mat_elem_t *data = M->data;
   size_t *row_perm = p->data;
@@ -4485,7 +4485,7 @@ MAT_INTERNAL_STATIC int mat_lu_scalar_(Mat *M, Perm *p, Perm *q) {
 #ifdef MAT_HAS_ARM_NEON
 // NEON-optimized full pivoting LU decomposition
 // In column-major: column j is contiguous at &data[j * n]
-MAT_INTERNAL_STATIC int mat_lu_neon_(Mat *M, Perm *p, Perm *q) {
+MAT_INTERNAL_STATIC int mat__lu_neon_(Mat *M, Perm *p, Perm *q) {
   size_t n = M->rows;
   mat_elem_t *data = M->data;
   size_t *row_perm = p->data;
@@ -4501,7 +4501,7 @@ MAT_INTERNAL_STATIC int mat_lu_neon_(Mat *M, Perm *p, Perm *q) {
     for (size_t j = k; j < n; j++) {
       mat_elem_t *col = &data[j * n];
       mat_elem_t col_max;
-      size_t local_idx = mat_iamax_raw_(&col[k], n - k, &col_max);
+      size_t local_idx = mat__iamax_raw_(&col[k], n - k, &col_max);
 
       if (col_max > max_val) {
         max_val = col_max;
@@ -4512,7 +4512,7 @@ MAT_INTERNAL_STATIC int mat_lu_neon_(Mat *M, Perm *p, Perm *q) {
 
     // Swap columns k and pivot_col (columns are contiguous!)
     if (pivot_col != k) {
-      mat_swap_raw_(&data[k * n], &data[pivot_col * n], n);
+      mat__swap_raw_(&data[k * n], &data[pivot_col * n], n);
 
       size_t tmp = col_perm[k];
       col_perm[k] = col_perm[pivot_col];
@@ -4541,13 +4541,13 @@ MAT_INTERNAL_STATIC int mat_lu_neon_(Mat *M, Perm *p, Perm *q) {
 
     // Compute multipliers: L[i,k] = M[i,k] / M[k,k] for i > k
     mat_elem_t pivot_inv = 1.0f / col_k[k];
-    mat_scal_raw_(&col_k[k + 1], pivot_inv, n - k - 1);
+    mat__scal_raw_(&col_k[k + 1], pivot_inv, n - k - 1);
 
     // Elimination: column-oriented rank-1 update
     // For each column j > k: col_j[k+1:n] -= col_j[k] * col_k[k+1:n]
     for (size_t j = k + 1; j < n; j++) {
       mat_elem_t *col_j = &data[j * n];
-      mat_axpy_raw_(&col_j[k + 1], -col_j[k], &col_k[k + 1], n - k - 1);
+      mat__axpy_raw_(&col_j[k + 1], -col_j[k], &col_k[k + 1], n - k - 1);
     }
   }
 
@@ -4571,7 +4571,7 @@ MATDEF int mat_plu(const Mat *A, Mat *L, Mat *U, Perm *p) {
   mat_perm_identity(p);
 
   // Column-major blocked PLU
-  int swap_count = mat_plu_blocked_(M, p);
+  int swap_count = mat__plu_blocked_(M, p);
 
   // Extract L and U from M (column-major result)
   // M contains L (below diagonal) and U (on and above diagonal)
@@ -4618,7 +4618,7 @@ MATDEF int mat_lu(const Mat *A, Mat *L, Mat *U, Perm *p, Perm *q) {
   mat_elem_t *data = M->data;
 #if defined(MAT_HAS_ARM_NEON)
   // Column-major LU decomposition (NEON optimized)
-  swap_count = mat_lu_neon_(M, p, q);
+  swap_count = mat__lu_neon_(M, p, q);
 #elif defined(MAT_HAS_AVX2)
   // Column-major LU decomposition (AVX2 - future)
   swap_count = mat_lu_avx2_(M, p, q);
@@ -4706,7 +4706,7 @@ MATDEF int mat_lu(const Mat *A, Mat *L, Mat *U, Perm *p, Perm *q) {
 
 // --- mat_solve_tril: Solve Lx = b, L lower triangular (non-unit diagonal) ---
 
-MAT_INTERNAL_STATIC void mat_solve_tril_scalar_(Vec *x, const Mat *L,
+MAT_INTERNAL_STATIC void mat__solve_tril_scalar_(Vec *x, const Mat *L,
                                                  const Vec *b) {
   size_t n = L->rows;
   mat_elem_t *x_data = x->data;
@@ -4723,7 +4723,7 @@ MAT_INTERNAL_STATIC void mat_solve_tril_scalar_(Vec *x, const Mat *L,
 }
 
 #ifdef MAT_HAS_ARM_NEON
-MAT_INTERNAL_STATIC void mat_solve_tril_neon_(Vec *x, const Mat *L,
+MAT_INTERNAL_STATIC void mat__solve_tril_neon_(Vec *x, const Mat *L,
                                                const Vec *b) {
   // Column-major: columns are contiguous, use column-oriented forward substitution
   // x[j] = x[j] / L[j,j], then update x[j+1:n] -= x[j] * L[j+1:n, j]
@@ -4749,14 +4749,14 @@ MAT_INTERNAL_STATIC void mat_solve_tril_neon_(Vec *x, const Mat *L,
 #endif
 
 // Dispatch: select implementation based on available SIMD
-MAT_INTERNAL_STATIC void mat_solve_tril_dispatch_(Vec *x, const Mat *L,
+MAT_INTERNAL_STATIC void mat__solve_tril_dispatch_(Vec *x, const Mat *L,
                                                    const Vec *b) {
 #if defined(MAT_HAS_ARM_NEON)
-  mat_solve_tril_neon_(x, L, b);
+  mat__solve_tril_neon_(x, L, b);
 #elif defined(MAT_HAS_AVX2)
   mat_solve_tril_avx2_(x, L, b);  // Future
 #else
-  mat_solve_tril_scalar_(x, L, b);
+  mat__solve_tril_scalar_(x, L, b);
 #endif
 }
 
@@ -4767,12 +4767,12 @@ MATDEF void mat_solve_tril(Vec *x, const Mat *L, const Vec *b) {
   MAT_ASSERT_SQUARE(L);
   MAT_ASSERT(b->rows == L->rows);
   MAT_ASSERT(x->rows == L->rows);
-  mat_solve_tril_dispatch_(x, L, b);
+  mat__solve_tril_dispatch_(x, L, b);
 }
 
 // --- mat_solve_tril_unit: Solve Lx = b, L unit lower triangular (1s on diag) -
 
-MAT_INTERNAL_STATIC void mat_solve_tril_unit_scalar_(Vec *x, const Mat *L,
+MAT_INTERNAL_STATIC void mat__solve_tril_unit_scalar_(Vec *x, const Mat *L,
                                                       const Vec *b) {
   size_t n = L->rows;
   mat_elem_t *x_data = x->data;
@@ -4789,7 +4789,7 @@ MAT_INTERNAL_STATIC void mat_solve_tril_unit_scalar_(Vec *x, const Mat *L,
 }
 
 #ifdef MAT_HAS_ARM_NEON
-MAT_INTERNAL_STATIC void mat_solve_tril_unit_neon_(Vec *x, const Mat *L,
+MAT_INTERNAL_STATIC void mat__solve_tril_unit_neon_(Vec *x, const Mat *L,
                                                     const Vec *b) {
   // Column-major: columns are contiguous, use column-oriented forward substitution
   // Unit diagonal: no division needed, just x[j+1:n] -= x[j] * L[j+1:n, j]
@@ -4814,14 +4814,14 @@ MAT_INTERNAL_STATIC void mat_solve_tril_unit_neon_(Vec *x, const Mat *L,
 #endif
 
 // Dispatch: select implementation based on available SIMD
-MAT_INTERNAL_STATIC void mat_solve_tril_unit_dispatch_(Vec *x, const Mat *L,
+MAT_INTERNAL_STATIC void mat__solve_tril_unit_dispatch_(Vec *x, const Mat *L,
                                                         const Vec *b) {
 #if defined(MAT_HAS_ARM_NEON)
-  mat_solve_tril_unit_neon_(x, L, b);
+  mat__solve_tril_unit_neon_(x, L, b);
 #elif defined(MAT_HAS_AVX2)
   mat_solve_tril_unit_avx2_(x, L, b);  // Future
 #else
-  mat_solve_tril_unit_scalar_(x, L, b);
+  mat__solve_tril_unit_scalar_(x, L, b);
 #endif
 }
 
@@ -4832,7 +4832,7 @@ MATDEF void mat_solve_tril_unit(Vec *x, const Mat *L, const Vec *b) {
   MAT_ASSERT_SQUARE(L);
   MAT_ASSERT(b->rows == L->rows);
   MAT_ASSERT(x->rows == L->rows);
-  mat_solve_tril_unit_dispatch_(x, L, b);
+  mat__solve_tril_unit_dispatch_(x, L, b);
 }
 
 // --- mat_solve_triu: Solve Ux = b, U upper triangular ---
@@ -4841,10 +4841,10 @@ MATDEF void mat_solve_tril_unit(Vec *x, const Mat *L, const Vec *b) {
 
 #ifdef MAT_HAS_ARM_NEON
 // Forward declaration for fallback
-MAT_INTERNAL_STATIC void mat_solve_triu_scalar_(Vec *x, const Mat *U,
+MAT_INTERNAL_STATIC void mat__solve_triu_scalar_(Vec *x, const Mat *U,
                                                  const Vec *b);
 
-MAT_INTERNAL_STATIC void mat_solve_triu_neon_(Vec *x, const Mat *U,
+MAT_INTERNAL_STATIC void mat__solve_triu_neon_(Vec *x, const Mat *U,
                                                const Vec *b) {
   // Column-major: columns are contiguous, use column-oriented backward substitution
   // x[j] = b[j] / U[j,j], then update x[0:j] -= x[j] * U[0:j, j]
@@ -4868,7 +4868,7 @@ MAT_INTERNAL_STATIC void mat_solve_triu_neon_(Vec *x, const Mat *U,
 }
 #endif // MAT_HAS_ARM_NEON
 
-MAT_INTERNAL_STATIC void mat_solve_triu_scalar_(Vec *x, const Mat *U,
+MAT_INTERNAL_STATIC void mat__solve_triu_scalar_(Vec *x, const Mat *U,
                                                  const Vec *b) {
   size_t n = U->rows;
   mat_elem_t *x_data = x->data;
@@ -4885,14 +4885,14 @@ MAT_INTERNAL_STATIC void mat_solve_triu_scalar_(Vec *x, const Mat *U,
 }
 
 // Dispatch: select implementation based on available SIMD
-MAT_INTERNAL_STATIC void mat_solve_triu_dispatch_(Vec *x, const Mat *U,
+MAT_INTERNAL_STATIC void mat__solve_triu_dispatch_(Vec *x, const Mat *U,
                                                    const Vec *b) {
 #if defined(MAT_HAS_ARM_NEON)
-  mat_solve_triu_neon_(x, U, b);
+  mat__solve_triu_neon_(x, U, b);
 #elif defined(MAT_HAS_AVX2)
   mat_solve_triu_avx2_(x, U, b);  // Future
 #else
-  mat_solve_triu_scalar_(x, U, b);
+  mat__solve_triu_scalar_(x, U, b);
 #endif
 }
 
@@ -4903,7 +4903,7 @@ MATDEF void mat_solve_triu(Vec *x, const Mat *U, const Vec *b) {
   MAT_ASSERT_SQUARE(U);
   MAT_ASSERT(b->rows == U->rows);
   MAT_ASSERT(x->rows == U->rows);
-  mat_solve_triu_dispatch_(x, U, b);
+  mat__solve_triu_dispatch_(x, U, b);
 }
 
 // --- mat_solve_trilt: Solve L^T x = b, L lower triangular ---
@@ -4911,10 +4911,10 @@ MATDEF void mat_solve_triu(Vec *x, const Mat *U, const Vec *b) {
 
 #ifdef MAT_HAS_ARM_NEON
 // Forward declaration for fallback
-MAT_INTERNAL_STATIC void mat_solve_trilt_scalar_(Vec *x, const Mat *L,
+MAT_INTERNAL_STATIC void mat__solve_trilt_scalar_(Vec *x, const Mat *L,
                                                   const Vec *b);
 
-MAT_INTERNAL_STATIC void mat_solve_trilt_neon_(Vec *x, const Mat *L,
+MAT_INTERNAL_STATIC void mat__solve_trilt_neon_(Vec *x, const Mat *L,
                                                 const Vec *b) {
   // Solve L^T * x = b using dot product approach
   // L^T[j,k] = L[k,j], so we need dot(L[j+1:n, j], x[j+1:n]) which is contiguous
@@ -4925,13 +4925,13 @@ MAT_INTERNAL_STATIC void mat_solve_trilt_neon_(Vec *x, const Mat *L,
 
   for (size_t j = n; j-- > 0;) {
     const mat_elem_t *Lj = &L_data[j * n];
-    mat_elem_t dot = mat_dot_raw_(&Lj[j + 1], &x_data[j + 1], n - j - 1);
+    mat_elem_t dot = mat__dot_raw_(&Lj[j + 1], &x_data[j + 1], n - j - 1);
     x_data[j] = (b_data[j] - dot) / Lj[j];
   }
 }
 #endif // MAT_HAS_ARM_NEON
 
-MAT_INTERNAL_STATIC void mat_solve_trilt_scalar_(Vec *x, const Mat *L,
+MAT_INTERNAL_STATIC void mat__solve_trilt_scalar_(Vec *x, const Mat *L,
                                                   const Vec *b) {
   // Solve L^T * x = b using dot product approach
   // L^T[j,k] = L[k,j], so we need dot(L[j+1:n, j], x[j+1:n]) which is contiguous
@@ -4951,14 +4951,14 @@ MAT_INTERNAL_STATIC void mat_solve_trilt_scalar_(Vec *x, const Mat *L,
 }
 
 // Dispatch: select implementation based on available SIMD
-MAT_INTERNAL_STATIC void mat_solve_trilt_dispatch_(Vec *x, const Mat *L,
+MAT_INTERNAL_STATIC void mat__solve_trilt_dispatch_(Vec *x, const Mat *L,
                                                     const Vec *b) {
 #if defined(MAT_HAS_ARM_NEON)
-  mat_solve_trilt_neon_(x, L, b);
+  mat__solve_trilt_neon_(x, L, b);
 #elif defined(MAT_HAS_AVX2)
   mat_solve_trilt_avx2_(x, L, b);  // Future
 #else
-  mat_solve_trilt_scalar_(x, L, b);
+  mat__solve_trilt_scalar_(x, L, b);
 #endif
 }
 
@@ -4972,7 +4972,7 @@ MATDEF void mat_solve_trilt(Vec *x, const Mat *L, const Vec *b) {
 
   // L^T solve uses dot product approach: contiguous access to L columns
   // (AXPY approach would need strided access to L rows, which is slower)
-  mat_solve_trilt_dispatch_(x, L, b);
+  mat__solve_trilt_dispatch_(x, L, b);
 }
 
 // ============================================================================
@@ -5056,9 +5056,9 @@ MATDEF int mat_solve_spd(Vec *x, const Mat *A, const Vec *b) {
 // Uses GEMM-style 4x4 micro-kernel with packed B for cache efficiency
 #ifdef MAT_HAS_ARM_NEON
 MAT_INTERNAL_STATIC void
-mat_gemm_lower_strided_neon_(mat_elem_t *C, size_t ldc, mat_elem_t alpha,
-                             const mat_elem_t *A, size_t lda, size_t M,
-                             size_t K, const mat_elem_t *B, size_t ldb) {
+mat__gemm_lower_strided_neon_(mat_elem_t *C, size_t ldc, mat_elem_t alpha,
+                              const mat_elem_t *A, size_t lda, size_t M,
+                              size_t K, const mat_elem_t *B, size_t ldb) {
   // Pack B into contiguous memory (transpose: Bt[j,k] = B[j,k])
   // This gives sequential access in the k dimension
   mat_elem_t *Bt = (mat_elem_t *)mat_scratch_alloc_(M * K * sizeof(mat_elem_t));
@@ -5209,7 +5209,7 @@ mat_gemm_lower_strided_neon_(mat_elem_t *C, size_t ldc, mat_elem_t alpha,
 // ============================================================================
 
 // Column-major SYRK lower triangle - scalar implementation
-MAT_INTERNAL_STATIC void mat_syrk_lower_scalar_(
+MAT_INTERNAL_STATIC void mat__syrk_lower_scalar_(
     mat_elem_t *C, size_t ldc, mat_elem_t alpha, const mat_elem_t *A,
     size_t lda, size_t m, size_t k, mat_elem_t beta) {
   // Scale C by beta (lower triangle only)
@@ -5238,7 +5238,7 @@ MAT_INTERNAL_STATIC void mat_syrk_lower_scalar_(
 
 #ifdef MAT_HAS_ARM_NEON
 // Column-major SYRK lower triangle - simple version for small problems
-MAT_INTERNAL_STATIC void mat_syrk_lower_unblocked_(
+MAT_INTERNAL_STATIC void mat__syrk_lower_unblocked_(
     mat_elem_t *C, size_t ldc, mat_elem_t alpha, const mat_elem_t *A,
     size_t lda, size_t m, size_t k, mat_elem_t beta) {
   const size_t NW = MAT_NEON_WIDTH;
@@ -5380,7 +5380,7 @@ MAT_INTERNAL_STATIC void mat_syrk_lower_unblocked_(
 
 // Column-major SYRK lower triangle - k-blocked version for larger problems
 #define MAT_SYRK_K_BLOCK 32
-MAT_INTERNAL_STATIC void mat_syrk_lower_blocked_(
+MAT_INTERNAL_STATIC void mat__syrk_lower_blocked_(
     mat_elem_t *C, size_t ldc, mat_elem_t alpha, const mat_elem_t *A,
     size_t lda, size_t m, size_t k, mat_elem_t beta) {
   const size_t NW = MAT_NEON_WIDTH;
@@ -5653,24 +5653,24 @@ MAT_INTERNAL_STATIC void mat_syrk_lower_blocked_(
 // Column-major SYRK lower triangle dispatcher
 // Use unblocked for small problems, blocked for larger ones
 #define MAT_SYRK_BLOCK_THRESHOLD 96
-MAT_INTERNAL_STATIC void mat_syrk_lower_(
+MAT_INTERNAL_STATIC void mat__syrk_lower_(
     mat_elem_t *C, size_t ldc, mat_elem_t alpha, const mat_elem_t *A,
     size_t lda, size_t m, size_t k, mat_elem_t beta) {
 #ifdef MAT_HAS_ARM_NEON
   if (m >= MAT_SYRK_BLOCK_THRESHOLD) {
-    mat_syrk_lower_blocked_(C, ldc, alpha, A, lda, m, k, beta);
+    mat__syrk_lower_blocked_(C, ldc, alpha, A, lda, m, k, beta);
   } else {
-    mat_syrk_lower_unblocked_(C, ldc, alpha, A, lda, m, k, beta);
+    mat__syrk_lower_unblocked_(C, ldc, alpha, A, lda, m, k, beta);
   }
 #else
-  mat_syrk_lower_scalar_(C, ldc, alpha, A, lda, m, k, beta);
+  mat__syrk_lower_scalar_(C, ldc, alpha, A, lda, m, k, beta);
 #endif
 }
 #undef MAT_SYRK_BLOCK_THRESHOLD
 
 // Transpose: At[i,p] = A[p,i] - Scalar implementation
 MAT_INTERNAL_STATIC void
-mat_transpose_block_scalar_(mat_elem_t *At, size_t ldat, const mat_elem_t *A,
+mat__transpose_block_scalar_(mat_elem_t *At, size_t ldat, const mat_elem_t *A,
                             size_t lda, size_t rows, size_t cols) {
   for (size_t i = 0; i < rows; i++) {
     for (size_t p = 0; p < cols; p++) {
@@ -5682,7 +5682,7 @@ mat_transpose_block_scalar_(mat_elem_t *At, size_t ldat, const mat_elem_t *A,
 #ifdef MAT_HAS_ARM_NEON
 // Transpose: At[i,p] = A[p,i] - NEON implementation
 // Uses MAT_NEON_WIDTH x MAT_NEON_WIDTH block transpose with ZIP operations
-MAT_INTERNAL_STATIC void mat_transpose_block_neon_(mat_elem_t *At, size_t ldat,
+MAT_INTERNAL_STATIC void mat__transpose_block_neon_(mat_elem_t *At, size_t ldat,
                                                    const mat_elem_t *A,
                                                    size_t lda, size_t rows,
                                                    size_t cols) {
@@ -5737,22 +5737,22 @@ MAT_INTERNAL_STATIC void mat_transpose_block_neon_(mat_elem_t *At, size_t ldat,
 
 // Dispatch: select implementation based on available SIMD
 // Transpose: At[i,p] = A[p,i]
-MAT_INTERNAL_STATIC void mat_transpose_block_(mat_elem_t *At, size_t ldat,
+MAT_INTERNAL_STATIC void mat__transpose_block_(mat_elem_t *At, size_t ldat,
                                               const mat_elem_t *A, size_t lda,
                                               size_t rows, size_t cols) {
 #if defined(MAT_HAS_ARM_NEON)
-  mat_transpose_block_neon_(At, ldat, A, lda, rows, cols);
+  mat__transpose_block_neon_(At, ldat, A, lda, rows, cols);
 #elif defined(MAT_HAS_AVX2)
-  mat_transpose_block_avx2_(At, ldat, A, lda, rows, cols);  // Future
+  mat__transpose_block_avx2_(At, ldat, A, lda, rows, cols);  // Future
 #else
-  mat_transpose_block_scalar_(At, ldat, A, lda, rows, cols);
+  mat__transpose_block_scalar_(At, ldat, A, lda, rows, cols);
 #endif
 }
 
 // Symmetric rank-k update for lower triangle (transposed): C = alpha * A^T * A
 // + beta * C A is k x n, C is n x n Strategy: fast NEON transpose then
 // optimized SYRK
-MAT_INTERNAL_STATIC void mat_syrk_t_lower_(mat_elem_t *C, size_t ldc,
+MAT_INTERNAL_STATIC void mat__syrk_t_lower_(mat_elem_t *C, size_t ldc,
                                            mat_elem_t alpha,
                                            const mat_elem_t *A, size_t lda,
                                            size_t n, size_t k,
@@ -5764,10 +5764,10 @@ MAT_INTERNAL_STATIC void mat_syrk_t_lower_(mat_elem_t *C, size_t ldc,
 #endif
 
   // Fast blocked transpose
-  mat_transpose_block_(At, k, A, lda, n, k);
+  mat__transpose_block_(At, k, A, lda, n, k);
 
   // Use optimized lower SYRK
-  mat_syrk_lower_(C, ldc, alpha, At, k, n, k, beta);
+  mat__syrk_lower_(C, ldc, alpha, At, k, n, k, beta);
 
 #ifndef MAT_NO_SCRATCH
   mat_scratch_reset_();
@@ -5778,14 +5778,14 @@ MAT_INTERNAL_STATIC void mat_syrk_t_lower_(mat_elem_t *C, size_t ldc,
 
 // Symmetric rank-k update for upper triangle (transposed): C = alpha * A^T * A
 // + beta * C A is k x n, C is n x n
-MAT_INTERNAL_STATIC void mat_syrk_t_upper_(mat_elem_t *C, size_t ldc,
+MAT_INTERNAL_STATIC void mat__syrk_t_upper_(mat_elem_t *C, size_t ldc,
                                            mat_elem_t alpha,
                                            const mat_elem_t *A, size_t lda,
                                            size_t n, size_t k,
                                            mat_elem_t beta) {
   // Compute lower triangle then copy to upper
   // (Upper-specific kernel was removed with row-major code)
-  mat_syrk_t_lower_(C, ldc, alpha, A, lda, n, k, beta);
+  mat__syrk_t_lower_(C, ldc, alpha, A, lda, n, k, beta);
 
   // Copy lower to upper (column-major: C[i,j] = C[j*ldc + i])
   for (size_t j = 0; j < n; j++) {
@@ -5797,7 +5797,7 @@ MAT_INTERNAL_STATIC void mat_syrk_t_upper_(mat_elem_t *C, size_t ldc,
 
 // Column-major SYRK: C = alpha * A * A^T + beta * C
 #ifdef MAT_HAS_ARM_NEON
-MAT_INTERNAL_STATIC void mat_syrk_neon_(Mat *C, const Mat *A,
+MAT_INTERNAL_STATIC void mat__syrk_neon_(Mat *C, const Mat *A,
                                         mat_elem_t alpha,
                                         mat_elem_t beta, char uplo) {
   size_t n = C->rows;
@@ -5805,11 +5805,11 @@ MAT_INTERNAL_STATIC void mat_syrk_neon_(Mat *C, const Mat *A,
 
   // Use column-major SYRK directly (only lower triangle currently implemented)
   if (uplo == 'L' || uplo == 'l') {
-    mat_syrk_lower_(C->data, n, alpha, A->data, n, n, k, beta);
+    mat__syrk_lower_(C->data, n, alpha, A->data, n, n, k, beta);
   } else {
     // For upper triangle, compute lower triangle and copy
     // (Since upper-specific kernel was removed with row-major code)
-    mat_syrk_lower_(C->data, n, alpha, A->data, n, n, k, beta);
+    mat__syrk_lower_(C->data, n, alpha, A->data, n, n, k, beta);
     // Copy lower to upper
     for (size_t i = 0; i < n; i++) {
       for (size_t j = i + 1; j < n; j++) {
@@ -5821,7 +5821,7 @@ MAT_INTERNAL_STATIC void mat_syrk_neon_(Mat *C, const Mat *A,
 #endif
 
 // Generic scalar SYRK using MAT_AT/MAT_SET (works with any storage order)
-MAT_INTERNAL_STATIC void mat_syrk_generic_(Mat *C, const Mat *A,
+MAT_INTERNAL_STATIC void mat__syrk_generic_(Mat *C, const Mat *A,
                                            mat_elem_t alpha, mat_elem_t beta,
                                            char uplo) {
   size_t n = C->rows;
@@ -5851,15 +5851,15 @@ MAT_INTERNAL_STATIC void mat_syrk_generic_(Mat *C, const Mat *A,
 }
 
 // Dispatch: select implementation based on available SIMD
-MAT_INTERNAL_STATIC void mat_syrk_dispatch_(Mat *C, const Mat *A,
+MAT_INTERNAL_STATIC void mat__syrk_dispatch_(Mat *C, const Mat *A,
                                              mat_elem_t alpha, mat_elem_t beta,
                                              char uplo) {
 #if defined(MAT_HAS_ARM_NEON)
-  mat_syrk_neon_(C, A, alpha, beta, uplo);
+  mat__syrk_neon_(C, A, alpha, beta, uplo);
 #elif defined(MAT_HAS_AVX2)
   mat_syrk_avx2_(C, A, alpha, beta, uplo);  // Future
 #else
-  mat_syrk_generic_(C, A, alpha, beta, uplo);
+  mat__syrk_generic_(C, A, alpha, beta, uplo);
 #endif
 }
 
@@ -5870,28 +5870,28 @@ MATDEF void mat_syrk(Mat *C, const Mat *A, mat_elem_t alpha, mat_elem_t beta,
   MAT_ASSERT(C->rows == C->cols);
   MAT_ASSERT(C->rows == A->rows);
 
-  mat_syrk_dispatch_(C, A, alpha, beta, uplo);
+  mat__syrk_dispatch_(C, A, alpha, beta, uplo);
 }
 
 // Column-major SYRK_T: C = alpha * A^T * A + beta * C
 #ifdef MAT_HAS_ARM_NEON
-MAT_INTERNAL_STATIC void mat_syrk_t_neon_(Mat *C, const Mat *A,
+MAT_INTERNAL_STATIC void mat__syrk_t_neon_(Mat *C, const Mat *A,
                                           mat_elem_t alpha,
                                           mat_elem_t beta, char uplo) {
   size_t n = C->rows;  // = A->cols
   size_t k = A->rows;  // inner dimension
 
   if (uplo == 'L' || uplo == 'l') {
-    mat_syrk_t_lower_(C->data, n, alpha, A->data, k, n, k, beta);
+    mat__syrk_t_lower_(C->data, n, alpha, A->data, k, n, k, beta);
   } else {
-    mat_syrk_t_upper_(C->data, n, alpha, A->data, k, n, k, beta);
+    mat__syrk_t_upper_(C->data, n, alpha, A->data, k, n, k, beta);
   }
 }
 #endif
 
 // Generic scalar SYRK_T using MAT_AT/MAT_SET (works with any storage order)
 // Computes C = alpha * A^T * A + beta * C
-MAT_INTERNAL_STATIC void mat_syrk_t_generic_(Mat *C, const Mat *A,
+MAT_INTERNAL_STATIC void mat__syrk_t_generic_(Mat *C, const Mat *A,
                                              mat_elem_t alpha, mat_elem_t beta,
                                              char uplo) {
   size_t n = C->rows;
@@ -5921,15 +5921,15 @@ MAT_INTERNAL_STATIC void mat_syrk_t_generic_(Mat *C, const Mat *A,
 }
 
 // Dispatch: select implementation based on available SIMD
-MAT_INTERNAL_STATIC void mat_syrk_t_dispatch_(Mat *C, const Mat *A,
+MAT_INTERNAL_STATIC void mat__syrk_t_dispatch_(Mat *C, const Mat *A,
                                                mat_elem_t alpha, mat_elem_t beta,
                                                char uplo) {
 #if defined(MAT_HAS_ARM_NEON)
-  mat_syrk_t_neon_(C, A, alpha, beta, uplo);
+  mat__syrk_t_neon_(C, A, alpha, beta, uplo);
 #elif defined(MAT_HAS_AVX2)
   mat_syrk_t_avx2_(C, A, alpha, beta, uplo);  // Future
 #else
-  mat_syrk_t_generic_(C, A, alpha, beta, uplo);
+  mat__syrk_t_generic_(C, A, alpha, beta, uplo);
 #endif
 }
 
@@ -5940,7 +5940,7 @@ MATDEF void mat_syrk_t(Mat *C, const Mat *A, mat_elem_t alpha, mat_elem_t beta,
   MAT_ASSERT(C->rows == C->cols);
   MAT_ASSERT(C->rows == A->cols);
 
-  mat_syrk_t_dispatch_(C, A, alpha, beta, uplo);
+  mat__syrk_t_dispatch_(C, A, alpha, beta, uplo);
 }
 
 /* ========================================================================== */
@@ -5949,7 +5949,7 @@ MATDEF void mat_syrk_t(Mat *C, const Mat *A, mat_elem_t alpha, mat_elem_t beta,
 
 // Generic scalar SYR2K: C = alpha*A*B' + alpha*B*A' + beta*C
 // A is n x k, B is n x k, C is n x n symmetric
-MAT_INTERNAL_STATIC void mat_syr2k_generic_(Mat *C, const Mat *A, const Mat *B,
+MAT_INTERNAL_STATIC void mat__syr2k_generic_(Mat *C, const Mat *A, const Mat *B,
                                              mat_elem_t alpha, mat_elem_t beta,
                                              char uplo) {
   size_t n = C->rows;
@@ -5985,7 +5985,7 @@ MAT_INTERNAL_STATIC void mat_syr2k_generic_(Mat *C, const Mat *A, const Mat *B,
 // C = alpha*A*B' + alpha*B*A' + beta*C
 // A is n x k (column-major: A[i,kk] = A_data[kk*n + i])
 // B is n x k (column-major: B[i,kk] = B_data[kk*n + i])
-MAT_INTERNAL_STATIC void mat_syr2k_lower_neon_(mat_elem_t *C, size_t ldc,
+MAT_INTERNAL_STATIC void mat__syr2k_lower_neon_(mat_elem_t *C, size_t ldc,
                                                 const mat_elem_t *A, size_t lda,
                                                 const mat_elem_t *B, size_t ldb,
                                                 size_t n, size_t k,
@@ -6002,7 +6002,7 @@ MAT_INTERNAL_STATIC void mat_syr2k_lower_neon_(mat_elem_t *C, size_t ldc,
     if (beta == 0) {
       memset(Cj, 0, len * sizeof(mat_elem_t));
     } else if (beta != 1) {
-      mat_scal_raw_(Cj, beta, len);
+      mat__scal_raw_(Cj, beta, len);
     }
 
     // Accumulate rank-2 updates
@@ -6061,29 +6061,29 @@ MAT_INTERNAL_STATIC void mat_syr2k_lower_neon_(mat_elem_t *C, size_t ldc,
   }
 }
 
-MAT_INTERNAL_STATIC void mat_syr2k_neon_(Mat *C, const Mat *A, const Mat *B,
-                                          mat_elem_t alpha, mat_elem_t beta,
-                                          char uplo) {
+MAT_INTERNAL_STATIC void mat__syr2k_neon_(Mat *C, const Mat *A, const Mat *B,
+                                           mat_elem_t alpha, mat_elem_t beta,
+                                           char uplo) {
   size_t n = C->rows;
   size_t k = A->cols;
 
   if (uplo == 'L' || uplo == 'l') {
-    mat_syr2k_lower_neon_(C->data, n, A->data, n, B->data, n, n, k, alpha, beta);
+    mat__syr2k_lower_neon_(C->data, n, A->data, n, B->data, n, n, k, alpha, beta);
   } else {
     // Upper triangle: transpose the problem or use generic
     // For now, use generic for upper triangle
-    mat_syr2k_generic_(C, A, B, alpha, beta, uplo);
+    mat__syr2k_generic_(C, A, B, alpha, beta, uplo);
   }
 }
 #endif
 
-MAT_INTERNAL_STATIC void mat_syr2k_dispatch_(Mat *C, const Mat *A, const Mat *B,
-                                              mat_elem_t alpha, mat_elem_t beta,
-                                              char uplo) {
+MAT_INTERNAL_STATIC void mat__syr2k_dispatch_(Mat *C, const Mat *A, const Mat *B,
+                                               mat_elem_t alpha, mat_elem_t beta,
+                                               char uplo) {
 #ifdef MAT_HAS_ARM_NEON
-  mat_syr2k_neon_(C, A, B, alpha, beta, uplo);
+  mat__syr2k_neon_(C, A, B, alpha, beta, uplo);
 #else
-  mat_syr2k_generic_(C, A, B, alpha, beta, uplo);
+  mat__syr2k_generic_(C, A, B, alpha, beta, uplo);
 #endif
 }
 
@@ -6097,18 +6097,18 @@ MATDEF void mat_syr2k(Mat *C, const Mat *A, const Mat *B, mat_elem_t alpha,
   MAT_ASSERT(C->rows == B->rows);
   MAT_ASSERT(A->cols == B->cols);
 
-  mat_syr2k_dispatch_(C, A, B, alpha, beta, uplo);
+  mat__syr2k_dispatch_(C, A, B, alpha, beta, uplo);
 }
 
 // Column-major unblocked Cholesky using dot products for better cache locality
 // In column-major: L[0:j, i] is contiguous at M[i*ldm], so dots are efficient
-MAT_INTERNAL_STATIC int mat_chol_unblocked_(mat_elem_t *M, size_t n,
-                                                      size_t ldm) {
+MAT_INTERNAL_STATIC int mat__chol_unblocked_(mat_elem_t *M, size_t n,
+                                              size_t ldm) {
   for (size_t j = 0; j < n; j++) {
     // Diagonal: L[j,j] = sqrt(A[j,j] - dot(L[0:j, j], L[0:j, j]))
     // L[0:j, j] is at M[j*ldm + 0:j] which is contiguous
     mat_elem_t *Lj = &M[j * ldm];  // Column j, elements 0:n
-    mat_elem_t diag_sum = mat_dot_raw_(Lj, Lj, j);
+    mat_elem_t diag_sum = mat__dot_raw_(Lj, Lj, j);
     mat_elem_t diag = Lj[j] - diag_sum;
 
     if (diag <= 0) {
@@ -6165,13 +6165,13 @@ MAT_INTERNAL_STATIC int mat_chol_unblocked_(mat_elem_t *M, size_t n,
     // Remaining rows
     for (; i < n; i++) {
       mat_elem_t *Li = &M[i * ldm];
-      mat_elem_t dot = mat_dot_raw_(Li, Lj, j);
+      mat_elem_t dot = mat__dot_raw_(Li, Lj, j);
       Lj[i] = (Lj[i] - dot) * ljj_inv;
     }
 #else
     for (size_t i = j + 1; i < n; i++) {
       mat_elem_t *Li = &M[i * ldm];
-      mat_elem_t dot = mat_dot_raw_(Li, Lj, j);
+      mat_elem_t dot = mat__dot_raw_(Li, Lj, j);
       Lj[i] = (Lj[i] - dot) * ljj_inv;
     }
 #endif
@@ -6180,15 +6180,15 @@ MAT_INTERNAL_STATIC int mat_chol_unblocked_(mat_elem_t *M, size_t n,
 }
 
 // Unblocked AXPY-based Cholesky factorization
-MAT_INTERNAL_STATIC int mat_chol_unblocked_axpy_(mat_elem_t *M, size_t n,
-                                                 size_t ldm) {
+MAT_INTERNAL_STATIC int mat__chol_unblocked_axpy_(mat_elem_t *M, size_t n,
+                                                   size_t ldm) {
   for (size_t j = 0; j < n; j++) {
     mat_elem_t *colj = &M[j * ldm];
 
     // Update column j using previous columns: colj[j:n] -= ljk * colk[j:n]
     for (size_t k = 0; k < j; k++) {
       mat_elem_t ljk = M[k * ldm + j];
-      mat_axpy_raw_(&colj[j], -ljk, &M[k * ldm + j], n - j);
+      mat__axpy_raw_(&colj[j], -ljk, &M[k * ldm + j], n - j);
     }
 
     if (colj[j] <= 0) {
@@ -6198,7 +6198,7 @@ MAT_INTERNAL_STATIC int mat_chol_unblocked_axpy_(mat_elem_t *M, size_t n,
     colj[j] = ljj;
 
     // Scale: colj[j+1:n] *= 1/ljj
-    mat_scal_raw_(&colj[j + 1], 1.0f / ljj, n - j - 1);
+    mat__scal_raw_(&colj[j + 1], 1.0f / ljj, n - j - 1);
   }
   return 0;
 }
@@ -6206,15 +6206,15 @@ MAT_INTERNAL_STATIC int mat_chol_unblocked_axpy_(mat_elem_t *M, size_t n,
 // Column-major blocked Cholesky (right-looking, uses mat_syrk for trailing update)
 // Structure: panel factorization -> TRSM -> SYRK
 #ifdef MAT_HAS_ARM_NEON
-MAT_INTERNAL_STATIC int mat_chol_blocked_(mat_elem_t *M, size_t n,
-                                          size_t ldm) {
+MAT_INTERNAL_STATIC int mat__chol_blocked_(mat_elem_t *M, size_t n,
+                                            size_t ldm) {
   for (size_t kb = 0; kb < n; kb += MAT_CHOL_BLOCK_SIZE) {
     size_t k_end =
         (kb + MAT_CHOL_BLOCK_SIZE < n) ? kb + MAT_CHOL_BLOCK_SIZE : n;
     size_t block_k = k_end - kb;
 
     // 1. Panel factorization: unblocked Cholesky on diagonal block L11
-    int result = mat_chol_unblocked_axpy_(&M[kb * ldm + kb], block_k, ldm);
+    int result = mat__chol_unblocked_axpy_(&M[kb * ldm + kb], block_k, ldm);
     if (result != 0) {
       return -1;
     }
@@ -6231,15 +6231,15 @@ MAT_INTERNAL_STATIC int mat_chol_blocked_(mat_elem_t *M, size_t n,
         // Update using previous columns: L21[:,j] -= L11[j,kk] * L21[:,kk]
         for (size_t kk = 0; kk < j; kk++) {
           mat_elem_t L11_jk = M[(kb + kk) * ldm + (kb + j)];
-          mat_axpy_raw_(L21_col_j, -L11_jk, &M[(kb + kk) * ldm + k_end], trail_m);
+          mat__axpy_raw_(L21_col_j, -L11_jk, &M[(kb + kk) * ldm + k_end], trail_m);
         }
 
         // Scale by 1/L11[j,j]
-        mat_scal_raw_(L21_col_j, ljj_inv, trail_m);
+        mat__scal_raw_(L21_col_j, ljj_inv, trail_m);
       }
 
       // 3. SYRK: A22 -= L21 * L21^T
-      mat_syrk_lower_(&M[k_end * ldm + k_end], ldm, -1,
+      mat__syrk_lower_(&M[k_end * ldm + k_end], ldm, -1,
                       &M[kb * ldm + k_end], ldm,
                       trail_m, block_k, 1);
     }
@@ -6249,7 +6249,7 @@ MAT_INTERNAL_STATIC int mat_chol_blocked_(mat_elem_t *M, size_t n,
 #endif
 
 // Scalar Cholesky factorization using MAT_AT/MAT_SET (works with any storage)
-MAT_INTERNAL_STATIC int mat_chol_scalar_generic_(Mat *L) {
+MAT_INTERNAL_STATIC int mat__chol_scalar_generic_(Mat *L) {
   size_t n = L->rows;
 
   for (size_t j = 0; j < n; j++) {
@@ -6306,20 +6306,20 @@ MATDEF int mat_chol(const Mat *A, Mat *L) {
 #ifdef MAT_HAS_ARM_NEON
   mat_elem_t *Ldata = L->data;
   if (n < MAT_CHOL_BLOCK_SIZE) {
-    return mat_chol_unblocked_axpy_(Ldata, n, n);
+    return mat__chol_unblocked_axpy_(Ldata, n, n);
   } else {
-    return mat_chol_blocked_(Ldata, n, n);
+    return mat__chol_blocked_(Ldata, n, n);
   }
 #else
-  return mat_chol_scalar_generic_(L);
+  return mat__chol_scalar_generic_(L);
 #endif
 }
 
 // Blocked TRSM: solve L*X = B where L is unit lower triangular (column-major)
 // X overwrites B in place. L is n×n, B is n×nrhs
-MAT_INTERNAL_STATIC void mat_trsm_lower_unit_(mat_elem_t *B, size_t ldb,
-                                               const mat_elem_t *L, size_t ldl,
-                                               size_t n, size_t nrhs) {
+MAT_INTERNAL_STATIC void mat__trsm_lower_unit_(mat_elem_t *B, size_t ldb,
+                                                const mat_elem_t *L, size_t ldl,
+                                                size_t n, size_t nrhs) {
   const size_t NB = 64;  // Block size
 
   for (size_t kb = 0; kb < n; kb += NB) {
@@ -6341,7 +6341,7 @@ MAT_INTERNAL_STATIC void mat_trsm_lower_unit_(mat_elem_t *B, size_t ldb,
     // Update trailing rows: B2 -= L21 * X1
     if (k_end < n) {
       size_t trail_m = n - k_end;
-      mat_gemm_strided_(&B[k_end], ldb, -1.0f,
+      mat__gemm_strided_(&B[k_end], ldb, -1.0f,
                         &L[kb * ldl + k_end], ldl, MAT_NO_TRANS,
                         &B[kb], ldb, MAT_NO_TRANS,
                         trail_m, block_k, nrhs, 1.0f);
@@ -6351,9 +6351,9 @@ MAT_INTERNAL_STATIC void mat_trsm_lower_unit_(mat_elem_t *B, size_t ldb,
 
 // Blocked TRSM: solve U*X = B where U is upper triangular (column-major)
 // X overwrites B in place. U is n×n, B is n×nrhs
-MAT_INTERNAL_STATIC void mat_trsm_upper_(mat_elem_t *B, size_t ldb,
-                                          const mat_elem_t *U, size_t ldu,
-                                          size_t n, size_t nrhs) {
+MAT_INTERNAL_STATIC void mat__trsm_upper_(mat_elem_t *B, size_t ldb,
+                                           const mat_elem_t *U, size_t ldu,
+                                           size_t n, size_t nrhs) {
   const size_t NB = 64;  // Block size
 
   for (size_t kb = n; kb > 0;) {
@@ -6376,7 +6376,7 @@ MAT_INTERNAL_STATIC void mat_trsm_upper_(mat_elem_t *B, size_t ldb,
 
     // Update leading rows: B0 -= U01 * X1
     if (k_start > 0) {
-      mat_gemm_strided_(B, ldb, -1.0f,
+      mat__gemm_strided_(B, ldb, -1.0f,
                         &U[k_start * ldu], ldu, MAT_NO_TRANS,
                         &B[k_start], ldb, MAT_NO_TRANS,
                         k_start, block_k, nrhs, 1.0f);
@@ -6395,7 +6395,7 @@ MATDEF void mat_inv(Mat *out, const Mat *A) {
   Mat *M = mat_rdeep_copy(A);
   Perm *p = mat_perm(n);
   mat_perm_identity(p);
-  mat_plu_blocked_(M, p);
+  mat__plu_blocked_(M, p);
 
   const mat_elem_t *LU = M->data;
 
@@ -6484,25 +6484,25 @@ MATDEF mat_elem_t mat_det(const Mat *A) {
 
 // Apply Householder from left to zero out column below diagonal
 // H = I - tau * v * v^T, applied as A = H * A = A - tau * v * (v^T * A)
-MAT_INTERNAL_STATIC void mat_bidiag_left_(mat_elem_t *A, size_t m, size_t n,
-                                          size_t lda, size_t k,
-                                          mat_elem_t *v, mat_elem_t tau) {
+MAT_INTERNAL_STATIC void mat__bidiag_left_(mat_elem_t *A, size_t m, size_t n,
+                                           size_t lda, size_t k,
+                                           mat_elem_t *v, mat_elem_t tau) {
   if (tau == 0) return;
 
   // For each column j >= k: A[:,j] -= tau * v * (v^T * A[:,j])
   for (size_t j = k; j < n; j++) {
     mat_elem_t *col_j = &A[j * lda];
-    mat_elem_t dot = mat_dot_raw_(&col_j[k], v, m - k);
-    mat_axpy_raw_(&col_j[k], -tau * dot, v, m - k);
+    mat_elem_t dot = mat__dot_raw_(&col_j[k], v, m - k);
+    mat__axpy_raw_(&col_j[k], -tau * dot, v, m - k);
   }
 }
 
 // Apply Householder from right to zero out row after superdiagonal
 // H = I - tau * v * v^T, applied as A = A * H = A - tau * (A * v) * v^T
 // A * v = sum_j v[j] * A[:,k+1+j]  (for rows k:m)
-MAT_INTERNAL_STATIC void mat_bidiag_right_(mat_elem_t *A, size_t m, size_t n,
-                                           size_t lda, size_t k,
-                                           mat_elem_t *v, mat_elem_t tau) {
+MAT_INTERNAL_STATIC void mat__bidiag_right_(mat_elem_t *A, size_t m, size_t n,
+                                            size_t lda, size_t k,
+                                            mat_elem_t *v, mat_elem_t tau) {
   if (tau == 0) return;
 
   size_t vlen = n - k - 1;
@@ -6512,12 +6512,12 @@ MAT_INTERNAL_STATIC void mat_bidiag_right_(mat_elem_t *A, size_t m, size_t n,
   mat_elem_t *w = (mat_elem_t *)MAT_MALLOC(row_len * sizeof(mat_elem_t));
   memset(w, 0, row_len * sizeof(mat_elem_t));
   for (size_t j = 0; j < vlen; j++) {
-    mat_axpy_raw_(w, v[j], &A[(k + 1 + j) * lda + k], row_len);
+    mat__axpy_raw_(w, v[j], &A[(k + 1 + j) * lda + k], row_len);
   }
 
   // A[k:m, k+1+j] -= tau * v[j] * w for each j
   for (size_t j = 0; j < vlen; j++) {
-    mat_axpy_raw_(&A[(k + 1 + j) * lda + k], -tau * v[j], w, row_len);
+    mat__axpy_raw_(&A[(k + 1 + j) * lda + k], -tau * v[j], w, row_len);
   }
 
   MAT_FREE(w);
@@ -6527,9 +6527,9 @@ MAT_INTERNAL_STATIC void mat_bidiag_right_(mat_elem_t *A, size_t m, size_t n,
 // Returns diagonal d[n] and superdiagonal e[n-1]
 // Optionally accumulates U (m x m) and V (n x n) if non-NULL
 // A is column-major with leading dimension lda
-MAT_INTERNAL_STATIC void mat_bidiag_(mat_elem_t *A, size_t m, size_t n,
-                                     size_t lda, mat_elem_t *d, mat_elem_t *e,
-                                     mat_elem_t *U, mat_elem_t *V) {
+MAT_INTERNAL_STATIC void mat__bidiag_(mat_elem_t *A, size_t m, size_t n,
+                                      size_t lda, mat_elem_t *d, mat_elem_t *e,
+                                      mat_elem_t *U, mat_elem_t *V) {
   // Workspace for Householder vectors
   mat_elem_t *v_left = (mat_elem_t *)MAT_MALLOC(m * sizeof(mat_elem_t));
   mat_elem_t *v_right = (mat_elem_t *)MAT_MALLOC(n * sizeof(mat_elem_t));
@@ -6551,9 +6551,9 @@ MAT_INTERNAL_STATIC void mat_bidiag_(mat_elem_t *A, size_t m, size_t n,
       size_t vlen = m - k;
 
       // Copy column to v_left and compute Householder
-      mat_copy_raw_(v_left, &col_k[k], vlen);
+      mat__copy_raw_(v_left, &col_k[k], vlen);
 
-      mat_elem_t norm = MAT_SQRT(mat_dot_raw_(v_left, v_left, vlen));
+      mat_elem_t norm = MAT_SQRT(mat__dot_raw_(v_left, v_left, vlen));
       mat_elem_t tau_l = 0;
 
       if (norm > MAT_DEFAULT_EPSILON) {
@@ -6569,7 +6569,7 @@ MAT_INTERNAL_STATIC void mat_bidiag_(mat_elem_t *A, size_t m, size_t n,
       }
 
       // Apply to A (columns k to n-1)
-      mat_bidiag_left_(A, m, n, lda, k, v_left, tau_l);
+      mat__bidiag_left_(A, m, n, lda, k, v_left, tau_l);
       col_k[k] = d[k];  // Restore diagonal
 
       // Accumulate U: U = U * H_l where H_l = I - tau * v * v^T
@@ -6580,11 +6580,11 @@ MAT_INTERNAL_STATIC void mat_bidiag_(mat_elem_t *A, size_t m, size_t n,
         memset(w, 0, m * sizeof(mat_elem_t));
         // w = sum_r v[r] * U[:,k+r]
         for (size_t r = 0; r < vlen; r++) {
-          mat_axpy_raw_(w, v_left[r], &U[(k + r) * m], m);
+          mat__axpy_raw_(w, v_left[r], &U[(k + r) * m], m);
         }
         // U[:,j] -= tau * v[j-k] * w for j in [k, m)
         for (size_t j = k; j < m; j++) {
-          mat_axpy_raw_(&U[j * m], -tau_l * v_left[j - k], w, m);
+          mat__axpy_raw_(&U[j * m], -tau_l * v_left[j - k], w, m);
         }
         MAT_FREE(w);
       }
@@ -6601,7 +6601,7 @@ MAT_INTERNAL_STATIC void mat_bidiag_(mat_elem_t *A, size_t m, size_t n,
         v_right[j] = A[(k + 1 + j) * lda + k];
       }
 
-      mat_elem_t norm = MAT_SQRT(mat_dot_raw_(v_right, v_right, vlen));
+      mat_elem_t norm = MAT_SQRT(mat__dot_raw_(v_right, v_right, vlen));
       mat_elem_t tau_r = 0;
 
       if (norm > MAT_DEFAULT_EPSILON) {
@@ -6617,7 +6617,7 @@ MAT_INTERNAL_STATIC void mat_bidiag_(mat_elem_t *A, size_t m, size_t n,
       }
 
       // Apply to A (rows k to m-1)
-      mat_bidiag_right_(A, m, n, lda, k, v_right, tau_r);
+      mat__bidiag_right_(A, m, n, lda, k, v_right, tau_r);
       A[(k + 1) * lda + k] = e[k];  // Restore superdiagonal
 
       // Accumulate V: V = V * H_r where H_r = I - tau * v * v^T
@@ -6627,11 +6627,11 @@ MAT_INTERNAL_STATIC void mat_bidiag_(mat_elem_t *A, size_t m, size_t n,
         memset(w, 0, n * sizeof(mat_elem_t));
         // w = sum_r v[r] * V[:,k+1+r]
         for (size_t r = 0; r < vlen; r++) {
-          mat_axpy_raw_(w, v_right[r], &V[(k + 1 + r) * n], n);
+          mat__axpy_raw_(w, v_right[r], &V[(k + 1 + r) * n], n);
         }
         // V[:,j] -= tau * v[j-(k+1)] * w for j in [k+1, n)
         for (size_t j = k + 1; j < n; j++) {
-          mat_axpy_raw_(&V[j * n], -tau_r * v_right[j - (k + 1)], w, n);
+          mat__axpy_raw_(&V[j * n], -tau_r * v_right[j - (k + 1)], w, n);
         }
         MAT_FREE(w);
       }
@@ -6652,8 +6652,8 @@ MAT_INTERNAL_STATIC void mat_bidiag_(mat_elem_t *A, size_t m, size_t n,
 
 // Compute Givens rotation to zero out b given [a; b]
 // Returns c, s such that [c s; -s c]^T * [a; b] = [r; 0]
-MAT_INTERNAL_STATIC void mat_givens_(mat_elem_t a, mat_elem_t b,
-                                     mat_elem_t *c, mat_elem_t *s) {
+MAT_INTERNAL_STATIC void mat__givens_(mat_elem_t a, mat_elem_t b,
+                                      mat_elem_t *c, mat_elem_t *s) {
   if (b == 0) {
     *c = (a >= 0) ? 1 : -1;
     *s = 0;
@@ -6679,9 +6679,9 @@ MAT_INTERNAL_STATIC void mat_givens_(mat_elem_t a, mat_elem_t b,
 // [col_i col_j] = [col_i col_j] * [c -s; s c]
 
 #ifdef MAT_HAS_ARM_NEON
-MAT_INTERNAL_STATIC void mat_givens_cols_neon_(mat_elem_t *A, size_t ld,
-                                               size_t nrows, size_t i, size_t j,
-                                               mat_elem_t c, mat_elem_t s) {
+MAT_INTERNAL_STATIC void mat__givens_cols_neon_(mat_elem_t *A, size_t ld,
+                                                size_t nrows, size_t i, size_t j,
+                                                mat_elem_t c, mat_elem_t s) {
   mat_elem_t *col_i = &A[i * ld];
   mat_elem_t *col_j = &A[j * ld];
 
@@ -6744,10 +6744,10 @@ MAT_INTERNAL_STATIC void mat_givens_cols_neon_(mat_elem_t *A, size_t ld,
 }
 #endif
 
-MAT_INTERNAL_STATIC void mat_givens_cols_scalar_(mat_elem_t *A, size_t ld,
-                                                 size_t nrows, size_t i,
-                                                 size_t j, mat_elem_t c,
-                                                 mat_elem_t s) {
+MAT_INTERNAL_STATIC void mat__givens_cols_scalar_(mat_elem_t *A, size_t ld,
+                                                  size_t nrows, size_t i,
+                                                  size_t j, mat_elem_t c,
+                                                  mat_elem_t s) {
   mat_elem_t *col_i = &A[i * ld];
   mat_elem_t *col_j = &A[j * ld];
   for (size_t k = 0; k < nrows; k++) {
@@ -6758,28 +6758,28 @@ MAT_INTERNAL_STATIC void mat_givens_cols_scalar_(mat_elem_t *A, size_t ld,
   }
 }
 
-MAT_INTERNAL_STATIC void mat_givens_cols_(mat_elem_t *A, size_t ld, size_t nrows,
-                                          size_t i, size_t j,
-                                          mat_elem_t c, mat_elem_t s) {
+MAT_INTERNAL_STATIC void mat__givens_cols_(mat_elem_t *A, size_t ld, size_t nrows,
+                                           size_t i, size_t j,
+                                           mat_elem_t c, mat_elem_t s) {
 #if defined(MAT_HAS_ARM_NEON)
   // Need enough rows for NEON to be beneficial
   if (nrows >= MAT_NEON_WIDTH * 4) {
-    mat_givens_cols_neon_(A, ld, nrows, i, j, c, s);
+    mat__givens_cols_neon_(A, ld, nrows, i, j, c, s);
   } else {
-    mat_givens_cols_scalar_(A, ld, nrows, i, j, c, s);
+    mat__givens_cols_scalar_(A, ld, nrows, i, j, c, s);
   }
 #else
-  mat_givens_cols_scalar_(A, ld, nrows, i, j, c, s);
+  mat__givens_cols_scalar_(A, ld, nrows, i, j, c, s);
 #endif
 }
 
 // Apply Givens rotation to rows i, j of matrix (strided access)
 // [row_i; row_j] = [c s; -s c] * [row_i; row_j]
 // Note: Strided access pattern doesn't benefit from SIMD
-MAT_INTERNAL_STATIC void mat_givens_rows_(mat_elem_t *A, size_t ld,
-                                          size_t row_i, size_t row_j,
-                                          size_t col_start, size_t col_end,
-                                          mat_elem_t c, mat_elem_t s) {
+MAT_INTERNAL_STATIC void mat__givens_rows_(mat_elem_t *A, size_t ld,
+                                           size_t row_i, size_t row_j,
+                                           size_t col_start, size_t col_end,
+                                           mat_elem_t c, mat_elem_t s) {
   for (size_t col = col_start; col < col_end; col++) {
     mat_elem_t ti = A[col * ld + row_i];
     mat_elem_t tj = A[col * ld + row_j];
@@ -6791,10 +6791,10 @@ MAT_INTERNAL_STATIC void mat_givens_rows_(mat_elem_t *A, size_t ld,
 // One QR iteration step on bidiagonal matrix (Golub-Kahan SVD step)
 // Works on submatrix from index p to q (inclusive)
 // d[p:q+1] is diagonal, e[p:q] is superdiagonal
-MAT_INTERNAL_STATIC void mat_svd_qr_step_(mat_elem_t *d, mat_elem_t *e,
-                                          size_t p, size_t q,
-                                          mat_elem_t *U, size_t m,
-                                          mat_elem_t *V, size_t n) {
+MAT_INTERNAL_STATIC void mat__svd_qr_step_(mat_elem_t *d, mat_elem_t *e,
+                                           size_t p, size_t q,
+                                           mat_elem_t *U, size_t m,
+                                           mat_elem_t *V, size_t n) {
   // Wilkinson shift from trailing 2x2 of T = B^T * B
   // T[n-1,n-1] = d[q]^2 + e[q-1]^2 (if q > p)
   // T[n-2,n-1] = d[q-1] * e[q-1]
@@ -6824,7 +6824,7 @@ MAT_INTERNAL_STATIC void mat_svd_qr_step_(mat_elem_t *d, mat_elem_t *e,
     mat_elem_t c, s;
 
     // Right Givens rotation to zero g
-    mat_givens_(f, g, &c, &s);
+    mat__givens_(f, g, &c, &s);
 
     if (k > p) e[k - 1] = f * c + g * s;  // This should equal the computed r
 
@@ -6838,10 +6838,10 @@ MAT_INTERNAL_STATIC void mat_svd_qr_step_(mat_elem_t *d, mat_elem_t *e,
     mat_elem_t new_dk1 = c * dk1;
 
     // Accumulate V
-    if (V) mat_givens_cols_(V, n, n, k, k + 1, c, s);
+    if (V) mat__givens_cols_(V, n, n, k, k + 1, c, s);
 
     // Left Givens rotation to zero bulge
-    mat_givens_(new_dk, bulge, &c, &s);
+    mat__givens_(new_dk, bulge, &c, &s);
 
     // Apply to rows k, k+1 of B:
     d[k] = c * new_dk + s * bulge;  // = r from Givens
@@ -6852,7 +6852,7 @@ MAT_INTERNAL_STATIC void mat_svd_qr_step_(mat_elem_t *d, mat_elem_t *e,
     e[k] = next_ek;
 
     // Accumulate U
-    if (U) mat_givens_cols_(U, m, m, k, k + 1, c, s);
+    if (U) mat__givens_cols_(U, m, m, k, k + 1, c, s);
 
     if (k + 1 < q) {
       // Bulge appears at e[k+1] position
@@ -6868,7 +6868,7 @@ MAT_INTERNAL_STATIC void mat_svd_qr_step_(mat_elem_t *d, mat_elem_t *e,
 // Input: d[n] diagonal, e[n-1] superdiagonal
 // Output: d[n] contains singular values (may be negative, need abs)
 // U (m x m) and V (n x n) accumulate rotations if non-NULL
-MAT_INTERNAL_STATIC void mat_svd_qr_bidiag_(mat_elem_t *d, mat_elem_t *e, size_t n,
+MAT_INTERNAL_STATIC void mat__svd_qr_bidiag_(mat_elem_t *d, mat_elem_t *e, size_t n,
                                             mat_elem_t *U, size_t m,
                                             mat_elem_t *V) {
   const int max_iters = 30 * (int)n;
@@ -6906,7 +6906,7 @@ MAT_INTERNAL_STATIC void mat_svd_qr_bidiag_(mat_elem_t *d, mat_elem_t *e, size_t
         if (k < q) {
           for (size_t j = k; j < q; j++) {
             mat_elem_t c, s;
-            mat_givens_(d[j + 1], e[j], &c, &s);
+            mat__givens_(d[j + 1], e[j], &c, &s);
             d[j + 1] = c * d[j + 1] + s * e[j];
             if (j + 1 < q) {
               mat_elem_t tmp = -s * e[j + 1];
@@ -6915,7 +6915,7 @@ MAT_INTERNAL_STATIC void mat_svd_qr_bidiag_(mat_elem_t *d, mat_elem_t *e, size_t
             } else {
               e[j] = 0;
             }
-            if (U) mat_givens_cols_(U, m, m, k, j + 1, c, s);
+            if (U) mat__givens_cols_(U, m, m, k, j + 1, c, s);
           }
         }
         found_zero = 1;
@@ -6926,7 +6926,7 @@ MAT_INTERNAL_STATIC void mat_svd_qr_bidiag_(mat_elem_t *d, mat_elem_t *e, size_t
     if (found_zero) continue;
 
     // Perform one QR step
-    mat_svd_qr_step_(d, e, p, q, U, m, V, n);
+    mat__svd_qr_step_(d, e, p, q, U, m, V, n);
     iter++;
   }
 
@@ -6947,7 +6947,7 @@ MAT_INTERNAL_STATIC void mat_svd_qr_bidiag_(mat_elem_t *d, mat_elem_t *e, size_t
 // Complete bidiagonalization + QR iteration SVD
 // Input: A (m x n, m >= n), column-major
 // Output: U (m x m), S (n singular values), Vt (n x n)
-MAT_INTERNAL_STATIC void mat_svd_bidiag_qr_(const Mat *A, Mat *U, Vec *S, Mat *Vt) {
+MAT_INTERNAL_STATIC void mat__svd_bidiag_qr_(const Mat *A, Mat *U, Vec *S, Mat *Vt) {
   size_t m = A->rows;
   size_t n = A->cols;
 
@@ -6968,7 +6968,7 @@ MAT_INTERNAL_STATIC void mat_svd_bidiag_qr_(const Mat *A, Mat *U, Vec *S, Mat *V
   }
 
   // Step 1: Bidiagonalize
-  mat_bidiag_(B, m, n, m, d, e, U_b, V_b);
+  mat__bidiag_(B, m, n, m, d, e, U_b, V_b);
 
   // Step 2: Initialize U_qr, V_qr to identity
   memset(U_qr, 0, m * m * sizeof(mat_elem_t));
@@ -6977,7 +6977,7 @@ MAT_INTERNAL_STATIC void mat_svd_bidiag_qr_(const Mat *A, Mat *U, Vec *S, Mat *V
   for (size_t i = 0; i < n; i++) V_qr[i * n + i] = 1;
 
   // Step 3: QR iteration
-  mat_svd_qr_bidiag_(d, e, n, U_qr, m, V_qr);
+  mat__svd_qr_bidiag_(d, e, n, U_qr, m, V_qr);
 
   // Step 4: Sort singular values descending and track permutation
   size_t *perm = (size_t *)MAT_MALLOC(n * sizeof(size_t));
@@ -6995,7 +6995,7 @@ MAT_INTERNAL_STATIC void mat_svd_bidiag_qr_(const Mat *A, Mat *U, Vec *S, Mat *V
   mat_elem_t *U_qr_perm = (mat_elem_t *)MAT_MALLOC(m * m * sizeof(mat_elem_t));
   for (size_t j = 0; j < m; j++) {
     size_t src_col = (j < n) ? perm[j] : j;
-    mat_copy_raw_(&U_qr_perm[j * m], &U_qr[src_col * m], m);
+    mat__copy_raw_(&U_qr_perm[j * m], &U_qr[src_col * m], m);
   }
 
   // U = U_b * U_qr_perm using optimized GEMM
@@ -7007,7 +7007,7 @@ MAT_INTERNAL_STATIC void mat_svd_bidiag_qr_(const Mat *A, Mat *U, Vec *S, Mat *V
   // Step 6: Reorder V_qr columns according to perm, compute V = V_b * V_qr, output Vt
   mat_elem_t *V_qr_perm = (mat_elem_t *)MAT_MALLOC(n * n * sizeof(mat_elem_t));
   for (size_t j = 0; j < n; j++) {
-    mat_copy_raw_(&V_qr_perm[j * n], &V_qr[perm[j] * n], n);
+    mat__copy_raw_(&V_qr_perm[j * n], &V_qr[perm[j] * n], n);
   }
 
   // V_temp = V_b * V_qr_perm, then Vt = V_temp^T
@@ -7040,9 +7040,9 @@ MAT_INTERNAL_STATIC void mat_svd_bidiag_qr_(const Mat *A, Mat *U, Vec *S, Mat *V
 // Apply Jacobi rotation to columns i and j (column-major data)
 // new_i = cs * col_i - sn * col_j
 // new_j = sn * col_i + cs * col_j
-MAT_INTERNAL_STATIC void mat_svd_rotate_cols_(mat_elem_t *data, size_t m,
-                                              size_t i, size_t j,
-                                              mat_elem_t cs, mat_elem_t sn) {
+MAT_INTERNAL_STATIC void mat__svd_rotate_cols_(mat_elem_t *data, size_t m,
+                                               size_t i, size_t j,
+                                               mat_elem_t cs, mat_elem_t sn) {
   mat_elem_t *col_i = &data[i * m];
   mat_elem_t *col_j = &data[j * m];
 
@@ -7107,8 +7107,8 @@ static void mat_svd_jacobi_rotation(mat_elem_t a, mat_elem_t b, mat_elem_t c,
 
 // y += alpha * X[:,col] where y is contiguous Vec and X is row-major Mat
 // Used for Gram-Schmidt on row-major matrices
-MAT_INTERNAL_STATIC void mat_svd_axpy_strided_(Vec *y, mat_elem_t alpha,
-                                               const Mat *X, size_t col) {
+MAT_INTERNAL_STATIC void mat__svd_axpy_strided_(Vec *y, mat_elem_t alpha,
+                                                const Mat *X, size_t col) {
   const mat_elem_t *x = &X->data[col];
   size_t x_stride = X->cols;
   size_t n = X->rows;
@@ -7141,8 +7141,8 @@ MAT_INTERNAL_STATIC void mat_svd_axpy_strided_(Vec *y, mat_elem_t alpha,
 }
 
 // dot(y, X[:,col]) where y is contiguous Vec and X is row-major Mat
-MAT_INTERNAL_STATIC mat_elem_t mat_svd_dot_strided_(const Vec *y,
-                                                    const Mat *X, size_t col) {
+MAT_INTERNAL_STATIC mat_elem_t mat__svd_dot_strided_(const Vec *y,
+                                                     const Mat *X, size_t col) {
   const mat_elem_t *yp = y->data;
   const mat_elem_t *x = &X->data[col];
   size_t x_stride = X->cols;
@@ -7198,9 +7198,9 @@ MAT_INTERNAL_STATIC mat_elem_t mat_svd_dot_strided_(const Vec *y,
 
 // Max column L2 norm for column-major matrix
 // Returns max_j ||data[:,j]||_2 where column j is at data[j*col_len]
-MAT_INTERNAL_STATIC mat_elem_t mat_max_col_norm_(const mat_elem_t *data,
-                                                 size_t col_len,
-                                                 size_t n_cols) {
+MAT_INTERNAL_STATIC mat_elem_t mat__max_col_norm_(const mat_elem_t *data,
+                                                  size_t col_len,
+                                                  size_t n_cols) {
   mat_elem_t max_norm_sq = 0;
   for (size_t j = 0; j < n_cols; j++) {
     Vec col = {
@@ -7217,9 +7217,9 @@ MAT_INTERNAL_STATIC mat_elem_t mat_max_col_norm_(const mat_elem_t *data,
 // V is n×n (accumulates right singular vectors)
 // After iteration: W[:,j] = σ_j * u_j, V[:,j] = v_j
 // col_stride: stride between columns in W (= m for column-major, = W->cols for row-major)
-MAT_INTERNAL_STATIC void mat_svd_jacobi_iter_(mat_elem_t *W_data, size_t m,
-                                              mat_elem_t *V_data, size_t n,
-                                              size_t col_stride) {
+MAT_INTERNAL_STATIC void mat__svd_jacobi_iter_(mat_elem_t *W_data, size_t m,
+                                               mat_elem_t *V_data, size_t n,
+                                               size_t col_stride) {
   const int max_sweeps = 30;
   const mat_elem_t tol = MAT_DEFAULT_EPSILON;
 
@@ -7228,7 +7228,7 @@ MAT_INTERNAL_STATIC void mat_svd_jacobi_iter_(mat_elem_t *W_data, size_t m,
   // Compute initial column norms (columns are contiguous)
   for (size_t j = 0; j < n; j++) {
     mat_elem_t *col_j = &W_data[j * col_stride];
-    col_norms[j] = mat_dot_raw_(col_j, col_j, m);
+    col_norms[j] = mat__dot_raw_(col_j, col_j, m);
   }
 
   for (int sweep = 0; sweep < max_sweeps; sweep++) {
@@ -7242,7 +7242,7 @@ MAT_INTERNAL_STATIC void mat_svd_jacobi_iter_(mat_elem_t *W_data, size_t m,
         // Compute dot product of columns i and j
         mat_elem_t *col_i = &W_data[i * col_stride];
         mat_elem_t *col_j = &W_data[j * col_stride];
-        mat_elem_t c = mat_dot_raw_(col_i, col_j, m);
+        mat_elem_t c = mat__dot_raw_(col_i, col_j, m);
 
         if (MAT_FABS(c) < tol * MAT_SQRT(a * b + tol))
           continue;
@@ -7251,8 +7251,8 @@ MAT_INTERNAL_STATIC void mat_svd_jacobi_iter_(mat_elem_t *W_data, size_t m,
         mat_elem_t cs, sn;
         mat_svd_jacobi_rotation(a, b, c, &cs, &sn);
 
-        mat_svd_rotate_cols_(W_data, col_stride, i, j, cs, sn);
-        mat_svd_rotate_cols_(V_data, n, i, j, cs, sn);
+        mat__svd_rotate_cols_(W_data, col_stride, i, j, cs, sn);
+        mat__svd_rotate_cols_(V_data, n, i, j, cs, sn);
 
         mat_elem_t cs2 = cs * cs, sn2 = sn * sn, cs_sn = cs * sn;
         col_norms[i] = cs2 * a + sn2 * b - 2 * cs_sn * c;
@@ -7304,7 +7304,7 @@ MATDEF void mat_svd(const Mat *A, Mat *U, Vec *S, Mat *Vt) {
   // Use Bidiag+QR for larger matrices (faster), Jacobi for smaller (simpler)
 #define MAT_SVD_BIDIAG_THRESHOLD 20
   if (n >= MAT_SVD_BIDIAG_THRESHOLD) {
-    mat_svd_bidiag_qr_(A, U, S, Vt);
+    mat__svd_bidiag_qr_(A, U, S, Vt);
     return;
   }
 
@@ -7331,7 +7331,7 @@ MATDEF void mat_svd(const Mat *A, Mat *U, Vec *S, Mat *Vt) {
   }
 
   // Run Jacobi iteration (columns are contiguous, stride = m for W, n for V)
-  mat_svd_jacobi_iter_(W_data, m, V_data, n, m);
+  mat__svd_jacobi_iter_(W_data, m, V_data, n, m);
 
   const mat_elem_t tol = MAT_DEFAULT_EPSILON;
 
@@ -7525,10 +7525,10 @@ MATDEF void mat_pinv(Mat *out, const Mat *A) {
   }
 
   // Run Jacobi iteration
-  mat_svd_jacobi_iter_(W_data, m, V_data, n, m);
+  mat__svd_jacobi_iter_(W_data, m, V_data, n, m);
 
   // Tolerance based on max singular value
-  mat_elem_t max_sigma = mat_max_col_norm_(W_data, m, n);
+  mat_elem_t max_sigma = mat__max_col_norm_(W_data, m, n);
   mat_elem_t pinv_tol =
       (mat_elem_t)(m > n ? m : n) * max_sigma * MAT_DEFAULT_EPSILON;
 
@@ -7634,7 +7634,7 @@ MATDEF mat_elem_t mat_cond(const Mat *A) {
 // Reduce matrix A to upper Hessenberg form using Householder reflections.
 // If Q is provided (not NULL), accumulate the orthogonal transformation
 // Q = H_1 * H_2 * ... * H_{n-2}. Q must be initialized to identity before calling.
-MAT_INTERNAL_STATIC void mat_hessenberg_(Mat *A, mat_elem_t *Q, size_t ldq) {
+MAT_INTERNAL_STATIC void mat__hessenberg_(Mat *A, mat_elem_t *Q, size_t ldq) {
   size_t n = A->rows;
   if (n <= 2)
     return;
@@ -7668,8 +7668,8 @@ MAT_INTERNAL_STATIC void mat_hessenberg_(Mat *A, mat_elem_t *Q, size_t ldq) {
     // For each column j: A[:,j] -= tau * v * (v^T * A[:,j])
     for (size_t j = k + 1; j < n; j++) {
       mat_elem_t *col_j = &A->data[j * n + (k + 1)];
-      mat_elem_t dot = mat_dot_raw_(v_data, col_j, len);
-      mat_axpy_raw_(col_j, -tau * dot, v_data, len);
+      mat_elem_t dot = mat__dot_raw_(v_data, col_j, len);
+      mat__axpy_raw_(col_j, -tau * dot, v_data, len);
     }
 
     // Apply from right: A[0:n, k+1:n] = A[0:n, k+1:n] * H
@@ -7678,13 +7678,13 @@ MAT_INTERNAL_STATIC void mat_hessenberg_(Mat *A, mat_elem_t *Q, size_t ldq) {
     memset(w_data, 0, n * sizeof(mat_elem_t));
     for (size_t j = 0; j < len; j++) {
       mat_elem_t *col_j = &A->data[(k + 1 + j) * n];
-      mat_axpy_raw_(w_data, v_data[j], col_j, n);
+      mat__axpy_raw_(w_data, v_data[j], col_j, n);
     }
 
     // A[:,k+1+j] -= tau * w * v[j]
     for (size_t j = 0; j < len; j++) {
       mat_elem_t *col_j = &A->data[(k + 1 + j) * n];
-      mat_axpy_raw_(col_j, -tau * v_data[j], w_data, n);
+      mat__axpy_raw_(col_j, -tau * v_data[j], w_data, n);
     }
 
     // Accumulate Q = Q * H_k if requested
@@ -7696,12 +7696,12 @@ MAT_INTERNAL_STATIC void mat_hessenberg_(Mat *A, mat_elem_t *Q, size_t ldq) {
       memset(w_data, 0, n * sizeof(mat_elem_t));
       for (size_t j = 0; j < len; j++) {
         mat_elem_t *Q_col = &Q[(k + 1 + j) * ldq];
-        mat_axpy_raw_(w_data, v_data[j], Q_col, n);
+        mat__axpy_raw_(w_data, v_data[j], Q_col, n);
       }
       // Q[:, k+1+j] -= tau * w * v[j]
       for (size_t j = 0; j < len; j++) {
         mat_elem_t *Q_col = &Q[(k + 1 + j) * ldq];
-        mat_axpy_raw_(Q_col, -tau * v_data[j], w_data, n);
+        mat__axpy_raw_(Q_col, -tau * v_data[j], w_data, n);
       }
     }
   }
@@ -7714,8 +7714,8 @@ MAT_INTERNAL_STATIC void mat_hessenberg_(Mat *A, mat_elem_t *Q, size_t ldq) {
 // Uses implicit double shift for better convergence with complex eigenvalues
 // Reference: Golub & Van Loan, "Matrix Computations", Algorithm 7.5.1
 // If Z is provided, accumulate transformations: Z = Z * (product of rotations)
-MAT_INTERNAL_STATIC void mat_qr_step_(Mat *H, size_t lo, size_t hi,
-                                       mat_elem_t *Z, size_t ldz) {
+MAT_INTERNAL_STATIC void mat__qr_step_(Mat *H, size_t lo, size_t hi,
+                                        mat_elem_t *Z, size_t ldz) {
   size_t n = H->rows;
   mat_elem_t *data = H->data;
 
@@ -7737,7 +7737,7 @@ MAT_INTERNAL_STATIC void mat_qr_step_(Mat *H, size_t lo, size_t hi,
     mat_elem_t x = a - shift;
     mat_elem_t y = cc;
     mat_elem_t c, s;
-    mat_givens_(x, y, &c, &s);
+    mat__givens_(x, y, &c, &s);
 
     // Apply to rows lo, lo+1
     for (size_t j = lo; j < n; j++) {
@@ -7748,11 +7748,11 @@ MAT_INTERNAL_STATIC void mat_qr_step_(Mat *H, size_t lo, size_t hi,
       col[lo + 1] = -s * t0 + c * t1;
     }
     // Apply to cols lo, lo+1
-    mat_givens_cols_(data, n, hi + 1, lo, lo + 1, c, s);
+    mat__givens_cols_(data, n, hi + 1, lo, lo + 1, c, s);
 
     // Accumulate Z = Z * G^T
     if (Z) {
-      mat_givens_cols_(Z, ldz, n, lo, lo + 1, c, s);
+      mat__givens_cols_(Z, ldz, n, lo, lo + 1, c, s);
     }
     return;
   }
@@ -7868,7 +7868,7 @@ MAT_INTERNAL_STATIC void mat_qr_step_(Mat *H, size_t lo, size_t hi,
   mat_elem_t x_final = MAT_AT(H, hi - 1, hi - 2);
   mat_elem_t y_final = MAT_AT(H, hi, hi - 2);
   mat_elem_t c_final, s_final;
-  mat_givens_(x_final, y_final, &c_final, &s_final);
+  mat__givens_(x_final, y_final, &c_final, &s_final);
 
   // Apply from left to rows hi-1, hi
   for (size_t j = hi - 2; j < n; j++) {
@@ -7879,11 +7879,11 @@ MAT_INTERNAL_STATIC void mat_qr_step_(Mat *H, size_t lo, size_t hi,
     col[hi] = -s_final * t0 + c_final * t1;
   }
   // Apply from right to cols hi-1, hi
-  mat_givens_cols_(data, n, hi + 1, hi - 1, hi, c_final, s_final);
+  mat__givens_cols_(data, n, hi + 1, hi - 1, hi, c_final, s_final);
 
   // Accumulate final Givens into Z
   if (Z) {
-    mat_givens_cols_(Z, ldz, n, hi - 1, hi, c_final, s_final);
+    mat__givens_cols_(Z, ldz, n, hi - 1, hi, c_final, s_final);
   }
 }
 
@@ -7894,7 +7894,7 @@ MAT_INTERNAL_STATIC void mat_qr_step_(Mat *H, size_t lo, size_t hi,
 // Apply a 3x3 Householder reflector P = I - tau * v * v^T to H from both sides
 // v = [1, v1, v2], affects rows/cols r0, r0+1, r0+2
 // If Z is provided, accumulate: Z = Z * P
-MAT_INTERNAL_STATIC void mat_apply_householder_3x3_(
+MAT_INTERNAL_STATIC void mat__apply_householder_3x3_(
     mat_elem_t *H, size_t n, size_t r0, size_t col_lo, size_t col_hi,
     size_t row_lo, size_t row_hi,
     mat_elem_t tau, mat_elem_t v1, mat_elem_t v2,
@@ -7936,9 +7936,9 @@ MAT_INTERNAL_STATIC void mat_apply_householder_3x3_(
 
 // Compute eigenvalues of a 2x2 block [[a, b], [c, d]]
 // Returns real parts in sr[0], sr[1] and imaginary parts in si[0], si[1]
-MAT_INTERNAL_STATIC void mat_eig_2x2_(mat_elem_t a, mat_elem_t b,
-                                       mat_elem_t c, mat_elem_t d,
-                                       mat_elem_t *sr, mat_elem_t *si) {
+MAT_INTERNAL_STATIC void mat__eig_2x2_(mat_elem_t a, mat_elem_t b,
+                                        mat_elem_t c, mat_elem_t d,
+                                        mat_elem_t *sr, mat_elem_t *si) {
   mat_elem_t trace = a + d;
   mat_elem_t det = a * d - b * c;
   mat_elem_t disc = trace * trace - 4 * det;
@@ -7958,8 +7958,8 @@ MAT_INTERNAL_STATIC void mat_eig_2x2_(mat_elem_t a, mat_elem_t b,
 // Extract shifts from the bottom-right nw x nw window of H[lo:hi+1, lo:hi+1]
 // Returns number of shifts extracted (up to ns)
 // Shifts are stored as (real, imag) pairs in sr[], si[]
-MAT_INTERNAL_STATIC size_t mat_compute_shifts_(const Mat *H, size_t lo, size_t hi,
-                                                size_t ns, mat_elem_t *sr, mat_elem_t *si) {
+MAT_INTERNAL_STATIC size_t mat__compute_shifts_(const Mat *H, size_t lo, size_t hi,
+                                                 size_t ns, mat_elem_t *sr, mat_elem_t *si) {
   (void)lo;  // Unused but kept for API consistency
   size_t count = 0;
 
@@ -7977,7 +7977,7 @@ MAT_INTERNAL_STATIC size_t mat_compute_shifts_(const Mat *H, size_t lo, size_t h
       i--;
     } else {
       // 2x2 block
-      mat_eig_2x2_(MAT_AT(H, i - 1, i - 1), MAT_AT(H, i - 1, i),
+      mat__eig_2x2_(MAT_AT(H, i - 1, i - 1), MAT_AT(H, i - 1, i),
                    MAT_AT(H, i, i - 1), MAT_AT(H, i, i),
                    &sr[count], &si[count]);
       count += 2;
@@ -7992,9 +7992,9 @@ MAT_INTERNAL_STATIC size_t mat_compute_shifts_(const Mat *H, size_t lo, size_t h
 
 // Double-shift QR step using explicit shifts (for use with AED)
 // Similar to mat_qr_step_ but uses provided shifts instead of computing from bottom 2x2
-MAT_INTERNAL_STATIC void mat_qr_step_with_shifts_(Mat *H, size_t lo, size_t hi,
-                                                   mat_elem_t s_re, mat_elem_t s_im,
-                                                   mat_elem_t *Z, size_t ldz) {
+MAT_INTERNAL_STATIC void mat__qr_step_with_shifts_(Mat *H, size_t lo, size_t hi,
+                                                    mat_elem_t s_re, mat_elem_t s_im,
+                                                    mat_elem_t *Z, size_t ldz) {
   size_t n = H->rows;
   mat_elem_t *data = H->data;
 
@@ -8002,7 +8002,7 @@ MAT_INTERNAL_STATIC void mat_qr_step_with_shifts_(Mat *H, size_t lo, size_t hi,
 
   // For 2x2 block, use single shift (Wilkinson)
   if (hi - lo < 2) {
-    mat_qr_step_(H, lo, hi, Z, ldz);
+    mat__qr_step_(H, lo, hi, Z, ldz);
     return;
   }
 
@@ -8095,7 +8095,7 @@ MAT_INTERNAL_STATIC void mat_qr_step_with_shifts_(Mat *H, size_t lo, size_t hi,
   mat_elem_t x_final = MAT_AT(H, hi - 1, hi - 2);
   mat_elem_t y_final = MAT_AT(H, hi, hi - 2);
   mat_elem_t c_final, s_final;
-  mat_givens_(x_final, y_final, &c_final, &s_final);
+  mat__givens_(x_final, y_final, &c_final, &s_final);
 
   for (size_t j = hi - 2; j < n; j++) {
     mat_elem_t *col = &data[j * n];
@@ -8104,7 +8104,7 @@ MAT_INTERNAL_STATIC void mat_qr_step_with_shifts_(Mat *H, size_t lo, size_t hi,
     col[hi - 1] = c_final * t0 + s_final * t1;
     col[hi] = -s_final * t0 + c_final * t1;
   }
-  mat_givens_cols_(data, n, hi + 1, hi - 1, hi, c_final, s_final);
+  mat__givens_cols_(data, n, hi + 1, hi - 1, hi, c_final, s_final);
 
   if (Z) {
     mat_elem_t *Z_hi1 = &Z[(hi - 1) * ldz];
@@ -8128,7 +8128,7 @@ MAT_INTERNAL_STATIC void mat_qr_step_with_shifts_(Mat *H, size_t lo, size_t hi,
 #define MAT_DEFLATION_ABS_TOL 2e-6f
 #endif
 
-MAT_INTERNAL_STATIC int mat_is_negligible_(mat_elem_t sub, mat_elem_t diag_sum) {
+MAT_INTERNAL_STATIC int mat__is_negligible_(mat_elem_t sub, mat_elem_t diag_sum) {
   mat_elem_t rel_tol = MAT_DEFAULT_EPSILON * diag_sum;
   mat_elem_t tol = (rel_tol > MAT_DEFLATION_ABS_TOL) ? rel_tol : MAT_DEFLATION_ABS_TOL;
   return MAT_FABS(sub) < tol;
@@ -8136,11 +8136,11 @@ MAT_INTERNAL_STATIC int mat_is_negligible_(mat_elem_t sub, mat_elem_t diag_sum) 
 
 // Check for deflation in subdiagonal
 // Returns new hi after deflating converged eigenvalues
-MAT_INTERNAL_STATIC size_t mat_check_deflation_(Mat *H, size_t lo, size_t hi) {
+MAT_INTERNAL_STATIC size_t mat__check_deflation_(Mat *H, size_t lo, size_t hi) {
   while (hi > lo) {
     mat_elem_t sub = MAT_AT(H, hi, hi - 1);
     mat_elem_t diag_sum = MAT_FABS(MAT_AT(H, hi - 1, hi - 1)) + MAT_FABS(MAT_AT(H, hi, hi));
-    if (mat_is_negligible_(sub, diag_sum)) {
+    if (mat__is_negligible_(sub, diag_sum)) {
       MAT_SET(H, hi, hi - 1, 0);
       hi--;
     } else {
@@ -8148,7 +8148,7 @@ MAT_INTERNAL_STATIC size_t mat_check_deflation_(Mat *H, size_t lo, size_t hi) {
       if (hi > lo + 1) {
         mat_elem_t sub2 = MAT_AT(H, hi - 1, hi - 2);
         mat_elem_t diag_sum2 = MAT_FABS(MAT_AT(H, hi - 2, hi - 2)) + MAT_FABS(MAT_AT(H, hi - 1, hi - 1));
-        if (mat_is_negligible_(sub2, diag_sum2)) {
+        if (mat__is_negligible_(sub2, diag_sum2)) {
           MAT_SET(H, hi - 1, hi - 2, 0);
           hi -= 2;
         } else {
@@ -8165,9 +8165,9 @@ MAT_INTERNAL_STATIC size_t mat_check_deflation_(Mat *H, size_t lo, size_t hi) {
 // Aggressive Early Deflation (AED)
 // Examines a deflation window at the bottom-right and deflates converged eigenvalues
 // Returns the number of eigenvalues deflated
-MAT_INTERNAL_STATIC size_t mat_aed_(Mat *H, size_t lo, size_t hi,
-                                     size_t nw, mat_elem_t *sr, mat_elem_t *si,
-                                     mat_elem_t *Z, size_t ldz) {
+MAT_INTERNAL_STATIC size_t mat__aed_(Mat *H, size_t lo, size_t hi,
+                                      size_t nw, mat_elem_t *sr, mat_elem_t *si,
+                                      mat_elem_t *Z, size_t ldz) {
   size_t n = H->rows;
   if (hi - lo + 1 < nw) nw = hi - lo + 1;
   if (nw < 3) return 0;
@@ -8206,7 +8206,7 @@ MAT_INTERNAL_STATIC size_t mat_aed_(Mat *H, size_t lo, size_t hi,
     } else if (w_lo + 1 == w_hi) {
       w_hi -= 2;
     } else {
-      mat_qr_step_(T, w_lo, w_hi, Q->data, nw);
+      mat__qr_step_(T, w_lo, w_hi, Q->data, nw);
     }
   }
 
@@ -8238,7 +8238,7 @@ MAT_INTERNAL_STATIC size_t mat_aed_(Mat *H, size_t lo, size_t hi,
         nd += 2;
       } else {
         // Not deflatable - use as shifts
-        mat_eig_2x2_(MAT_AT(T, i - 1, i - 1), MAT_AT(T, i - 1, i),
+        mat__eig_2x2_(MAT_AT(T, i - 1, i - 1), MAT_AT(T, i - 1, i),
                      MAT_AT(T, i, i - 1), MAT_AT(T, i, i),
                      &sr[ns], &si[ns]);
         ns += 2;
@@ -8341,7 +8341,7 @@ MAT_INTERNAL_STATIC size_t mat_aed_(Mat *H, size_t lo, size_t hi,
 // Main multishift QR iteration with optional AED
 // H is reduced to quasi-upper-triangular form
 // If Z is provided, accumulate transformations
-MAT_INTERNAL_STATIC void mat_multishift_qr_iter_(Mat *H, mat_elem_t *Z, size_t ldz) {
+MAT_INTERNAL_STATIC void mat__multishift_qr_iter_(Mat *H, mat_elem_t *Z, size_t ldz) {
   size_t n = H->rows;
   if (n <= 2) return;
 
@@ -8351,7 +8351,7 @@ MAT_INTERNAL_STATIC void mat_multishift_qr_iter_(Mat *H, mat_elem_t *Z, size_t l
 
   while (hi > 0 && iter < max_iter) {
     // Check for deflation from the bottom
-    hi = mat_check_deflation_(H, 0, hi);
+    hi = mat__check_deflation_(H, 0, hi);
     if (hi == 0) break;
 
     // Find the start of the active block
@@ -8359,7 +8359,7 @@ MAT_INTERNAL_STATIC void mat_multishift_qr_iter_(Mat *H, mat_elem_t *Z, size_t l
     while (lo > 0) {
       mat_elem_t sub = MAT_AT(H, lo, lo - 1);
       mat_elem_t diag_sum = MAT_FABS(MAT_AT(H, lo - 1, lo - 1)) + MAT_FABS(MAT_AT(H, lo, lo));
-      if (mat_is_negligible_(sub, diag_sum)) {
+      if (mat__is_negligible_(sub, diag_sum)) {
         MAT_SET(H, lo, lo - 1, 0);
         break;
       }
@@ -8376,7 +8376,7 @@ MAT_INTERNAL_STATIC void mat_multishift_qr_iter_(Mat *H, mat_elem_t *Z, size_t l
       if (hi < 2) break;  // Guard against underflow
       hi -= 2;
     } else {
-      mat_qr_step_(H, lo, hi, Z, ldz);
+      mat__qr_step_(H, lo, hi, Z, ldz);
       iter++;
     }
   }
@@ -8384,8 +8384,8 @@ MAT_INTERNAL_STATIC void mat_multishift_qr_iter_(Mat *H, mat_elem_t *Z, size_t l
 
 // Extract eigenvalues from upper quasi-triangular matrix
 // Returns number of eigenvalues found
-MAT_INTERNAL_STATIC size_t mat_extract_eigvals_(Vec *out, const Mat *H,
-                                                 size_t lo, size_t hi) {
+MAT_INTERNAL_STATIC size_t mat__extract_eigvals_(Vec *out, const Mat *H,
+                                                  size_t lo, size_t hi) {
   size_t count = 0;
 
   for (size_t i = lo; i <= hi;) {
@@ -8435,7 +8435,7 @@ MAT_INTERNAL_STATIC size_t mat_extract_eigvals_(Vec *out, const Mat *H,
 // For 2x2 blocks (complex pair): compute real/imag parts of eigenvector.
 // Output: V[:, k] = eigenvector for eigenvalue at position k.
 //         For complex pairs at k, k+1: V[:, k] = real part, V[:, k+1] = imag part.
-MAT_INTERNAL_STATIC void mat_trevc_(Mat *V, const Mat *T) {
+MAT_INTERNAL_STATIC void mat__trevc_(Mat *V, const Mat *T) {
   size_t n = T->rows;
   mat_elem_t *Vd = V->data;
 
@@ -8599,10 +8599,10 @@ MAT_INTERNAL_STATIC void mat_trevc_(Mat *V, const Mat *T) {
 
 // Unblocked tridiagonalization - used for small matrices and within blocks
 // If Q != NULL, accumulates Householder reflectors into Q (must be initialized to identity)
-MAT_INTERNAL_STATIC void mat_tridiag_sym_unblocked_(mat_elem_t *W, size_t n,
-                                                     mat_elem_t *d, mat_elem_t *e,
-                                                     mat_elem_t *v, mat_elem_t *p,
-                                                     mat_elem_t *Q, size_t ldq) {
+MAT_INTERNAL_STATIC void mat__tridiag_sym_unblocked_(mat_elem_t *W, size_t n,
+                                                      mat_elem_t *d, mat_elem_t *e,
+                                                      mat_elem_t *v, mat_elem_t *p,
+                                                      mat_elem_t *Q, size_t ldq) {
   mat_elem_t *w = NULL;
   if (Q) {
     w = (mat_elem_t *)MAT_MALLOC(n * sizeof(mat_elem_t));
@@ -8614,7 +8614,7 @@ MAT_INTERNAL_STATIC void mat_tridiag_sym_unblocked_(mat_elem_t *W, size_t n,
 
     memcpy(v, col_k, len * sizeof(mat_elem_t));
 
-    mat_elem_t norm_sq = mat_dot_raw_(v, v, len);
+    mat_elem_t norm_sq = mat__dot_raw_(v, v, len);
     mat_elem_t norm_v = MAT_SQRT(norm_sq);
 
     if (norm_v < MAT_DEFAULT_EPSILON) {
@@ -8629,7 +8629,7 @@ MAT_INTERNAL_STATIC void mat_tridiag_sym_unblocked_(mat_elem_t *W, size_t n,
 
     v[0] = v0 - beta;
     mat_elem_t inv_v0 = 1.0 / v[0];
-    mat_scal_raw_(&v[1], inv_v0, len - 1);
+    mat__scal_raw_(&v[1], inv_v0, len - 1);
     v[0] = 1.0;
 
     mat_elem_t tau = (beta - v0) / beta;
@@ -8644,18 +8644,18 @@ MAT_INTERNAL_STATIC void mat_tridiag_sym_unblocked_(mat_elem_t *W, size_t n,
     memset(p, 0, len * sizeof(mat_elem_t));
     for (size_t j = 0; j < len; j++) {
       mat_elem_t *col_j = &W[(k + 1 + j) * n + (k + 1)];
-      mat_axpy_raw_(p, v[j], col_j, len);
+      mat__axpy_raw_(p, v[j], col_j, len);
     }
 
-    mat_elem_t vtp = mat_dot_raw_(v, p, len);
+    mat_elem_t vtp = mat__dot_raw_(v, p, len);
     mat_elem_t alpha = (tau * tau / 2) * vtp;
 
-    mat_scal_raw_(p, tau, len);
-    mat_axpy_raw_(p, -alpha, v, len);
+    mat__scal_raw_(p, tau, len);
+    mat__axpy_raw_(p, -alpha, v, len);
 
     for (size_t j = 0; j < len; j++) {
       mat_elem_t *col_j = &W[(k + 1 + j) * n + (k + 1)];
-      mat_syr2_col_raw_(col_j, v[j], p, p[j], v, len);
+      mat__syr2_col_raw_(col_j, v[j], p, p[j], v, len);
     }
 
     // Accumulate Q: Q = Q * H = Q - tau * (Q * v) * v^T
@@ -8663,11 +8663,11 @@ MAT_INTERNAL_STATIC void mat_tridiag_sym_unblocked_(mat_elem_t *W, size_t n,
       memset(w, 0, n * sizeof(mat_elem_t));
       for (size_t j = 0; j < len; j++) {
         mat_elem_t *Q_col = &Q[(k + 1 + j) * ldq];
-        mat_axpy_raw_(w, v[j], Q_col, n);
+        mat__axpy_raw_(w, v[j], Q_col, n);
       }
       for (size_t j = 0; j < len; j++) {
         mat_elem_t *Q_col = &Q[(k + 1 + j) * ldq];
-        mat_axpy_raw_(Q_col, -tau * v[j], w, n);
+        mat__axpy_raw_(Q_col, -tau * v[j], w, n);
       }
     }
 
@@ -8681,9 +8681,9 @@ MAT_INTERNAL_STATIC void mat_tridiag_sym_unblocked_(mat_elem_t *W, size_t n,
 
 // Blocked tridiagonalization using SYR2K for trailing matrix update
 // Reduces nb columns at a time, accumulates V and W, then does rank-2*nb update
-MAT_INTERNAL_STATIC void mat_tridiag_sym_blocked_(mat_elem_t *A, size_t n,
-                                                   mat_elem_t *d, mat_elem_t *e,
-                                                   size_t nb) {
+MAT_INTERNAL_STATIC void mat__tridiag_sym_blocked_(mat_elem_t *A, size_t n,
+                                                    mat_elem_t *d, mat_elem_t *e,
+                                                    size_t nb) {
   mat_elem_t *v = (mat_elem_t *)MAT_MALLOC(n * sizeof(mat_elem_t));
   mat_elem_t *p = (mat_elem_t *)MAT_MALLOC(n * sizeof(mat_elem_t));
   mat_elem_t *V = (mat_elem_t *)MAT_MALLOC(n * nb * sizeof(mat_elem_t));
@@ -8703,7 +8703,7 @@ MAT_INTERNAL_STATIC void mat_tridiag_sym_blocked_(mat_elem_t *A, size_t n,
 
       memcpy(v, col, len * sizeof(mat_elem_t));
 
-      mat_elem_t norm_sq = mat_dot_raw_(v, v, len);
+      mat_elem_t norm_sq = mat__dot_raw_(v, v, len);
       mat_elem_t norm_v = MAT_SQRT(norm_sq);
 
       if (norm_v < MAT_DEFAULT_EPSILON) {
@@ -8721,7 +8721,7 @@ MAT_INTERNAL_STATIC void mat_tridiag_sym_blocked_(mat_elem_t *A, size_t n,
 
       v[0] = v0 - beta;
       mat_elem_t inv_v0 = 1.0 / v[0];
-      mat_scal_raw_(&v[1], inv_v0, len - 1);
+      mat__scal_raw_(&v[1], inv_v0, len - 1);
       v[0] = 1.0;
 
       mat_elem_t tau = (beta - v0) / beta;
@@ -8742,14 +8742,14 @@ MAT_INTERNAL_STATIC void mat_tridiag_sym_blocked_(mat_elem_t *A, size_t n,
       memset(p, 0, len * sizeof(mat_elem_t));
       for (size_t jj = 0; jj < len; jj++) {
         mat_elem_t *col_jj = &A[(col_idx + 1 + jj) * n + (col_idx + 1)];
-        mat_axpy_raw_(p, v[jj], col_jj, len);
+        mat__axpy_raw_(p, v[jj], col_jj, len);
       }
 
-      mat_elem_t vtp = mat_dot_raw_(v, p, len);
+      mat_elem_t vtp = mat__dot_raw_(v, p, len);
       mat_elem_t alpha = (tau * tau / 2) * vtp;
 
-      mat_scal_raw_(p, tau, len);
-      mat_axpy_raw_(p, -alpha, v, len);
+      mat__scal_raw_(p, tau, len);
+      mat__axpy_raw_(p, -alpha, v, len);
 
       // Store w in W_mat (padded)
       memset(&W_mat[j * n], 0, (col_idx + 1) * sizeof(mat_elem_t));
@@ -8763,7 +8763,7 @@ MAT_INTERNAL_STATIC void mat_tridiag_sym_blocked_(mat_elem_t *A, size_t n,
         size_t upd_len = n - col_idx - 1;
         if (cjj >= col_idx + 1) {
           size_t off = cjj - col_idx - 1;
-          mat_syr2_col_raw_(&col_jj[0], v[off], &p[0], p[off], &v[0], upd_len);
+          mat__syr2_col_raw_(&col_jj[0], v[off], &p[0], p[off], &v[0], upd_len);
         }
       }
 
@@ -8814,18 +8814,18 @@ MAT_INTERNAL_STATIC void mat_tridiag_sym_blocked_(mat_elem_t *A, size_t n,
 // Reduce symmetric matrix to tridiagonal form using Householder reflections
 // Output: diagonal d[n], off-diagonal e[n-1]
 // Uses blocked algorithm for large matrices, unblocked for small
-MAT_INTERNAL_STATIC void mat_tridiag_sym_(const Mat *A, mat_elem_t *d, mat_elem_t *e) {
+MAT_INTERNAL_STATIC void mat__tridiag_sym_(const Mat *A, mat_elem_t *d, mat_elem_t *e) {
   size_t n = A->rows;
 
   mat_elem_t *W = (mat_elem_t *)MAT_MALLOC(n * n * sizeof(mat_elem_t));
   memcpy(W, A->data, n * n * sizeof(mat_elem_t));
 
   if (n >= MAT_TRIDIAG_BLOCK_THRESHOLD) {
-    mat_tridiag_sym_blocked_(W, n, d, e, MAT_TRIDIAG_BLOCK_SIZE);
+    mat__tridiag_sym_blocked_(W, n, d, e, MAT_TRIDIAG_BLOCK_SIZE);
   } else {
     mat_elem_t *v = (mat_elem_t *)MAT_MALLOC(n * sizeof(mat_elem_t));
     mat_elem_t *p = (mat_elem_t *)MAT_MALLOC(n * sizeof(mat_elem_t));
-    mat_tridiag_sym_unblocked_(W, n, d, e, v, p, NULL, 0);
+    mat__tridiag_sym_unblocked_(W, n, d, e, v, p, NULL, 0);
     MAT_FREE(p);
     MAT_FREE(v);
   }
@@ -8837,9 +8837,9 @@ MAT_INTERNAL_STATIC void mat_tridiag_sym_(const Mat *A, mat_elem_t *d, mat_elem_
 // Updates diagonal d[lo:hi+1] and off-diagonal e[lo:hi]
 // If Z != NULL, accumulates Givens rotations into Z for eigenvector computation
 // Reference: Golub & Van Loan, "Matrix Computations", Algorithm 8.3.2
-MAT_INTERNAL_STATIC void mat_tridiag_qr_step_(mat_elem_t *d, mat_elem_t *e,
-                                               size_t lo, size_t hi,
-                                               mat_elem_t *Z, size_t n, size_t ldz) {
+MAT_INTERNAL_STATIC void mat__tridiag_qr_step_(mat_elem_t *d, mat_elem_t *e,
+                                                size_t lo, size_t hi,
+                                                mat_elem_t *Z, size_t n, size_t ldz) {
   // Wilkinson shift from bottom-right 2x2 block [[a,b],[b,c]]
   mat_elem_t a = d[hi - 1];
   mat_elem_t b = e[hi - 1];
@@ -8898,7 +8898,7 @@ MAT_INTERNAL_STATIC void mat_tridiag_qr_step_(mat_elem_t *d, mat_elem_t *e,
 
     // Accumulate Givens into Z: Z = Z * G where G = [[cs, sn], [-sn, cs]]
     if (Z) {
-      mat_givens_cols_(Z, ldz, n, k, k + 1, cs, -sn);
+      mat__givens_cols_(Z, ldz, n, k, k + 1, cs, -sn);
     }
   }
 }
@@ -8909,8 +8909,8 @@ MAT_INTERNAL_STATIC void mat_tridiag_qr_step_(mat_elem_t *d, mat_elem_t *e,
 
 // Full QR iteration on tridiagonal matrix with deflation
 // If Z != NULL, accumulates Givens rotations into Z for eigenvector computation
-MAT_INTERNAL_STATIC void mat_tridiag_qr_iter_(mat_elem_t *d, mat_elem_t *e, size_t n,
-                                               mat_elem_t *Z, size_t ldz) {
+MAT_INTERNAL_STATIC void mat__tridiag_qr_iter_(mat_elem_t *d, mat_elem_t *e, size_t n,
+                                                mat_elem_t *Z, size_t ldz) {
   if (n <= 1) return;
 
   size_t max_iter = 30 * n;
@@ -8934,13 +8934,13 @@ MAT_INTERNAL_STATIC void mat_tridiag_qr_iter_(mat_elem_t *d, mat_elem_t *e, size
       hi--;
     } else {
       // Perform QR step on active submatrix
-      mat_tridiag_qr_step_(d, e, lo, hi, Z, n, ldz);
+      mat__tridiag_qr_step_(d, e, lo, hi, Z, n, ldz);
     }
   }
 }
 
 // Scalar implementation of symmetric eigenvalue computation
-MAT_INTERNAL_STATIC void mat_eigvals_sym_scalar_(Vec *out, const Mat *A) {
+MAT_INTERNAL_STATIC void mat__eigvals_sym_scalar_(Vec *out, const Mat *A) {
   size_t n = A->rows;
 
   // Handle small cases directly
@@ -8969,10 +8969,10 @@ MAT_INTERNAL_STATIC void mat_eigvals_sym_scalar_(Vec *out, const Mat *A) {
   mat_elem_t *offdiag = (mat_elem_t *)MAT_MALLOC((n - 1) * sizeof(mat_elem_t));
 
   // Reduce to tridiagonal form
-  mat_tridiag_sym_(A, diag, offdiag);
+  mat__tridiag_sym_(A, diag, offdiag);
 
   // QR iteration on tridiagonal matrix
-  mat_tridiag_qr_iter_(diag, offdiag, n, NULL, 0);
+  mat__tridiag_qr_iter_(diag, offdiag, n, NULL, 0);
 
   // Copy eigenvalues to output
   memcpy(out->data, diag, n * sizeof(mat_elem_t));
@@ -8987,7 +8987,7 @@ MATDEF void mat_eigvals_sym(Vec *out, const Mat *A) {
   MAT_ASSERT(A->rows == A->cols);
   MAT_ASSERT(out->rows == A->rows && out->cols == 1);
 
-  mat_eigvals_sym_scalar_(out, A);
+  mat__eigvals_sym_scalar_(out, A);
 }
 
 /* ========================================================================== */
@@ -8995,7 +8995,7 @@ MATDEF void mat_eigvals_sym(Vec *out, const Mat *A) {
 /* ========================================================================== */
 
 // Scalar implementation of symmetric eigendecomposition
-MAT_INTERNAL_STATIC void mat_eigen_sym_scalar_(Mat *V, Vec *eigenvalues, const Mat *A) {
+MAT_INTERNAL_STATIC void mat__eigen_sym_scalar_(Mat *V, Vec *eigenvalues, const Mat *A) {
   size_t n = A->rows;
 
   // Handle 1x1 case
@@ -9069,10 +9069,10 @@ MAT_INTERNAL_STATIC void mat_eigen_sym_scalar_(Mat *V, Vec *eigenvalues, const M
   // Reduce to tridiagonal form, accumulating Q in V
   // TODO: Implement blocked tridiagonalization with Q accumulation (WY representation)
   // to match Eigen's performance for n >= 64. Currently ~1.7x slower than Eigen at n=256.
-  mat_tridiag_sym_unblocked_(W, n, diag, offdiag, v, p, V->data, n);
+  mat__tridiag_sym_unblocked_(W, n, diag, offdiag, v, p, V->data, n);
 
   // QR iteration on tridiagonal, accumulating rotations in V
-  mat_tridiag_qr_iter_(diag, offdiag, n, V->data, n);
+  mat__tridiag_qr_iter_(diag, offdiag, n, V->data, n);
 
   MAT_FREE(p);
   MAT_FREE(v);
@@ -9121,11 +9121,11 @@ MATDEF void mat_eigen_sym(Mat *V, Vec *eigenvalues, const Mat *A) {
   MAT_ASSERT(V->rows == A->rows && V->cols == A->cols);
   MAT_ASSERT(eigenvalues->rows == A->rows && eigenvalues->cols == 1);
 
-  mat_eigen_sym_scalar_(V, eigenvalues, A);
+  mat__eigen_sym_scalar_(V, eigenvalues, A);
 }
 
 // Scalar implementation of eigenvalue computation
-MAT_INTERNAL_STATIC void mat_eigvals_scalar_(Vec *out, const Mat *A) {
+MAT_INTERNAL_STATIC void mat__eigvals_scalar_(Vec *out, const Mat *A) {
   size_t n = A->rows;
 
   // Handle small cases
@@ -9160,13 +9160,13 @@ MAT_INTERNAL_STATIC void mat_eigvals_scalar_(Vec *out, const Mat *A) {
   Mat *H = mat_rdeep_copy(A);
 
   // Reduce to upper Hessenberg form
-  mat_hessenberg_(H, NULL, 0);
+  mat__hessenberg_(H, NULL, 0);
 
   // QR iteration to reduce to quasi-triangular form
-  mat_multishift_qr_iter_(H, NULL, 0);
+  mat__multishift_qr_iter_(H, NULL, 0);
 
   // Extract eigenvalues from quasi-triangular form
-  mat_extract_eigvals_(out, H, 0, n - 1);
+  mat__extract_eigvals_(out, H, 0, n - 1);
 
   MAT_FREE_MAT(H);
 }
@@ -9178,7 +9178,7 @@ MATDEF void mat_eigvals(Vec *out, const Mat *A) {
   MAT_ASSERT(A->rows == A->cols);
   MAT_ASSERT(out->rows == A->rows && out->cols == 1);
 
-  mat_eigvals_scalar_(out, A);
+  mat__eigvals_scalar_(out, A);
 }
 
 // Compute eigendecomposition of general (non-symmetric) matrix A.
@@ -9192,7 +9192,7 @@ MATDEF void mat_eigvals(Vec *out, const Mat *A) {
 //   - V[:, k] = real part of eigenvector
 //   - V[:, k+1] = imaginary part of eigenvector
 //   - Actual eigenvectors are: V[:, k] ± i * V[:, k+1]
-MAT_INTERNAL_STATIC void mat_eigen_scalar_(Mat *V, Vec *eigenvalues, const Mat *A) {
+MAT_INTERNAL_STATIC void mat__eigen_scalar_(Mat *V, Vec *eigenvalues, const Mat *A) {
   size_t n = A->rows;
 
   // Handle small cases
@@ -9275,17 +9275,17 @@ MAT_INTERNAL_STATIC void mat_eigen_scalar_(Mat *V, Vec *eigenvalues, const Mat *
   mat_eye(Q);
 
   // Reduce to upper Hessenberg form, accumulating Q
-  mat_hessenberg_(H, Q->data, n);
+  mat__hessenberg_(H, Q->data, n);
 
   // QR iteration, accumulating transformations in Q
-  mat_multishift_qr_iter_(H, Q->data, n);
+  mat__multishift_qr_iter_(H, Q->data, n);
 
   // Extract eigenvalues from quasi-triangular Schur form H
-  mat_extract_eigvals_(eigenvalues, H, 0, n - 1);
+  mat__extract_eigvals_(eigenvalues, H, 0, n - 1);
 
   // Compute eigenvectors of Schur form H
   Mat *Y = mat_mat(n, n);
-  mat_trevc_(Y, H);
+  mat__trevc_(Y, H);
 
   // Back-transform: V = Q * Y
   mat_mul(V, Q, Y);
@@ -9303,7 +9303,7 @@ MATDEF void mat_eigen(Mat *V, Vec *eigenvalues, const Mat *A) {
   MAT_ASSERT(V->rows == A->rows && V->cols == A->cols);
   MAT_ASSERT(eigenvalues->rows == A->rows && eigenvalues->cols == 1);
 
-  mat_eigen_scalar_(V, eigenvalues, A);
+  mat__eigen_scalar_(V, eigenvalues, A);
 }
 
 #endif // MAT_IMPLEMENTATION
