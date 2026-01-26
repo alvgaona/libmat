@@ -295,9 +295,7 @@ typedef float mat_elem_t;
 #define MAT_LOG_LEVEL 0
 #endif
 
-// The library provides logging functions as an utility.
-// This is generally used for development of the library,
-// but can completely be used by any user
+// Logging (set MAT_LOG_LEVEL > 0 to enable)
 #if MAT_LOG_LEVEL > 0
 #include <stdio.h>
 #ifndef MAT_LOG_OUTPUT_ERR
@@ -326,17 +324,13 @@ typedef float mat_elem_t;
 #define MAT_LOG_INFO(msg)
 #endif
 
-// It is possible to disable the assertions in the library if
-// the user wants to. In general, the assert statements add a bit
-// of overhead but most of the scenarios it is neglectable
+// Assertions (define MAT_ASSERT to override)
 #ifndef MAT_ASSERT
 #include <assert.h>
 #define MAT_ASSERT(x) assert(x)
 #endif
 
-// Utility assertion macros for specific types in the library.
-// Used across all the library implementations but available
-// for any user as well
+// Type-specific assertion macros
 #ifndef MAT_ASSERT_MAT
 #define MAT_ASSERT_MAT(m)                                                      \
   do {                                                                         \
@@ -373,7 +367,7 @@ typedef struct {
   mat_elem_t *data;
 } Mat;
 
-// An utility type to provide the size of a given matrix
+// Matrix dimensions tuple
 typedef struct {
   size_t x;
   size_t y;
@@ -384,9 +378,7 @@ typedef struct {
 // Row vectors are just transposed column vectors.
 typedef Mat Vec;
 
-// Permutation type for better handling of such data containers.
-// Permutations are vectors of integers, thus the need to have a
-// separate type besides Vec.
+// Permutation vector (array of indices)
 typedef struct {
   size_t *data;
   size_t size;
@@ -1066,9 +1058,7 @@ MAT_INTERNAL_STATIC mat_elem_t mat__dot_kernel(const mat_elem_t *a,
   return MAT_DISPATCH(dot)(a, b, n);
 }
 
-// SYR2_COL: y[i] -= alpha*a[i] + beta*b[i] (fused rank-2 column update)
-// Used in symmetric tridiagonalization - single pass instead of two axpy calls
-// SYR2_COL: y[i] -= alpha*a[i] + beta*b[i] (fused rank-2 column update)
+// SYR2_COL: y[i] -= alpha*a[i] + beta*b[i]
 MAT_INTERNAL_STATIC void mat__syr2_col_scalar(mat_elem_t *y, mat_elem_t alpha,
                                               const mat_elem_t *a, mat_elem_t beta,
                                               const mat_elem_t *b, size_t n) {
@@ -1543,7 +1533,6 @@ MAT_INTERNAL_STATIC bool mat__equals_tol_scalar_(const Mat *a, const Mat *b,
   return true;
 }
 
-// Dispatch: select implementation based on available SIMD
 MAT_INTERNAL_STATIC bool mat__equals_tol_dispatch_(const Mat *a, const Mat *b,
                                                    mat_elem_t epsilon) {
 #if defined(MAT_HAS_ARM_NEON)
@@ -1985,7 +1974,6 @@ MAT_INTERNAL_STATIC void mat__outer_scalar_(Mat *out, const Vec *v1,
   }
 }
 
-// Dispatch: select implementation based on available SIMD
 MAT_INTERNAL_STATIC void mat__outer_dispatch_(Mat *out, const Vec *v1,
                                               const Vec *v2) {
 #if defined(MAT_HAS_ARM_NEON)
@@ -2168,7 +2156,6 @@ MAT_INTERNAL_STATIC void mat__gemv_scalar_(Vec *y, mat_elem_t alpha,
   }
 }
 
-// Dispatch: select implementation based on available SIMD
 MAT_INTERNAL_STATIC void mat__gemv_dispatch_(Vec *y, mat_elem_t alpha,
                                              const Mat *A, const Vec *x,
                                              mat_elem_t beta) {
@@ -2283,7 +2270,6 @@ MAT_INTERNAL_STATIC void mat__gemv_t_scalar_(Vec *y, mat_elem_t alpha,
   }
 }
 
-// Dispatch: select implementation based on available SIMD
 MAT_INTERNAL_STATIC void mat__gemv_t_dispatch_(Vec *y, mat_elem_t alpha,
                                                const Mat *A, const Vec *x,
                                                mat_elem_t beta) {
@@ -2844,7 +2830,6 @@ MAT_INTERNAL_STATIC void mat__gemm_scalar_(Mat *C, mat_elem_t alpha,
   }
 }
 
-// Dispatch: select implementation based on available SIMD
 MAT_INTERNAL_STATIC void mat__gemm_dispatch_(Mat *C, mat_elem_t alpha,
                                              const Mat *A, const Mat *B,
                                              mat_elem_t beta) {
@@ -2985,7 +2970,6 @@ MAT_INTERNAL_STATIC void mat__t_scalar_(Mat *out, const Mat *m) {
   }
 }
 
-// Dispatch: select implementation based on available SIMD
 MAT_INTERNAL_STATIC void mat__t_dispatch_(Mat *out, const Mat *m) {
 #if defined(MAT_HAS_ARM_NEON)
   mat__t_neon_(out, m);
@@ -3213,7 +3197,6 @@ MAT_INTERNAL_STATIC mat_elem_t mat__sum_scalar_(const Mat *a) {
   return sum;
 }
 
-// Dispatch: select implementation based on available SIMD
 MAT_INTERNAL_STATIC mat_elem_t mat__sum_dispatch_(const Mat *a) {
 #if defined(MAT_HAS_ARM_NEON)
   return mat__sum_neon_(a);
@@ -3300,7 +3283,6 @@ MAT_INTERNAL_STATIC mat_elem_t mat__min_scalar_(const Mat *a) {
   return min_val;
 }
 
-// Dispatch: select implementation based on available SIMD
 MAT_INTERNAL_STATIC mat_elem_t mat__min_dispatch_(const Mat *a) {
 #if defined(MAT_HAS_ARM_NEON)
   return mat__min_neon_(a);
@@ -3368,7 +3350,6 @@ MAT_INTERNAL_STATIC mat_elem_t mat__max_scalar_(const Mat *a) {
   return max_val;
 }
 
-// Dispatch: select implementation based on available SIMD
 MAT_INTERNAL_STATIC mat_elem_t mat__max_dispatch_(const Mat *a) {
 #if defined(MAT_HAS_ARM_NEON)
   return mat__max_neon_(a);
@@ -3611,7 +3592,6 @@ MAT_INTERNAL_STATIC mat_elem_t mat__norm_fro_scalar_(const Mat *a) {
   return MAT_SQRT(mat__dot_kernel(a->data, a->data, len));
 }
 
-// Dispatch: select implementation based on available SIMD
 MAT_INTERNAL_STATIC mat_elem_t mat__norm_fro_dispatch_(const Mat *a) {
 #if defined(MAT_HAS_ARM_NEON)
   return mat__norm_fro_neon_(a);
@@ -3669,7 +3649,6 @@ MAT_INTERNAL_STATIC mat_elem_t mat__norm_fro_fast_neon_(const Mat *a) {
 }
 #endif
 
-// Dispatch: select implementation based on available SIMD
 MAT_INTERNAL_STATIC mat_elem_t mat__norm_fro_fast_dispatch_(const Mat *a) {
 #if defined(MAT_HAS_ARM_NEON)
   return mat__norm_fro_fast_neon_(a);
@@ -3774,7 +3753,6 @@ MAT_INTERNAL_STATIC mat_elem_t mat__nnz_scalar_(const Mat *a) {
   return count;
 }
 
-// Dispatch: select implementation based on available SIMD
 MAT_INTERNAL_STATIC mat_elem_t mat__nnz_dispatch_(const Mat *a) {
 #if defined(MAT_HAS_ARM_NEON)
   return mat__nnz_neon_(a);
@@ -4651,8 +4629,7 @@ MATDEF int mat_lu(const Mat *A, Mat *L, Mat *U, Perm *p, Perm *q) {
   mat_perm_identity(p);
   mat_perm_identity(q);
 
-  // Dispatch: select implementation based on available SIMD
-  int swap_count;
+    int swap_count;
   mat_elem_t *data = M->data;
 #if defined(MAT_HAS_ARM_NEON)
   // Column-major LU decomposition (NEON optimized)
@@ -4784,7 +4761,6 @@ MAT_INTERNAL_STATIC void mat__solve_tril_neon_(Vec *x, const Mat *L,
 }
 #endif
 
-// Dispatch: select implementation based on available SIMD
 MAT_INTERNAL_STATIC void mat__solve_tril_dispatch_(Vec *x, const Mat *L,
                                                    const Vec *b) {
 #if defined(MAT_HAS_ARM_NEON)
@@ -4849,7 +4825,6 @@ MAT_INTERNAL_STATIC void mat__solve_tril_unit_neon_(Vec *x, const Mat *L,
 }
 #endif
 
-// Dispatch: select implementation based on available SIMD
 MAT_INTERNAL_STATIC void mat__solve_tril_unit_dispatch_(Vec *x, const Mat *L,
                                                         const Vec *b) {
 #if defined(MAT_HAS_ARM_NEON)
@@ -4920,7 +4895,6 @@ MAT_INTERNAL_STATIC void mat__solve_triu_scalar_(Vec *x, const Mat *U,
   }
 }
 
-// Dispatch: select implementation based on available SIMD
 MAT_INTERNAL_STATIC void mat__solve_triu_dispatch_(Vec *x, const Mat *U,
                                                    const Vec *b) {
 #if defined(MAT_HAS_ARM_NEON)
@@ -4986,7 +4960,6 @@ MAT_INTERNAL_STATIC void mat__solve_trilt_scalar_(Vec *x, const Mat *L,
   }
 }
 
-// Dispatch: select implementation based on available SIMD
 MAT_INTERNAL_STATIC void mat__solve_trilt_dispatch_(Vec *x, const Mat *L,
                                                     const Vec *b) {
 #if defined(MAT_HAS_ARM_NEON)
@@ -5762,7 +5735,6 @@ MAT_INTERNAL_STATIC void mat__transpose_block_neon_(mat_elem_t *At, size_t ldat,
 }
 #endif
 
-// Dispatch: select implementation based on available SIMD
 // Transpose: At[i,p] = A[p,i]
 MAT_INTERNAL_STATIC void mat__transpose_block_(mat_elem_t *At, size_t ldat,
                                               const mat_elem_t *A, size_t lda,
@@ -5877,7 +5849,6 @@ MAT_INTERNAL_STATIC void mat__syrk_generic_(Mat *C, const Mat *A,
   }
 }
 
-// Dispatch: select implementation based on available SIMD
 MAT_INTERNAL_STATIC void mat__syrk_dispatch_(Mat *C, const Mat *A,
                                              mat_elem_t alpha, mat_elem_t beta,
                                              char uplo) {
@@ -5947,7 +5918,6 @@ MAT_INTERNAL_STATIC void mat__syrk_t_generic_(Mat *C, const Mat *A,
   }
 }
 
-// Dispatch: select implementation based on available SIMD
 MAT_INTERNAL_STATIC void mat__syrk_t_dispatch_(Mat *C, const Mat *A,
                                                mat_elem_t alpha, mat_elem_t beta,
                                                char uplo) {
