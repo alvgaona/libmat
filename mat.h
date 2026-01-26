@@ -7887,12 +7887,12 @@ MAT_INTERNAL_STATIC size_t mat_extract_eigvals_(Vec *out, const Mat *H,
 
 // Block size for blocked tridiagonalization
 #ifndef MAT_TRIDIAG_BLOCK_SIZE
-#define MAT_TRIDIAG_BLOCK_SIZE 32
+#define MAT_TRIDIAG_BLOCK_SIZE 64
 #endif
 
 // Threshold for using blocked algorithm (smaller matrices use unblocked)
 #ifndef MAT_TRIDIAG_BLOCK_THRESHOLD
-#define MAT_TRIDIAG_BLOCK_THRESHOLD 512
+#define MAT_TRIDIAG_BLOCK_THRESHOLD 128
 #endif
 
 // Unblocked tridiagonalization - used for small matrices and within blocks
@@ -8171,6 +8171,10 @@ MAT_INTERNAL_STATIC void mat_tridiag_qr_step_(mat_elem_t *d, mat_elem_t *e,
     }
   }
 }
+
+/* ========================================================================== */
+/* Tridiagonal QR Iteration                                                   */
+/* ========================================================================== */
 
 // Full QR iteration on tridiagonal matrix with deflation
 MAT_INTERNAL_STATIC void mat_tridiag_qr_iter_(mat_elem_t *d, mat_elem_t *e, size_t n) {

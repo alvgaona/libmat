@@ -1,7 +1,9 @@
 /*
  * bench_eigvals.cpp - Compare eigenvalues: libmat vs Eigen vs OpenBLAS/LAPACK
  *
- * Compute eigenvalues of symmetric and non-symmetric matrices
+ * Two separate benchmarks:
+ * 1. Symmetric matrices: libmat_sym vs Eigen SelfAdjoint vs OpenBLAS SYEV
+ * 2. Non-symmetric matrices: libmat vs Eigen general vs OpenBLAS GEEV
  *
  * Build:
  *   make bench-compare-eigvals
@@ -43,15 +45,18 @@ using Scalar = float;
 #define LAPACK_GEEV LAPACKE_sgeev
 #endif
 
+/* ========================================================================== */
+/* Symmetric eigenvalue benchmarks                                            */
+/* ========================================================================== */
+
 typedef struct {
     Mat* A;           // Original symmetric matrix (preserved)
-    Mat* A_work;      // Working copy for libmat
     Vec* eig;         // Output eigenvalues for libmat
     Mat* A_lap;       // Working copy for LAPACK (in-place)
     Scalar* eig_lap;  // Output eigenvalues for LAPACK
     EigenMatrix* eA;  // Eigen copy
     size_t n;
-} eigvals_ctx_t;
+} eigvals_sym_ctx_t;
 
 static void fill_symmetric(Mat* A, size_t n) {
     for (size_t i = 0; i < n; i++) {
@@ -63,27 +68,11 @@ static void fill_symmetric(Mat* A, size_t n) {
     }
 }
 
-// libmat eigenvalues (general Hessenberg QR)
-void bench_libmat(zap_bencher_t* b, void* param) {
-    eigvals_ctx_t* ctx = (eigvals_ctx_t*)param;
-    size_t n = ctx->n;
-    // QR algorithm is O(n^3)
-    size_t flops = 4 * n * n * n;
-    zap_bencher_set_throughput_elements(b, flops);
-
-    ZAP_ITER(b, {
-        memcpy(ctx->A_work->data, ctx->A->data, n * n * sizeof(Scalar));
-        mat_eigvals(ctx->eig, ctx->A_work);
-        zap_black_box(ctx->eig->data);
-    });
-}
-
-// libmat eigenvalues (symmetric tridiagonal QR)
+// libmat: mat_eigvals_sym (tridiagonal reduction + QR iteration)
 void bench_libmat_sym(zap_bencher_t* b, void* param) {
-    eigvals_ctx_t* ctx = (eigvals_ctx_t*)param;
+    eigvals_sym_ctx_t* ctx = (eigvals_sym_ctx_t*)param;
     size_t n = ctx->n;
-    // Tridiagonal QR is O(n^2) per iteration but uses O(n^3) tridiagonalization
-    size_t flops = 4 * n * n * n;
+    size_t flops = (4 * n * n * n) / 3;  // Tridiagonalization dominates
     zap_bencher_set_throughput_elements(b, flops);
 
     ZAP_ITER(b, {
@@ -93,10 +82,10 @@ void bench_libmat_sym(zap_bencher_t* b, void* param) {
 }
 
 // Eigen: SelfAdjointEigenSolver (optimized for symmetric matrices)
-void bench_eigen(zap_bencher_t* b, void* param) {
-    eigvals_ctx_t* ctx = (eigvals_ctx_t*)param;
+void bench_eigen_sym(zap_bencher_t* b, void* param) {
+    eigvals_sym_ctx_t* ctx = (eigvals_sym_ctx_t*)param;
     size_t n = ctx->n;
-    size_t flops = 4 * n * n * n;
+    size_t flops = (4 * n * n * n) / 3;
     zap_bencher_set_throughput_elements(b, flops);
 
     ZAP_ITER(b, {
@@ -108,10 +97,10 @@ void bench_eigen(zap_bencher_t* b, void* param) {
 }
 
 // OpenBLAS/LAPACK: SYEV (symmetric eigenvalue solver)
-void bench_openblas(zap_bencher_t* b, void* param) {
-    eigvals_ctx_t* ctx = (eigvals_ctx_t*)param;
+void bench_openblas_sym(zap_bencher_t* b, void* param) {
+    eigvals_sym_ctx_t* ctx = (eigvals_sym_ctx_t*)param;
     size_t n = ctx->n;
-    size_t flops = 4 * n * n * n;
+    size_t flops = (4 * n * n * n) / 3;
     zap_bencher_set_throughput_elements(b, flops);
 
     lapack_int nn = (lapack_int)n;
@@ -149,7 +138,7 @@ static void fill_random(Mat* A, size_t n) {
     }
 }
 
-// libmat eigenvalues (general Hessenberg QR)
+// libmat: mat_eigvals (Hessenberg reduction + QR iteration)
 void bench_libmat_nonsym(zap_bencher_t* b, void* param) {
     eigvals_nonsym_ctx_t* ctx = (eigvals_nonsym_ctx_t*)param;
     size_t n = ctx->n;
@@ -202,57 +191,49 @@ int main(int argc, char** argv) {
     srand(42);
     Eigen::setNbThreads(1);
 
-    zap_compare_group_t* g = zap_compare_group("eigvals");
-    zap_compare_set_baseline(g, 2);  // OpenBLAS as baseline
-
-    // Eigenvalue computation is expensive, use moderate sizes
     size_t sizes[] = {32, 64, 128, 256};
     size_t num_sizes = sizeof(sizes) / sizeof(sizes[0]);
+
+    // Symmetric eigenvalue comparison
+    zap_compare_group_t* g_sym = zap_compare_group("eigvals_sym");
+    zap_compare_set_baseline(g_sym, 1);  // Eigen as baseline
 
     for (size_t s = 0; s < num_sizes; s++) {
         size_t n = sizes[s];
 
         Mat* A = mat_mat(n, n);
-        Mat* A_work = mat_mat(n, n);
         Vec* eig = mat_vec(n);
         Mat* A_lap = mat_mat(n, n);
         Scalar* eig_lap = (Scalar*)malloc(n * sizeof(Scalar));
 
         fill_symmetric(A, n);
 
-        // Create Eigen copy
         EigenMatrix eA = Eigen::Map<EigenMatrix>(A->data, n, n);
 
-        eigvals_ctx_t ctx = {
-            A, A_work, eig, A_lap, eig_lap,
-            &eA,
-            n
-        };
+        eigvals_sym_ctx_t ctx = {A, eig, A_lap, eig_lap, &eA, n};
 
         zap_compare_ctx_t* cmp = zap_compare_begin(
-            g, zap_benchmark_id("n", (int64_t)n),
+            g_sym, zap_benchmark_id("n", (int64_t)n),
             &ctx, sizeof(ctx)
         );
 
-        zap_compare_impl(cmp, "libmat", bench_libmat);
-        zap_compare_impl(cmp, "libmat_sym", bench_libmat_sym);
-        zap_compare_impl(cmp, "Eigen", bench_eigen);
-        zap_compare_impl(cmp, "OpenBLAS", bench_openblas);
+        zap_compare_impl(cmp, "libmat", bench_libmat_sym);
+        zap_compare_impl(cmp, "Eigen", bench_eigen_sym);
+        zap_compare_impl(cmp, "OpenBLAS", bench_openblas_sym);
 
         zap_compare_end(cmp);
 
         mat_free_mat(A);
-        mat_free_mat(A_work);
         mat_free_mat(eig);
         mat_free_mat(A_lap);
         free(eig_lap);
     }
 
-    zap_compare_group_finish(g);
+    zap_compare_group_finish(g_sym);
 
     // Non-symmetric eigenvalue comparison
-    zap_compare_group_t* g2 = zap_compare_group("eigvals_nonsym");
-    zap_compare_set_baseline(g2, 2);  // OpenBLAS as baseline
+    zap_compare_group_t* g_nonsym = zap_compare_group("eigvals_nonsym");
+    zap_compare_set_baseline(g_nonsym, 1);  // Eigen as baseline
 
     for (size_t s = 0; s < num_sizes; s++) {
         size_t n = sizes[s];
@@ -266,25 +247,20 @@ int main(int argc, char** argv) {
 
         fill_random(A, n);
 
-        // Create Eigen copy
         EigenMatrix eA = Eigen::Map<EigenMatrix>(A->data, n, n);
 
-        eigvals_nonsym_ctx_t ctx2 = {
-            A, A_work, eig, A_lap, eig_real, eig_imag,
-            &eA,
-            n
-        };
+        eigvals_nonsym_ctx_t ctx = {A, A_work, eig, A_lap, eig_real, eig_imag, &eA, n};
 
-        zap_compare_ctx_t* cmp2 = zap_compare_begin(
-            g2, zap_benchmark_id("n", (int64_t)n),
-            &ctx2, sizeof(ctx2)
+        zap_compare_ctx_t* cmp = zap_compare_begin(
+            g_nonsym, zap_benchmark_id("n", (int64_t)n),
+            &ctx, sizeof(ctx)
         );
 
-        zap_compare_impl(cmp2, "libmat", bench_libmat_nonsym);
-        zap_compare_impl(cmp2, "Eigen", bench_eigen_nonsym);
-        zap_compare_impl(cmp2, "OpenBLAS", bench_openblas_nonsym);
+        zap_compare_impl(cmp, "libmat", bench_libmat_nonsym);
+        zap_compare_impl(cmp, "Eigen", bench_eigen_nonsym);
+        zap_compare_impl(cmp, "OpenBLAS", bench_openblas_nonsym);
 
-        zap_compare_end(cmp2);
+        zap_compare_end(cmp);
 
         mat_free_mat(A);
         mat_free_mat(A_work);
@@ -294,7 +270,7 @@ int main(int argc, char** argv) {
         free(eig_imag);
     }
 
-    zap_compare_group_finish(g2);
+    zap_compare_group_finish(g_nonsym);
 
     return zap_finalize();
 }
