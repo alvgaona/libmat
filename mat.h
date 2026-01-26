@@ -7752,14 +7752,7 @@ MAT_INTERNAL_STATIC void mat_qr_step_(Mat *H, size_t lo, size_t hi,
 
     // Accumulate Z = Z * G^T
     if (Z) {
-      mat_elem_t *Z_lo = &Z[lo * ldz];
-      mat_elem_t *Z_lo1 = &Z[(lo + 1) * ldz];
-      for (size_t i = 0; i < n; i++) {
-        mat_elem_t z0 = Z_lo[i];
-        mat_elem_t z1 = Z_lo1[i];
-        Z_lo[i] = c * z0 + s * z1;
-        Z_lo1[i] = -s * z0 + c * z1;
-      }
+      mat_givens_cols_(Z, ldz, n, lo, lo + 1, c, s);
     }
     return;
   }
@@ -7890,33 +7883,13 @@ MAT_INTERNAL_STATIC void mat_qr_step_(Mat *H, size_t lo, size_t hi,
 
   // Accumulate final Givens into Z
   if (Z) {
-    mat_elem_t *Z_hi1 = &Z[(hi - 1) * ldz];
-    mat_elem_t *Z_hi = &Z[hi * ldz];
-    for (size_t i = 0; i < n; i++) {
-      mat_elem_t z0 = Z_hi1[i];
-      mat_elem_t z1 = Z_hi[i];
-      Z_hi1[i] = c_final * z0 + s_final * z1;
-      Z_hi[i] = -s_final * z0 + c_final * z1;
-    }
+    mat_givens_cols_(Z, ldz, n, hi - 1, hi, c_final, s_final);
   }
 }
 
 /* ========================================================================== */
 /* Multishift QR with Aggressive Early Deflation                              */
 /* ========================================================================== */
-
-// Default parameters for multishift QR
-#ifndef MAT_QR_MULTISHIFT_NS
-#define MAT_QR_MULTISHIFT_NS 6  // Number of shifts (must be even)
-#endif
-
-#ifndef MAT_QR_DEFLATION_WINDOW
-#define MAT_QR_DEFLATION_WINDOW 32  // Size of deflation window for AED
-#endif
-
-#ifndef MAT_QR_MULTISHIFT_THRESHOLD
-#define MAT_QR_MULTISHIFT_THRESHOLD 75  // Min matrix size for multishift
-#endif
 
 // Apply a 3x3 Householder reflector P = I - tau * v * v^T to H from both sides
 // v = [1, v1, v2], affects rows/cols r0, r0+1, r0+2
@@ -8924,17 +8897,8 @@ MAT_INTERNAL_STATIC void mat_tridiag_qr_step_(mat_elem_t *d, mat_elem_t *e,
     }
 
     // Accumulate Givens into Z: Z = Z * G where G = [[cs, sn], [-sn, cs]]
-    // Column k: Z'[:,k] = cs*Z[:,k] - sn*Z[:,k+1]
-    // Column k+1: Z'[:,k+1] = sn*Z[:,k] + cs*Z[:,k+1]
     if (Z) {
-      mat_elem_t *Z_k = &Z[k * ldz];
-      mat_elem_t *Z_k1 = &Z[(k + 1) * ldz];
-      for (size_t i = 0; i < n; i++) {
-        mat_elem_t zik = Z_k[i];
-        mat_elem_t zik1 = Z_k1[i];
-        Z_k[i] = cs * zik - sn * zik1;
-        Z_k1[i] = sn * zik + cs * zik1;
-      }
+      mat_givens_cols_(Z, ldz, n, k, k + 1, cs, -sn);
     }
   }
 }
@@ -9199,37 +9163,7 @@ MAT_INTERNAL_STATIC void mat_eigvals_scalar_(Vec *out, const Mat *A) {
   mat_hessenberg_(H, NULL, 0);
 
   // QR iteration to reduce to quasi-triangular form
-  // Use multishift QR for large matrices
-  if (n >= MAT_QR_MULTISHIFT_THRESHOLD) {
-    mat_multishift_qr_iter_(H, NULL, 0);
-  } else {
-    // Small matrix: use Francis double-shift
-    size_t max_iter = 30 * n;
-    size_t hi = n - 1;
-
-    for (size_t iter = 0; iter < max_iter && hi > 0; iter++) {
-      size_t lo = hi;
-      while (lo > 0) {
-        mat_elem_t sub = MAT_AT(H, lo, lo - 1);
-        mat_elem_t diag_sum = MAT_FABS(MAT_AT(H, lo - 1, lo - 1)) +
-                              MAT_FABS(MAT_AT(H, lo, lo));
-        if (mat_is_negligible_(sub, diag_sum)) {
-          MAT_SET(H, lo, lo - 1, 0);
-          break;
-        }
-        lo--;
-      }
-
-      if (lo == hi) {
-        hi--;
-      } else if (lo + 1 == hi) {
-        if (hi < 2) break;
-        hi -= 2;
-      } else {
-        mat_qr_step_(H, lo, hi, NULL, 0);
-      }
-    }
-  }
+  mat_multishift_qr_iter_(H, NULL, 0);
 
   // Extract eigenvalues from quasi-triangular form
   mat_extract_eigvals_(out, H, 0, n - 1);
@@ -9344,37 +9278,7 @@ MAT_INTERNAL_STATIC void mat_eigen_scalar_(Mat *V, Vec *eigenvalues, const Mat *
   mat_hessenberg_(H, Q->data, n);
 
   // QR iteration, accumulating transformations in Q
-  // Use multishift QR with AED for large matrices
-  if (n >= MAT_QR_MULTISHIFT_THRESHOLD) {
-    mat_multishift_qr_iter_(H, Q->data, n);
-  } else {
-    // Small matrix: use Francis double-shift
-    size_t max_iter = 30 * n;
-    size_t hi = n - 1;
-
-    for (size_t iter = 0; iter < max_iter && hi > 0; iter++) {
-      size_t lo = hi;
-      while (lo > 0) {
-        mat_elem_t sub = MAT_AT(H, lo, lo - 1);
-        mat_elem_t diag_sum = MAT_FABS(MAT_AT(H, lo - 1, lo - 1)) +
-                              MAT_FABS(MAT_AT(H, lo, lo));
-        if (mat_is_negligible_(sub, diag_sum)) {
-          MAT_SET(H, lo, lo - 1, 0);
-          break;
-        }
-        lo--;
-      }
-
-      if (lo == hi) {
-        hi--;
-      } else if (lo + 1 == hi) {
-        if (hi < 2) break;
-        hi -= 2;
-      } else {
-        mat_qr_step_(H, lo, hi, Q->data, n);
-      }
-    }
-  }
+  mat_multishift_qr_iter_(H, Q->data, n);
 
   // Extract eigenvalues from quasi-triangular Schur form H
   mat_extract_eigvals_(eigenvalues, H, 0, n - 1);
