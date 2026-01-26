@@ -270,7 +270,7 @@ typedef float mat_elem_t;
 #endif
 #endif // __ARM_NEON
 
-/* AVX2 SIMD macros (placeholder for future implementation) */
+/* AVX2 SIMD Macros (TODO) */
 #ifdef MAT_HAS_AVX2
 // AVX2 double precision (4 doubles per 256-bit register)
 // AVX2 single precision (8 floats per 256-bit register)
@@ -902,7 +902,7 @@ static inline void *mat_scratch_alloc_(size_t bytes) {
 static inline void mat_scratch_free_(void *ptr) { MAT_FREE(ptr); }
 #endif
 
-/* Raw kernels (used by BLAS-like operations and algorithms) */
+/* BLAS-like Kernels */
 
 /* Kernel dispatch macro - selects architecture-specific implementation */
 #ifdef MAT_HAS_ARM_NEON
@@ -2037,7 +2037,7 @@ MATDEF mat_elem_t mat_quadform(const Vec *x, const Mat *A) {
   return mat_bilinear(x, A, x);
 }
 
-/* Fused Operations (BLAS-like) */
+/* Fused Operations */
 
 // y += alpha * x (BLAS Level-1: axpy)
 MATDEF void mat_axpy(Vec *y, mat_elem_t alpha, const Vec *x) {
@@ -4738,7 +4738,7 @@ MATDEF int mat_lu(const Mat *A, Mat *L, Mat *U, Perm *p, Perm *q) {
   return swap_count;
 }
 
-/* Triangular system solvers (TRSV) */
+/* Triangular Solvers */
 
 // --- mat_solve_tril: Solve Lx = b, L lower triangular (non-unit diagonal) ---
 
@@ -5011,7 +5011,7 @@ MATDEF void mat_solve_trilt(Vec *x, const Mat *L, const Vec *b) {
   mat__solve_trilt_dispatch_(x, L, b);
 }
 
-/* Linear system solvers */
+/* Linear Solvers */
 
 MATDEF void mat_solve(Vec *x, const Mat *A, const Vec *b) {
   MAT_ASSERT_MAT(A);
@@ -5079,7 +5079,7 @@ MATDEF int mat_solve_spd(Vec *x, const Mat *A, const Vec *b) {
   return 0;
 }
 
-/* Cholesky decomposition */
+/* Cholesky Decomposition */
 
 #define MAT_CHOL_BLOCK_SIZE 32
 
@@ -5233,7 +5233,7 @@ mat__gemm_lower_strided_neon_(mat_elem_t *C, size_t ldc, mat_elem_t alpha,
 
 
 
-/* SYRK: C = alpha * A * A^T + beta * C */
+/* SYRK */
 
 // Column-major SYRK lower triangle - scalar implementation
 MAT_INTERNAL_STATIC void mat__syrk_lower_scalar_(
@@ -5970,7 +5970,7 @@ MATDEF void mat_syrk_t(Mat *C, const Mat *A, mat_elem_t alpha, mat_elem_t beta,
   mat__syrk_t_dispatch_(C, A, alpha, beta, uplo);
 }
 
-/* SYR2K: C = alpha * A * B^T + alpha * B * A^T + beta * C */
+/* SYR2K */
 
 // Generic scalar SYR2K: C = alpha*A*B' + alpha*B*A' + beta*C
 // A is n x k, B is n x k, C is n x n symmetric
@@ -6499,7 +6499,7 @@ MATDEF mat_elem_t mat_det(const Mat *A) {
 // Column-major SVD helpers - columns are contiguous for efficient SIMD
 // W->data is column-major: W->data[row + col*m] = W[row, col]
 
-/* Bidiagonalization for SVD (Golub-Kahan) */
+/* Bidiagonalization */
 
 // Apply Householder from left to zero out column below diagonal
 // H = I - tau * v * v^T, applied as A = H * A = A - tau * v * (v^T * A)
@@ -6663,7 +6663,7 @@ MAT_INTERNAL_STATIC void mat__bidiag_(mat_elem_t *A, size_t m, size_t n,
   MAT_FREE(v_right);
 }
 
-/* QR iteration for bidiagonal SVD */
+/* Bidiagonal QR Iteration */
 
 // Compute Givens rotation to zero out b given [a; b]
 // Returns c, s such that [c s; -s c]^T * [a; b] = [r; 0]
@@ -7641,7 +7641,7 @@ MATDEF mat_elem_t mat_cond(const Mat *A) {
   return sigma_max / sigma_min;
 }
 
-/* Eigenvalue computation via QR algorithm */
+/* Eigenvalues (QR Algorithm) */
 
 // Reduce matrix to upper Hessenberg form using Householder reflections
 // H = Q^T * A * Q where H is upper Hessenberg (zeros below sub-diagonal)
@@ -7902,7 +7902,7 @@ MAT_INTERNAL_STATIC void mat__qr_step_(Mat *H, size_t lo, size_t hi,
   }
 }
 
-/* Multishift QR with Aggressive Early Deflation */
+/* Multishift QR */
 
 // Apply a 3x3 Householder reflector P = I - tau * v * v^T to H from both sides
 // v = [1, v1, v2], affects rows/cols r0, r0+1, r0+2
@@ -8596,7 +8596,7 @@ MAT_INTERNAL_STATIC void mat__trevc_(Mat *V, const Mat *T) {
   }
 }
 
-/* Symmetric Eigenvalue Solver */
+/* Symmetric Eigenvalues */
 
 // Block size for blocked tridiagonalization
 #ifndef MAT_TRIDIAG_BLOCK_SIZE
