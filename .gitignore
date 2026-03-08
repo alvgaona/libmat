@@ -16,3 +16,10 @@ examples/*
 
 # clangd
 compile_flags.txt
+
+# Markdown (except README)
+*.md
+!README.md
+
+# Claude
+.claude/
