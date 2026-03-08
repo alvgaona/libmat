@@ -60,6 +60,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Compute archive sha256
+        run: |
+          URL="https://github.com/alvgaona/libmat/archive/${{ github.ref_name }}.tar.gz"
+          SHA=$(curl -sL "$URL" | sha256sum | awk '{print $1}')
+          sed -i "s/ARCHIVE_SHA256/$SHA/" recipe.yaml
       - uses: prefix-dev/rattler-build-action@v0.2.25
         with:
           recipe-path: recipe.yaml

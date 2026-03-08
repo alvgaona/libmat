@@ -8,6 +8,7 @@ package:
 
 source:
   url: https://github.com/alvgaona/${{ name }}/archive/v${{ version }}.tar.gz
+  sha256: ARCHIVE_SHA256
 
 build:
   number: 0
