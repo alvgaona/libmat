@@ -54,8 +54,8 @@ jobs:
           body_path: RELEASE_NOTES.md
           files: mat.h
 
-  publish:
-    name: Publish to prefix.dev
+  build-package:
+    name: Build conda package
     needs: [release]
     runs-on: ubuntu-latest
     steps:
@@ -67,6 +67,23 @@ jobs:
       - uses: prefix-dev/rattler-build-action@v0.2.25
         with:
           recipe-path: recipe.yaml
-          upload-channel: libmat
+          upload-artifact: true
+          artifact-name: libmat-${{ github.ref_name }}
+
+  publish:
+    name: Publish to prefix.dev
+    needs: [build-package]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: prefix-dev/setup-pixi@v0.8.1
+      - uses: actions/download-artifact@v4
+        with:
+          path: packages
+          merge-multiple: true
+      - name: Upload to prefix.dev
+        run: |
+          for pkg in packages/**/*.conda; do
+            pixi run rattler-build upload prefix -c libmat "$pkg"
+          done
         env:
-          PREFIX_DEV_API_KEY: ${{ secrets.PREFIX_DEV_API_KEY }}
+          PREFIX_API_KEY: ${{ secrets.PREFIX_DEV_API_KEY }}
