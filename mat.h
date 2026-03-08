@@ -3,8 +3,8 @@
 
 #define MAT_VERSION_MAJOR 0
 #define MAT_VERSION_MINOR 1
-#define MAT_VERSION_PATCH 0
-#define MAT_VERSION "0.1.0"
+#define MAT_VERSION_PATCH 1
+#define MAT_VERSION "0.1.1"
 
 #include <stdbool.h>
 #include <stddef.h>
