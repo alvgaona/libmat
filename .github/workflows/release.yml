@@ -64,7 +64,7 @@ jobs:
         run: |
           URL="https://github.com/alvgaona/libmat/archive/${{ github.ref_name }}.tar.gz"
           echo "ARCHIVE_SHA256=$(curl -sL "$URL" | sha256sum | awk '{print $1}')" >> "$GITHUB_ENV"
-      - uses: prefix-dev/rattler-build-action@v0.2.25
+      - uses: prefix-dev/rattler-build-action@v0.2.36
         with:
           recipe-path: recipe.yaml
           upload-artifact: true
@@ -75,7 +75,7 @@ jobs:
     needs: [build-package]
     runs-on: ubuntu-latest
     steps:
-      - uses: prefix-dev/rattler-build-action@v0.2.25
+      - uses: prefix-dev/rattler-build-action@v0.2.36
         with:
           setup-only: true
       - uses: actions/download-artifact@v4
