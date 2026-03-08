@@ -788,8 +788,9 @@ void test_eigen_decomposition_real(void) {
     // A = P * D * P^T
     Mat *PD = mat_mat(n, n);
     Mat *A = mat_mat(n, n);
+    Mat *Pt = mat_rt(P);
     mat_mul(PD, P, D);
-    mat_mul(A, PD, mat_rt(P));
+    mat_mul(A, PD, Pt);
 
     Mat *V = mat_mat(n, n);
     Vec *eig = mat_vec(n);
@@ -813,6 +814,7 @@ void test_eigen_decomposition_real(void) {
     mat_free_mat(D);
     mat_free_mat(R);
     mat_free_mat(P);
+    mat_free_mat(Pt);
     mat_free_mat(Rtmp);
     mat_free_mat(PD);
     mat_free_mat(A);
