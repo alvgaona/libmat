@@ -1,0 +1,47 @@
+name: release
+run-name: release ${{ github.ref_name }}
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        compiler: [gcc, clang]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build mat.c
+        run: ${{ matrix.compiler }} -O2 -Wall -Wextra -Werror -c mat.c -o mat.o
+
+      - name: Run tests
+        run: make check CC=${{ matrix.compiler }}
+
+  release:
+    name: GitHub Release
+    needs: [test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: orhun/git-cliff-action@v4
+        id: changelog
+        with:
+          args: --latest
+      - name: Generate release notes
+        run: echo "${{ steps.changelog.outputs.content }}" | tail -n +2 > RELEASE_NOTES.md
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          body_path: RELEASE_NOTES.md
+          files: mat.h

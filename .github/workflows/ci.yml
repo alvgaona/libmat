@@ -1,4 +1,4 @@
-name: CI
+name: ci
 
 on:
   push:
@@ -15,6 +15,9 @@ jobs:
         compiler: [gcc, clang]
     steps:
       - uses: actions/checkout@v4
+
+      - name: Build mat.c
+        run: ${{ matrix.compiler }} -O2 -Wall -Wextra -Werror -c mat.c -o mat.o
 
       - name: Build and run tests
         run: make check CC=${{ matrix.compiler }}
