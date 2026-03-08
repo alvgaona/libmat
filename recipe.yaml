@@ -1,0 +1,31 @@
+context:
+  name: libmat
+  version: "0.1.0"
+
+package:
+  name: ${{ name }}
+  version: ${{ version }}
+
+source:
+  url: https://github.com/alvgaona/${{ name }}/archive/v${{ version }}.tar.gz
+
+build:
+  number: 0
+  noarch: generic
+  skip:
+    - win
+  script:
+    - mkdir -p $PREFIX/include
+    - cp mat.h $PREFIX/include/mat.h
+
+tests:
+  - package_contents:
+      include:
+        - mat.h
+
+about:
+  homepage: https://github.com/alvgaona/libmat
+  license: LGPL-3.0-or-later
+  license_file: LICENSE
+  summary: stb-style single-header linear algebra library in pure C
+  repository: https://github.com/alvgaona/libmat

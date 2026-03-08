@@ -34,6 +34,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Verify version matches tag
+        run: |
+          TAG="${GITHUB_REF_NAME#v}"
+          HDR="$(grep '#define MAT_VERSION ' mat.h | head -1 | tr -d '"' | awk '{print $3}')"
+          if [ "$TAG" != "$HDR" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match MAT_VERSION \"$HDR\" in mat.h"
+            exit 1
+          fi
       - uses: orhun/git-cliff-action@v4
         id: changelog
         with:
@@ -45,3 +53,16 @@ jobs:
           name: ${{ github.ref_name }}
           body_path: RELEASE_NOTES.md
           files: mat.h
+
+  publish:
+    name: Publish to prefix.dev
+    needs: [release]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: prefix-dev/rattler-build-action@v0.2.25
+        with:
+          recipe-path: recipe.yaml
+          upload-channel: libmat
+        env:
+          PREFIX_DEV_API_KEY: ${{ secrets.PREFIX_DEV_API_KEY }}
