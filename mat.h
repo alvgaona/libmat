@@ -3495,6 +3495,16 @@ MATDEF mat_elem_t mat_norm_fro(const Mat *a) {
   return MAT_DISPATCH(norm_fro)(a);
 }
 
+MAT_INTERNAL_STATIC mat_elem_t mat__norm_fro_fast_scalar(const Mat *a) {
+  size_t len = a->rows * a->cols;
+  mat_elem_t *pa = a->data;
+  mat_elem_t sum = 0;
+  for (size_t i = 0; i < len; i++) {
+    sum += pa[i] * pa[i];
+  }
+  return MAT_SQRT(sum);
+}
+
 #ifdef MAT_HAS_ARM_NEON
 MAT_INTERNAL_STATIC mat_elem_t mat__norm_fro_fast_neon(const Mat *a) {
   size_t len = a->rows * a->cols;
