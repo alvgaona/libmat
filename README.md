@@ -1,5 +1,10 @@
 # libmat
 
+[![ci](https://github.com/alvgaona/libmat/actions/workflows/ci.yml/badge.svg)](https://github.com/alvgaona/libmat/actions/workflows/ci.yml)
+[![license](https://img.shields.io/github/license/alvgaona/libmat)](LICENSE)
+[![release](https://img.shields.io/github/v/release/alvgaona/libmat)](https://github.com/alvgaona/libmat/releases/latest)
+[![prefix.dev](https://img.shields.io/badge/prefix.dev-libmat-blue)](https://prefix.dev/channels/libmat)
+
 An stb single-file linear algebra library in pure C
 
 ## Build
