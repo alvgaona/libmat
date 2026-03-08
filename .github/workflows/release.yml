@@ -76,6 +76,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: prefix-dev/rattler-build-action@v0.2.25
+        with:
+          setup-only: true
       - uses: actions/download-artifact@v4
         with:
           path: packages
